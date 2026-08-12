@@ -1,0 +1,6 @@
+/data/*
+!/data/.gitkeep
+/.venv/
+/bin/
+/pompos
+data/

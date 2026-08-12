@@ -1,0 +1,11 @@
+services:
+  pompos:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - pompos-data:/data
+    restart: unless-stopped
+
+volumes:
+  pompos-data:

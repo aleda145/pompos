@@ -1,0 +1,16 @@
+{{define "content"}}
+<a class="back" href="/">← Ingestions</a>
+<h1>Add ingestion</h1>
+{{if .Error}}<div class="error" role="alert">{{.Error}}</div>{{end}}
+<form method="post" action="/ingestions" class="panel">
+  <label for="csv_url">CSV URL</label>
+  <input id="csv_url" name="csv_url" type="url" value="{{.CSVURL}}" placeholder="https://example.com/data.csv" required>
+  <p class="hint">The URL must be publicly reachable over HTTP or HTTPS.</p>
+
+  <label for="table_name">Table name</label>
+  <input id="table_name" name="table_name" value="{{.TableName}}" placeholder="customers" pattern="[A-Za-z_][A-Za-z0-9_]*" required>
+  <p class="hint">Letters, numbers, and underscores; start with a letter or underscore.</p>
+
+  <button type="submit">Create ingestion</button>
+</form>
+{{end}}

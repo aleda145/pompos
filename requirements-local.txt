@@ -1,0 +1,2 @@
+ingestr==1.1.8
+duckdb==1.5.3

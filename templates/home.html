@@ -1,0 +1,27 @@
+{{define "content"}}
+<div class="page-heading">
+  <h1>Ingestions</h1>
+  <a class="button" href="/ingestions/new">+ Add ingestion</a>
+</div>
+{{if .Ingestions}}
+<div class="cards">
+  {{range .Ingestions}}
+  <a class="card" href="/ingestions/{{.ID}}">
+    <div class="card-title">Remote CSV → DuckDB</div>
+    <strong>{{.Name}}</strong>
+    <span class="url">{{.Source.URL}}</span>
+    <dl>
+      <div><dt>Table</dt><dd>{{.Destination.Table}}</dd></div>
+      <div><dt>Status</dt><dd><span class="status status-{{.Status}}">{{.Status}}</span></dd></div>
+      <div><dt>Last run</dt><dd>{{if .LastRun}}{{.LastRun.Format "2006-01-02 15:04:05 UTC"}}{{else}}Never{{end}}</dd></div>
+    </dl>
+  </a>
+  {{end}}
+</div>
+{{else}}
+<div class="empty">
+  <p>No ingestions yet.</p>
+  <p>Load a public CSV into the platform DuckDB to get started.</p>
+</div>
+{{end}}
+{{end}}
