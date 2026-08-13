@@ -53,6 +53,47 @@ CREATE TABLE IF NOT EXISTS ingestions (
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize metadata database: %w", err)
 	}
+	columns := []struct{ name, definition string }{
+		{"source_type", "TEXT NOT NULL DEFAULT 'csv'"},
+		{"source_owner", "TEXT NOT NULL DEFAULT ''"},
+		{"source_repository", "TEXT NOT NULL DEFAULT ''"},
+		{"source_token", "TEXT NOT NULL DEFAULT ''"},
+		{"source_table", "TEXT NOT NULL DEFAULT ''"},
+	}
+	for _, column := range columns {
+		if err := s.addColumn(ctx, column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *SQLite) addColumn(ctx context.Context, name, definition string) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(ingestions)`)
+	if err != nil {
+		return fmt.Errorf("inspect metadata schema: %w", err)
+	}
+	found := false
+	for rows.Next() {
+		var cid int
+		var columnName, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan metadata schema: %w", err)
+		}
+		found = found || columnName == name
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close metadata schema rows: %w", err)
+	}
+	if found {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE ingestions ADD COLUMN `+name+` `+definition); err != nil {
+		return fmt.Errorf("add metadata column %s: %w", name, err)
+	}
 	return nil
 }
 
@@ -60,8 +101,13 @@ func (s *SQLite) Close() error { return s.db.Close() }
 
 func (s *SQLite) Create(ctx context.Context, item ingestion.Ingestion) error {
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO ingestions (id, name, csv_url, destination_table, status, last_error)
-VALUES (?, ?, ?, ?, ?, '')`, item.ID, item.Name, item.Source.URL, item.Destination.Table, item.Status)
+INSERT INTO ingestions (
+    id, name, csv_url, destination_table, status, last_error,
+    source_type, source_owner, source_repository, source_token, source_table
+)
+VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`,
+		item.ID, item.Name, item.Source.URL, item.Destination.Table, item.Status,
+		item.Source.Type, item.Source.Owner, item.Source.Repository, item.Source.AccessToken, item.Source.Table)
 	if err != nil {
 		return fmt.Errorf("create ingestion metadata: %w", err)
 	}
@@ -70,7 +116,8 @@ VALUES (?, ?, ?, ?, ?, '')`, item.ID, item.Name, item.Source.URL, item.Destinati
 
 func (s *SQLite) Get(ctx context.Context, id string) (ingestion.Ingestion, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, name, csv_url, destination_table, status, last_run_at, last_error
+SELECT id, name, csv_url, destination_table, status, last_run_at, last_error,
+       source_type, source_owner, source_repository, source_token, source_table
 FROM ingestions WHERE id = ?`, id)
 	item, err := s.scan(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -84,7 +131,8 @@ FROM ingestions WHERE id = ?`, id)
 
 func (s *SQLite) List(ctx context.Context) ([]ingestion.Ingestion, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, name, csv_url, destination_table, status, last_run_at, last_error
+SELECT id, name, csv_url, destination_table, status, last_run_at, last_error,
+       source_type, source_owner, source_repository, source_token, source_table
 FROM ingestions ORDER BY name, id`)
 	if err != nil {
 		return nil, fmt.Errorf("list ingestion metadata: %w", err)
@@ -135,11 +183,11 @@ type scanner interface {
 func (s *SQLite) scan(row scanner) (ingestion.Ingestion, error) {
 	var item ingestion.Ingestion
 	var lastRun sql.NullString
-	err := row.Scan(&item.ID, &item.Name, &item.Source.URL, &item.Destination.Table, &item.Status, &lastRun, &item.LastError)
+	err := row.Scan(&item.ID, &item.Name, &item.Source.URL, &item.Destination.Table, &item.Status, &lastRun, &item.LastError,
+		&item.Source.Type, &item.Source.Owner, &item.Source.Repository, &item.Source.AccessToken, &item.Source.Table)
 	if err != nil {
 		return ingestion.Ingestion{}, err
 	}
-	item.Source.Type = "csv"
 	item.Destination.Type = "duckdb"
 	item.Destination.Path = s.destinationPath
 	if lastRun.Valid {

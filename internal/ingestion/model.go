@@ -21,8 +21,19 @@ type Ingestion struct {
 }
 
 type Source struct {
-	Type string
-	URL  string
+	Type        string
+	URL         string
+	Owner       string
+	Repository  string
+	AccessToken string
+	Table       string
+}
+
+func (s Source) DisplayLocation() string {
+	if s.Type == "github" {
+		return "github.com/" + s.Owner + "/" + s.Repository
+	}
+	return s.URL
 }
 
 type Destination struct {

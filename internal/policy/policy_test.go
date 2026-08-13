@@ -41,3 +41,20 @@ func TestDefaultEngine(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultEngineGitHub(t *testing.T) {
+	base := ingestion.Ingestion{
+		Source: ingestion.Source{Type: "github", Owner: "openai", Repository: "codex", Table: "issues"},
+		Destination: ingestion.Destination{
+			Type: "duckdb", Path: "./data/pompos.duckdb", Table: "openai_codex_issues",
+		},
+	}
+	engine := DefaultEngine{DestinationPath: "./data/pompos.duckdb"}
+	if err := engine.Validate(base); err != nil {
+		t.Fatalf("valid GitHub ingestion: %v", err)
+	}
+	base.Source.Table = "secrets"
+	if err := engine.Validate(base); err == nil || !strings.Contains(err.Error(), "unsupported GitHub table") {
+		t.Fatalf("invalid GitHub table error = %v", err)
+	}
+}

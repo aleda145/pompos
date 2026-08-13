@@ -7,9 +7,9 @@
 <div class="cards">
   {{range .Ingestions}}
   <a class="card" href="/ingestions/{{.ID}}">
-    <div class="card-title">Remote CSV → DuckDB</div>
+    <div class="card-title">{{if eq .Source.Type "github"}}GitHub{{else}}Remote CSV{{end}} → DuckDB</div>
     <strong>{{.Name}}</strong>
-    <span class="url">{{.Source.URL}}</span>
+    <span class="url">{{.Source.DisplayLocation}}</span>
     <dl>
       <div><dt>Table</dt><dd>{{.Destination.Table}}</dd></div>
       <div><dt>Status</dt><dd><span class="status status-{{.Status}}">{{.Status}}</span></dd></div>

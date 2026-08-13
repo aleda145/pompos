@@ -10,6 +10,12 @@ import (
 )
 
 func Generate(item ingestion.Ingestion) []byte {
+	var source string
+	if item.Source.Type == "github" {
+		source = fmt.Sprintf("  type: github\n  owner: %s\n  repository: %s\n  table: %s", yamlString(item.Source.Owner), yamlString(item.Source.Repository), yamlString(item.Source.Table))
+	} else {
+		source = fmt.Sprintf("  type: csv\n  url: %s", yamlString(item.Source.URL))
+	}
 	return []byte(fmt.Sprintf(`apiVersion: pompos.dev/v1
 kind: Ingestion
 
@@ -17,13 +23,12 @@ metadata:
   name: %s
 
 source:
-  type: csv
-  url: %s
+%s
 
 destination:
   type: duckdb
   table: %s
-`, yamlString(item.Name), yamlString(item.Source.URL), yamlString(item.Destination.Table)))
+`, yamlString(item.Name), source, yamlString(item.Destination.Table)))
 }
 
 func Write(directory string, item ingestion.Ingestion) (string, error) {

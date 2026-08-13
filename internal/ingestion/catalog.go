@@ -1,8 +1,9 @@
 package ingestion
 
 type SourceDefinition struct {
-	Type string
-	Name string
+	Type        string
+	Name        string
+	Description string
 }
 
 type SourceCatalog struct {
@@ -18,7 +19,10 @@ func NewSourceCatalog(definitions ...SourceDefinition) SourceCatalog {
 }
 
 func DefaultSourceCatalog() SourceCatalog {
-	return NewSourceCatalog(SourceDefinition{Type: "csv", Name: "Remote CSV"})
+	return NewSourceCatalog(
+		SourceDefinition{Type: "csv", Name: "Remote CSV", Description: "Load any public CSV URL."},
+		SourceDefinition{Type: "github", Name: "GitHub", Description: "Sync repository activity and metadata."},
+	)
 }
 
 func (c SourceCatalog) Get(sourceType string) (SourceDefinition, bool) {
@@ -28,8 +32,10 @@ func (c SourceCatalog) Get(sourceType string) (SourceDefinition, bool) {
 
 func (c SourceCatalog) List() []SourceDefinition {
 	definitions := make([]SourceDefinition, 0, len(c.definitions))
-	if csv, ok := c.definitions["csv"]; ok {
-		definitions = append(definitions, csv)
+	for _, sourceType := range []string{"csv", "github"} {
+		if definition, ok := c.definitions[sourceType]; ok {
+			definitions = append(definitions, definition)
+		}
 	}
 	return definitions
 }
