@@ -18,7 +18,6 @@ import (
 
 	"pompos/internal/ingestion"
 	"pompos/internal/policy"
-	"pompos/internal/runner"
 	"pompos/internal/secrets"
 	"pompos/internal/spec"
 	"pompos/internal/store"
@@ -31,21 +30,19 @@ type MetadataStore interface {
 	Create(context.Context, ingestion.Ingestion) error
 	Get(context.Context, string) (ingestion.Ingestion, error)
 	List(context.Context) ([]ingestion.Ingestion, error)
-	MarkRunning(context.Context, string, time.Time) error
 	Finish(context.Context, string, string, string) error
-	UpdateSchedule(context.Context, string, string) error
 }
 
 type ScheduleManager interface {
 	Validate(string) error
 	Upsert(ingestion.Ingestion) error
+	Enqueue(context.Context, string) error
 	NextRun(string) *time.Time
 }
 
 type App struct {
 	Store       MetadataStore
 	Policy      policy.Engine
-	Runner      runner.Runner
 	Secrets     secrets.Store
 	Scheduler   ScheduleManager
 	Validator   validation.SourceValidator
@@ -53,11 +50,10 @@ type App struct {
 	SpecDir     string
 	Logger      *log.Logger
 	templates   map[string]*template.Template
-	runGate     chan struct{}
 }
 
 func New(app App) (*App, error) {
-	if app.Store == nil || app.Policy == nil || app.Runner == nil || app.Secrets == nil || app.Validator == nil {
+	if app.Store == nil || app.Policy == nil || app.Secrets == nil || app.Validator == nil {
 		return nil, errors.New("web app dependencies must not be nil")
 	}
 	if app.Logger == nil {
@@ -66,7 +62,6 @@ func New(app App) (*App, error) {
 	if app.Scheduler == nil {
 		app.Scheduler = noopScheduleManager{}
 	}
-	app.runGate = make(chan struct{}, 1)
 	app.templates = make(map[string]*template.Template, 4)
 	for _, page := range []string{"home", "new", "detail", "secrets"} {
 		parsed, err := template.New(page).ParseFS(templatefiles.FS, "layout.html", page+".html")
@@ -156,6 +151,7 @@ type detailPageData struct {
 	ScheduleValue string
 	ScheduleSaved bool
 	ScheduleError string
+	RunQueued     bool
 }
 
 var githubTableOptions = []githubTableOption{
@@ -219,11 +215,11 @@ func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Logger.Printf("validation succeeded ingestion_id=%s source=csv", item.ID)
-	if err := a.persistAndRun(r.Context(), item); err != nil {
+	if err := a.persistAndEnqueue(r.Context(), item); err != nil {
 		a.serverError(w, err)
 		return
 	}
-	http.Redirect(w, r, "/ingestions/"+item.ID, http.StatusSeeOther)
+	http.Redirect(w, r, "/ingestions/"+item.ID+"?run=queued", http.StatusSeeOther)
 }
 
 func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
@@ -330,17 +326,17 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 		items = append(items, item)
 	}
 	for index, item := range items {
-		a.Logger.Printf("running selected GitHub table ingestion_id=%s source_table=%s position=%d total=%d",
+		a.Logger.Printf("queueing selected GitHub table ingestion_id=%s source_table=%s position=%d total=%d",
 			item.ID, item.Source.Table, index+1, len(items))
-		if err := a.persistAndRun(r.Context(), item); err != nil {
+		if err := a.persistAndEnqueue(r.Context(), item); err != nil {
 			a.serverError(w, err)
 			return
 		}
 	}
-	http.Redirect(w, r, "/ingestions/"+items[0].ID, http.StatusSeeOther)
+	http.Redirect(w, r, "/ingestions/"+items[0].ID+"?run=queued", http.StatusSeeOther)
 }
 
-func (a *App) persistAndRun(ctx context.Context, item ingestion.Ingestion) error {
+func (a *App) persistAndEnqueue(ctx context.Context, item ingestion.Ingestion) error {
 	a.Logger.Printf("persisting ingestion ingestion_id=%s name=%q", item.ID, item.Name)
 	if err := a.Store.Create(ctx, item); err != nil {
 		a.Logger.Printf("metadata persistence failed ingestion_id=%s error=%q", item.ID, err)
@@ -353,7 +349,7 @@ func (a *App) persistAndRun(ctx context.Context, item ingestion.Ingestion) error
 		if updateErr := a.finish(item.ID, ingestion.StatusFailed, err.Error()); updateErr != nil {
 			return errors.Join(err, updateErr)
 		}
-		return nil
+		return err
 	}
 	a.Logger.Printf("spec written ingestion_id=%s path=%s", item.ID, specPath)
 	if err := a.Scheduler.Upsert(item); err != nil {
@@ -361,9 +357,16 @@ func (a *App) persistAndRun(ctx context.Context, item ingestion.Ingestion) error
 		if updateErr := a.finish(item.ID, ingestion.StatusFailed, err.Error()); updateErr != nil {
 			return errors.Join(err, updateErr)
 		}
-		return nil
+		return err
 	}
-	return a.execute(ctx, item)
+	if err := a.Scheduler.Enqueue(ctx, item.ID); err != nil {
+		a.Logger.Printf("initial run enqueue failed ingestion_id=%s error=%q", item.ID, err)
+		if updateErr := a.finish(item.ID, ingestion.StatusFailed, err.Error()); updateErr != nil {
+			return errors.Join(err, updateErr)
+		}
+		return err
+	}
+	return nil
 }
 
 func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
@@ -379,6 +382,7 @@ func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
 	a.render(w, http.StatusOK, "detail", detailPageData{
 		Title: item.Name, Ingestion: item, SpecPath: filepath.Join(a.SpecDir, item.ID+".yaml"),
 		NextRun: a.Scheduler.NextRun(item.ID), ScheduleValue: item.Schedule, ScheduleSaved: r.URL.Query().Get("schedule") == "saved",
+		RunQueued: r.URL.Query().Get("run") == "queued",
 	})
 }
 
@@ -393,11 +397,12 @@ func (a *App) runIngestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Logger.Printf("rerun requested ingestion_id=%s source=%s source_table=%s", item.ID, item.Source.Type, item.Source.Table)
-	if err := a.execute(r.Context(), item); err != nil {
+	if err := a.Scheduler.Enqueue(r.Context(), item.ID); err != nil {
 		a.serverError(w, err)
 		return
 	}
-	http.Redirect(w, r, "/ingestions/"+item.ID, http.StatusSeeOther)
+	a.Logger.Printf("rerun enqueued ingestion_id=%s source=%s source_table=%s", item.ID, item.Source.Type, item.Source.Table)
+	http.Redirect(w, r, "/ingestions/"+item.ID+"?run=queued", http.StatusSeeOther)
 }
 
 func (a *App) updateSchedule(w http.ResponseWriter, r *http.Request) {
@@ -420,17 +425,11 @@ func (a *App) updateSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	previous := item.Schedule
 	item.Schedule = schedule
-	if err := a.Store.UpdateSchedule(r.Context(), item.ID, schedule); err != nil {
-		a.serverError(w, err)
-		return
-	}
 	if _, err := spec.Write(a.SpecDir, item); err != nil {
-		_ = a.Store.UpdateSchedule(r.Context(), item.ID, previous)
 		a.serverError(w, err)
 		return
 	}
 	if err := a.Scheduler.Upsert(item); err != nil {
-		_ = a.Store.UpdateSchedule(r.Context(), item.ID, previous)
 		item.Schedule = previous
 		_, _ = spec.Write(a.SpecDir, item)
 		_ = a.Scheduler.Upsert(item)
@@ -439,73 +438,6 @@ func (a *App) updateSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	a.Logger.Printf("schedule updated ingestion_id=%s schedule=%q timezone=UTC", item.ID, schedule)
 	http.Redirect(w, r, "/ingestions/"+item.ID+"?schedule=saved", http.StatusSeeOther)
-}
-
-func (a *App) RunScheduled(ctx context.Context, id string) error {
-	item, err := a.Store.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if err := a.execute(ctx, item); err != nil {
-		return err
-	}
-	updated, err := a.Store.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if updated.Status == ingestion.StatusFailed {
-		return fmt.Errorf("ingestion failed: %s", updated.LastError)
-	}
-	return nil
-}
-
-func (a *App) execute(ctx context.Context, item ingestion.Ingestion) error {
-	select {
-	case a.runGate <- struct{}{}:
-		defer func() { <-a.runGate }()
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	started := time.Now()
-	resolved, err := a.resolveSecrets(ctx, item)
-	if err != nil {
-		a.Logger.Printf("secret resolution failed ingestion_id=%s secret_key=%s error=%q", item.ID, item.Source.SecretKey, err)
-		return a.finish(item.ID, ingestion.StatusFailed, err.Error())
-	}
-	item = resolved
-	if err := a.Policy.Validate(item); err != nil {
-		a.Logger.Printf("run policy failed ingestion_id=%s error=%q", item.ID, err)
-		return a.finish(item.ID, ingestion.StatusFailed, err.Error())
-	}
-	a.Logger.Printf("marking ingestion running ingestion_id=%s destination_table=%s", item.ID, item.Destination.Table)
-	if err := a.Store.MarkRunning(ctx, item.ID, time.Now()); err != nil {
-		a.Logger.Printf("failed to mark ingestion running ingestion_id=%s error=%q", item.ID, err)
-		return err
-	}
-	if err := a.Runner.Run(ctx, item); err != nil {
-		a.Logger.Printf("ingestion failed ingestion_id=%s duration=%s error=%q", item.ID, time.Since(started).Round(time.Millisecond), err)
-		return a.finish(item.ID, ingestion.StatusFailed, err.Error())
-	}
-	a.Logger.Printf("ingestion succeeded ingestion_id=%s duration=%s", item.ID, time.Since(started).Round(time.Millisecond))
-	return a.finish(item.ID, ingestion.StatusSucceeded, "")
-}
-
-func (a *App) resolveSecrets(ctx context.Context, item ingestion.Ingestion) (ingestion.Ingestion, error) {
-	if item.Source.Type != "github" || item.Source.AccessToken != "" {
-		return item, nil
-	}
-	if item.Source.SecretKey == "" {
-		return item, errors.New("GitHub ingestion has no saved token reference")
-	}
-	value, err := a.Secrets.Get(ctx, item.Source.SecretKey)
-	if errors.Is(err, secrets.ErrNotFound) {
-		return item, errors.New("the saved GitHub token no longer exists")
-	}
-	if err != nil {
-		return item, fmt.Errorf("load GitHub token: %w", err)
-	}
-	item.Source.AccessToken = string(value)
-	return item, nil
 }
 
 func (a *App) finish(id, status, message string) error {
@@ -741,4 +673,7 @@ type noopScheduleManager struct{}
 
 func (noopScheduleManager) Validate(string) error            { return nil }
 func (noopScheduleManager) Upsert(ingestion.Ingestion) error { return nil }
-func (noopScheduleManager) NextRun(string) *time.Time        { return nil }
+func (noopScheduleManager) Enqueue(context.Context, string) error {
+	return errors.New("run queue is unavailable")
+}
+func (noopScheduleManager) NextRun(string) *time.Time { return nil }

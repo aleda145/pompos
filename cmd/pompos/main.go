@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"pompos/internal/config"
+	"pompos/internal/execution"
 	"pompos/internal/ingestion"
 	"pompos/internal/policy"
 	runneringestr "pompos/internal/runner/ingestr"
@@ -37,23 +37,24 @@ func main() {
 	}
 	defer metadata.Close()
 
-	var app *web.App
-	scheduleManager, err := scheduler.New(logger, func(ctx context.Context, id string) error {
-		if app == nil {
-			return errors.New("web app is not initialized")
-		}
-		return app.RunScheduled(ctx, id)
+	policyEngine := policy.DefaultEngine{DestinationPath: cfg.Destination.Path}
+	ingestionRunner := runneringestr.Runner{Binary: cfg.Runner.Binary, Logger: logger}
+	secretStore := metadata.Secrets()
+	executor, err := execution.New(execution.Service{
+		Store: metadata, Policy: policyEngine, Runner: ingestionRunner,
+		Secrets: secretStore, Logger: logger,
 	})
 	if err != nil {
 		logger.Fatal(err)
 	}
-	app, err = web.New(web.App{
-		Store: metadata,
-		Policy: policy.DefaultEngine{
-			DestinationPath: cfg.Destination.Path,
-		},
-		Runner:    runneringestr.Runner{Binary: cfg.Runner.Binary, Logger: logger},
-		Secrets:   metadata.Secrets(),
+	scheduleManager, err := scheduler.New(logger, metadata, executor.Run)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	app, err := web.New(web.App{
+		Store:     metadata,
+		Policy:    policyEngine,
+		Secrets:   secretStore,
 		Scheduler: scheduleManager,
 		Validator: validation.HTTPSourceValidator{Client: &http.Client{
 			Timeout: cfg.RequestTimeout,
@@ -65,14 +66,9 @@ func main() {
 	if err != nil {
 		logger.Fatal(err)
 	}
-	items, err := metadata.List(context.Background())
-	if err != nil {
+	if err := scheduleManager.Start(); err != nil {
 		logger.Fatal(err)
 	}
-	if err := scheduleManager.Load(items); err != nil {
-		logger.Fatal(err)
-	}
-	scheduleManager.Start()
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

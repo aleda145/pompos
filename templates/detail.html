@@ -4,6 +4,7 @@
   <h1>{{.Ingestion.Name}}</h1>
   <form method="post" action="/ingestions/{{.Ingestion.ID}}/run"><button type="submit">Run again</button></form>
 </div>
+{{if .RunQueued}}<div class="notice notice-success" role="status">Run queued. It will continue if you leave this page.</div>{{end}}
 
 <div class="panel details">
   <section><h2>Source</h2><p class="url">{{.Ingestion.Source.DisplayLocation}}</p>{{if eq .Ingestion.Source.Type "github"}}<p class="hint">GitHub table: <code>{{.Ingestion.Source.Table}}</code></p>{{end}}</section>

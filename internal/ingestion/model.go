@@ -16,9 +16,18 @@ type Ingestion struct {
 	Destination Destination
 	Status      string
 	Schedule    string
+	NextRun     *time.Time
 	LastRun     *time.Time
 	LastError   string
 	SpecPath    string
+}
+
+type Run struct {
+	ID           int64
+	IngestionID  string
+	Trigger      string
+	ScheduledFor time.Time
+	Attempts     int
 }
 
 type Source struct {
