@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"pompos/internal/ingestion"
 	"pompos/internal/policy"
@@ -47,7 +48,7 @@ func TestCreateIngestionRunsAndRendersDetail(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	form := url.Values{"csv_url": {"https://example.com/customers.csv"}, "table_name": {"customers"}}
+	form := url.Values{"csv_url": {"https://example.com/customers.csv"}, "table_name": {"customers"}, "schedule": {"0 6 * * *"}}
 	request := httptest.NewRequest(http.MethodPost, "/ingestions", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
@@ -63,7 +64,7 @@ func TestCreateIngestionRunsAndRendersDetail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if item.Status != ingestion.StatusSucceeded || item.LastRun == nil {
+	if item.Status != ingestion.StatusSucceeded || item.LastRun == nil || item.Schedule != "0 6 * * *" {
 		t.Fatalf("stored ingestion = %#v", item)
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "ingestions", ran.ID+".yaml")); err != nil {
@@ -80,6 +81,53 @@ func TestCreateIngestionRunsAndRendersDetail(t *testing.T) {
 	app.Handler().ServeHTTP(detailResponse, detailRequest)
 	if detailResponse.Code != http.StatusOK || !strings.Contains(detailResponse.Body.String(), "succeeded") {
 		t.Fatalf("GET detail status = %d, body = %s", detailResponse.Code, detailResponse.Body.String())
+	}
+}
+
+func TestUpdateSchedulePersistsAndRegisters(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	destination := filepath.Join(dataDir, "pompos.duckdb")
+	metadata, err := store.Open(ctx, filepath.Join(dataDir, "pompos.sqlite"), destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer metadata.Close()
+	item := ingestion.Ingestion{
+		ID: "scheduled", Name: "customers", Status: ingestion.StatusSucceeded,
+		Source:      ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
+		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "customers"},
+	}
+	if err := metadata.Create(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	schedules := &scheduleManagerStub{}
+	app, err := New(App{
+		Store: metadata, Policy: policy.DefaultEngine{DestinationPath: destination},
+		Runner:  runnerFunc(func(context.Context, ingestion.Ingestion) error { return nil }),
+		Secrets: metadata.Secrets(), Scheduler: schedules,
+		Validator:   validatorFunc(func(context.Context, ingestion.Source) error { return nil }),
+		Destination: ingestion.Destination{Type: "duckdb", Path: destination},
+		SpecDir:     filepath.Join(dataDir, "ingestions"), Logger: log.New(io.Discard, "", 0),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"schedule": {"15 * * * *"}}
+	request := httptest.NewRequest(http.MethodPost, "/ingestions/scheduled/schedule", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	stored, err := metadata.Get(ctx, item.ID)
+	if err != nil || stored.Schedule != "15 * * * *" || schedules.item.Schedule != "15 * * * *" {
+		t.Fatalf("stored = %#v, scheduled = %#v, error = %v", stored, schedules.item, err)
+	}
+	specContent, err := os.ReadFile(filepath.Join(dataDir, "ingestions", item.ID+".yaml"))
+	if err != nil || !strings.Contains(string(specContent), `cron: "15 * * * *"`) {
+		t.Fatalf("spec = %s, error = %v", specContent, err)
 	}
 }
 
@@ -323,3 +371,16 @@ type validatorFunc func(context.Context, ingestion.Source) error
 func (f validatorFunc) Validate(ctx context.Context, source ingestion.Source) error {
 	return f(ctx, source)
 }
+
+type scheduleManagerStub struct {
+	item ingestion.Ingestion
+}
+
+func (s *scheduleManagerStub) Validate(value string) error {
+	if value == "invalid" {
+		return errors.New("invalid cron schedule")
+	}
+	return nil
+}
+func (s *scheduleManagerStub) Upsert(item ingestion.Ingestion) error { s.item = item; return nil }
+func (s *scheduleManagerStub) NextRun(string) *time.Time             { return nil }

@@ -14,6 +14,7 @@
       <div><dt>Table</dt><dd>{{.Destination.Table}}</dd></div>
       <div><dt>Status</dt><dd><span class="status status-{{.Status}}">{{.Status}}</span></dd></div>
       <div><dt>Last run</dt><dd>{{if .LastRun}}{{.LastRun.Format "2006-01-02 15:04:05 UTC"}}{{else}}Never{{end}}</dd></div>
+      {{if .Schedule}}<div><dt>Schedule</dt><dd><code>{{.Schedule}}</code> UTC</dd></div>{{end}}
     </dl>
   </a>
   {{end}}

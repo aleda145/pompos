@@ -15,6 +15,7 @@ type Ingestion struct {
 	Source      Source
 	Destination Destination
 	Status      string
+	Schedule    string
 	LastRun     *time.Time
 	LastError   string
 	SpecPath    string

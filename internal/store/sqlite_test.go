@@ -41,6 +41,13 @@ func TestSQLiteLifecycle(t *testing.T) {
 	if got.Status != ingestion.StatusSucceeded || got.LastRun == nil || !got.LastRun.Equal(now.UTC()) {
 		t.Fatalf("Get() = %#v", got)
 	}
+	if err := metadata.UpdateSchedule(ctx, item.ID, "0 6 * * *"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = metadata.Get(ctx, item.ID)
+	if err != nil || got.Schedule != "0 6 * * *" {
+		t.Fatalf("schedule after update = %q, %v", got.Schedule, err)
+	}
 }
 
 func TestSQLiteSecretsLifecycle(t *testing.T) {

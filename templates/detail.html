@@ -9,6 +9,20 @@
   <section><h2>Source</h2><p class="url">{{.Ingestion.Source.DisplayLocation}}</p>{{if eq .Ingestion.Source.Type "github"}}<p class="hint">GitHub table: <code>{{.Ingestion.Source.Table}}</code></p>{{end}}</section>
   <section><h2>Destination</h2><p>DuckDB<br><code>{{.Ingestion.Destination.Path}}</code><br><code>{{.Ingestion.Destination.Table}}</code></p></section>
   <section><h2>Status</h2><p><span class="status status-{{.Ingestion.Status}}">{{.Ingestion.Status}}</span></p>{{if .Ingestion.LastRun}}<p class="hint">Last run: {{.Ingestion.LastRun.Format "2006-01-02 15:04:05 UTC"}}</p>{{end}}</section>
+  <section>
+    <h2>Schedule</h2>
+    {{if .ScheduleSaved}}<div class="notice notice-success" role="status">Schedule saved.</div>{{end}}
+    {{if .ScheduleError}}<div class="error" role="alert">{{.ScheduleError}}</div>{{end}}
+    <form method="post" action="/ingestions/{{.Ingestion.ID}}/schedule" class="schedule-form">
+      <label for="schedule">Cron expression</label>
+      <div class="schedule-controls">
+        <input id="schedule" name="schedule" value="{{.ScheduleValue}}" placeholder="0 6 * * *" autocomplete="off">
+        <button type="submit">Save schedule</button>
+      </div>
+      <p class="hint">Five fields, evaluated in UTC. Leave blank to disable.</p>
+      {{if .NextRun}}<p class="hint">Next run: {{.NextRun.Format "2006-01-02 15:04:05 UTC"}}</p>{{end}}
+    </form>
+  </section>
   {{if .Ingestion.LastError}}<section><h2>Latest error</h2><pre class="error">{{.Ingestion.LastError}}</pre></section>{{end}}
   <section class="metadata"><h2>Metadata</h2><dl><div><dt>Ingestion ID</dt><dd><code>{{.Ingestion.ID}}</code></dd></div><div><dt>Spec path</dt><dd><code>{{.SpecPath}}</code></dd></div></dl></section>
 </div>

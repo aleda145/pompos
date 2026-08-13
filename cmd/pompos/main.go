@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"pompos/internal/ingestion"
 	"pompos/internal/policy"
 	runneringestr "pompos/internal/runner/ingestr"
+	"pompos/internal/scheduler"
 	"pompos/internal/store"
 	"pompos/internal/validation"
 	"pompos/internal/web"
@@ -35,13 +37,24 @@ func main() {
 	}
 	defer metadata.Close()
 
-	app, err := web.New(web.App{
+	var app *web.App
+	scheduleManager, err := scheduler.New(logger, func(ctx context.Context, id string) error {
+		if app == nil {
+			return errors.New("web app is not initialized")
+		}
+		return app.RunScheduled(ctx, id)
+	})
+	if err != nil {
+		logger.Fatal(err)
+	}
+	app, err = web.New(web.App{
 		Store: metadata,
 		Policy: policy.DefaultEngine{
 			DestinationPath: cfg.Destination.Path,
 		},
-		Runner:  runneringestr.Runner{Binary: cfg.Runner.Binary, Logger: logger},
-		Secrets: metadata.Secrets(),
+		Runner:    runneringestr.Runner{Binary: cfg.Runner.Binary, Logger: logger},
+		Secrets:   metadata.Secrets(),
+		Scheduler: scheduleManager,
 		Validator: validation.HTTPSourceValidator{Client: &http.Client{
 			Timeout: cfg.RequestTimeout,
 		}},
@@ -52,6 +65,21 @@ func main() {
 	if err != nil {
 		logger.Fatal(err)
 	}
+	items, err := metadata.List(context.Background())
+	if err != nil {
+		logger.Fatal(err)
+	}
+	if err := scheduleManager.Load(items); err != nil {
+		logger.Fatal(err)
+	}
+	scheduleManager.Start()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := scheduleManager.Shutdown(ctx); err != nil {
+			logger.Printf("scheduler shutdown: %v", err)
+		}
+	}()
 
 	server := &http.Server{
 		Addr:              cfg.Address,

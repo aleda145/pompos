@@ -16,6 +16,10 @@ func Generate(item ingestion.Ingestion) []byte {
 	} else {
 		source = fmt.Sprintf("  type: csv\n  url: %s", yamlString(item.Source.URL))
 	}
+	schedule := ""
+	if item.Schedule != "" {
+		schedule = fmt.Sprintf("\nschedule:\n  cron: %s\n  timezone: UTC\n", yamlString(item.Schedule))
+	}
 	return []byte(fmt.Sprintf(`apiVersion: pompos.dev/v1
 kind: Ingestion
 
@@ -28,7 +32,7 @@ source:
 destination:
   type: duckdb
   table: %s
-`, yamlString(item.Name), source, yamlString(item.Destination.Table)))
+%s`, yamlString(item.Name), source, yamlString(item.Destination.Table), schedule))
 }
 
 func Write(directory string, item ingestion.Ingestion) (string, error) {

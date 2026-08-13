@@ -54,6 +54,9 @@
   <label for="table_name">DuckDB table</label>
   <input id="table_name" name="table_name" value="{{.TableName}}" placeholder="customers" pattern="[A-Za-z_][A-Za-z0-9_]*" required>
   <p class="hint">Letters, numbers, and underscores; start with a letter or underscore.</p>
+  <label for="schedule">Schedule <span class="optional">Optional</span></label>
+  <input id="schedule" name="schedule" value="{{.Schedule}}" placeholder="0 6 * * *" autocomplete="off">
+  <p class="hint">Standard five-field cron in UTC. Example: <code>0 6 * * *</code> runs daily at 06:00 UTC.</p>
   <button type="submit">Create and run</button>
 </form>
 
@@ -111,6 +114,9 @@
       {{end}}
     </div>
   </fieldset>
+  <label for="schedule">Schedule <span class="optional">Optional</span></label>
+  <input id="schedule" name="schedule" value="{{.Schedule}}" placeholder="0 6 * * *" autocomplete="off">
+  <p class="hint">Standard five-field cron in UTC. The same schedule applies to every selected table.</p>
   <button type="submit">Create and run selected tables</button>
 </form>
 {{end}}

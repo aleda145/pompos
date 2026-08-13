@@ -33,6 +33,13 @@ type MetadataStore interface {
 	List(context.Context) ([]ingestion.Ingestion, error)
 	MarkRunning(context.Context, string, time.Time) error
 	Finish(context.Context, string, string, string) error
+	UpdateSchedule(context.Context, string, string) error
+}
+
+type ScheduleManager interface {
+	Validate(string) error
+	Upsert(ingestion.Ingestion) error
+	NextRun(string) *time.Time
 }
 
 type App struct {
@@ -40,11 +47,13 @@ type App struct {
 	Policy      policy.Engine
 	Runner      runner.Runner
 	Secrets     secrets.Store
+	Scheduler   ScheduleManager
 	Validator   validation.SourceValidator
 	Destination ingestion.Destination
 	SpecDir     string
 	Logger      *log.Logger
 	templates   map[string]*template.Template
+	runGate     chan struct{}
 }
 
 func New(app App) (*App, error) {
@@ -54,6 +63,10 @@ func New(app App) (*App, error) {
 	if app.Logger == nil {
 		app.Logger = log.Default()
 	}
+	if app.Scheduler == nil {
+		app.Scheduler = noopScheduleManager{}
+	}
+	app.runGate = make(chan struct{}, 1)
 	app.templates = make(map[string]*template.Template, 4)
 	for _, page := range []string{"home", "new", "detail", "secrets"} {
 		parsed, err := template.New(page).ParseFS(templatefiles.FS, "layout.html", page+".html")
@@ -72,6 +85,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /ingestions", a.createIngestion)
 	mux.HandleFunc("GET /ingestions/{id}", a.ingestionDetail)
 	mux.HandleFunc("POST /ingestions/{id}/run", a.runIngestion)
+	mux.HandleFunc("POST /ingestions/{id}/schedule", a.updateSchedule)
 	mux.HandleFunc("GET /secrets", a.listSecrets)
 	mux.HandleFunc("POST /secrets", a.createSecret)
 	mux.HandleFunc("POST /secrets/delete", a.deleteSecret)
@@ -116,6 +130,7 @@ type newPageData struct {
 	SavedSecrets  []secrets.Entry
 	SecretKey     string
 	NewSecretName string
+	Schedule      string
 }
 
 type secretsPageData struct {
@@ -131,6 +146,16 @@ type secretView struct {
 	Entry      secrets.Entry
 	Type       string
 	Ingestions []ingestion.Ingestion
+}
+
+type detailPageData struct {
+	Title         string
+	Ingestion     ingestion.Ingestion
+	SpecPath      string
+	NextRun       *time.Time
+	ScheduleValue string
+	ScheduleSaved bool
+	ScheduleError string
 }
 
 var githubTableOptions = []githubTableOption{
@@ -164,11 +189,17 @@ func (a *App) createIngestion(w http.ResponseWriter, r *http.Request) {
 func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
 	csvURL := strings.TrimSpace(r.FormValue("csv_url"))
 	tableName := strings.TrimSpace(r.FormValue("table_name"))
+	schedule := strings.TrimSpace(r.FormValue("schedule"))
+	if err := a.Scheduler.Validate(schedule); err != nil {
+		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule})
+		return
+	}
 	item := ingestion.Ingestion{
-		ID:     newID(),
-		Name:   tableName,
-		Status: ingestion.StatusPending,
-		Source: ingestion.Source{Type: "csv", URL: csvURL},
+		ID:       newID(),
+		Name:     tableName,
+		Status:   ingestion.StatusPending,
+		Schedule: schedule,
+		Source:   ingestion.Source{Type: "csv", URL: csvURL},
 		Destination: ingestion.Destination{
 			Type:  a.Destination.Type,
 			Path:  a.Destination.Path,
@@ -179,12 +210,12 @@ func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
 	a.Logger.Printf("validating ingestion ingestion_id=%s source=csv", item.ID)
 	if err := a.Policy.Validate(item); err != nil {
 		a.Logger.Printf("validation failed ingestion_id=%s source=csv error=%q", item.ID, err)
-		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName})
+		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule})
 		return
 	}
 	if err := a.Validator.Validate(r.Context(), item.Source); err != nil {
 		a.Logger.Printf("connectivity validation failed ingestion_id=%s source=csv error=%q", item.ID, err)
-		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName})
+		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule})
 		return
 	}
 	a.Logger.Printf("validation succeeded ingestion_id=%s source=csv", item.ID)
@@ -197,14 +228,19 @@ func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 	repositoryInput := strings.TrimSpace(r.FormValue("repository"))
+	schedule := strings.TrimSpace(r.FormValue("schedule"))
 	owner, repository, err := validation.ParseGitHubRepository(repositoryInput)
 	if err != nil {
-		a.renderGitHubError(w, err.Error(), repositoryInput, r.Form["tables"], r.FormValue("secret_key"), r.FormValue("new_secret_name"))
+		a.renderGitHubError(w, err.Error(), repositoryInput, r.Form["tables"], r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
 		return
 	}
 	selectedTables := r.Form["tables"]
 	if len(selectedTables) == 0 {
-		a.renderGitHubError(w, "Choose at least one table to sync.", repositoryInput, nil, r.FormValue("secret_key"), r.FormValue("new_secret_name"))
+		a.renderGitHubError(w, "Choose at least one table to sync.", repositoryInput, nil, r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
+		return
+	}
+	if err := a.Scheduler.Validate(schedule); err != nil {
+		a.renderGitHubError(w, err.Error(), repositoryInput, selectedTables, r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
 		return
 	}
 
@@ -212,15 +248,15 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 	newSecretName := strings.TrimSpace(r.FormValue("new_secret_name"))
 	accessToken := strings.TrimSpace(r.FormValue("access_token"))
 	if secretKey != "" && (newSecretName != "" || accessToken != "") {
-		a.renderGitHubError(w, "Choose a saved secret or enter a new one, not both.", repositoryInput, selectedTables, secretKey, newSecretName)
+		a.renderGitHubError(w, "Choose a saved secret or enter a new one, not both.", repositoryInput, selectedTables, secretKey, newSecretName, schedule)
 		return
 	}
 	if secretKey == "" && accessToken == "" {
-		a.renderGitHubError(w, "Select a saved secret or enter a new token.", repositoryInput, selectedTables, "", newSecretName)
+		a.renderGitHubError(w, "Select a saved secret or enter a new token.", repositoryInput, selectedTables, "", newSecretName, schedule)
 		return
 	}
 	if accessToken != "" && newSecretName == "" {
-		a.renderGitHubError(w, "Give the new token a secret name.", repositoryInput, selectedTables, "", "")
+		a.renderGitHubError(w, "Give the new token a secret name.", repositoryInput, selectedTables, "", "", schedule)
 		return
 	}
 	newSecret := secretKey == ""
@@ -229,7 +265,7 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 	} else {
 		stored, err := a.Secrets.Get(r.Context(), secretKey)
 		if errors.Is(err, secrets.ErrNotFound) {
-			a.renderGitHubError(w, "The selected secret no longer exists.", repositoryInput, selectedTables, "", "")
+			a.renderGitHubError(w, "The selected secret no longer exists.", repositoryInput, selectedTables, "", "", schedule)
 			return
 		}
 		if err != nil {
@@ -254,7 +290,7 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 	a.Logger.Printf("validating GitHub repository repository=%s/%s stargazers=%t", owner, repository, validationSource.Table == "stargazers")
 	if err := a.Validator.Validate(r.Context(), validationSource); err != nil {
 		a.Logger.Printf("GitHub repository validation failed repository=%s/%s error=%q", owner, repository, err)
-		a.renderGitHubError(w, err.Error(), repositoryInput, selectedTables, selectedSecretKey(secretKey, newSecret), newSecretName)
+		a.renderGitHubError(w, err.Error(), repositoryInput, selectedTables, selectedSecretKey(secretKey, newSecret), newSecretName, schedule)
 		return
 	}
 	a.Logger.Printf("GitHub repository validation succeeded repository=%s/%s", owner, repository)
@@ -273,10 +309,11 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 		source := baseSource
 		source.Table = sourceTable
 		item := ingestion.Ingestion{
-			ID:     newID(),
-			Name:   owner + "/" + repository + " · " + githubTableName(sourceTable),
-			Status: ingestion.StatusPending,
-			Source: source,
+			ID:       newID(),
+			Name:     owner + "/" + repository + " · " + githubTableName(sourceTable),
+			Status:   ingestion.StatusPending,
+			Schedule: schedule,
+			Source:   source,
 			Destination: ingestion.Destination{
 				Type:  a.Destination.Type,
 				Path:  a.Destination.Path,
@@ -285,7 +322,7 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := a.Policy.Validate(item); err != nil {
 			a.Logger.Printf("validation failed ingestion_id=%s source=github source_table=%s error=%q", item.ID, sourceTable, err)
-			a.renderGitHubError(w, err.Error(), repositoryInput, selectedTables, selectedSecretKey(secretKey, newSecret), newSecretName)
+			a.renderGitHubError(w, err.Error(), repositoryInput, selectedTables, selectedSecretKey(secretKey, newSecret), newSecretName, schedule)
 			return
 		}
 		a.Logger.Printf("prepared GitHub ingestion ingestion_id=%s source_table=%s destination_table=%s",
@@ -319,6 +356,13 @@ func (a *App) persistAndRun(ctx context.Context, item ingestion.Ingestion) error
 		return nil
 	}
 	a.Logger.Printf("spec written ingestion_id=%s path=%s", item.ID, specPath)
+	if err := a.Scheduler.Upsert(item); err != nil {
+		a.Logger.Printf("schedule registration failed ingestion_id=%s schedule=%q error=%q", item.ID, item.Schedule, err)
+		if updateErr := a.finish(item.ID, ingestion.StatusFailed, err.Error()); updateErr != nil {
+			return errors.Join(err, updateErr)
+		}
+		return nil
+	}
 	return a.execute(ctx, item)
 }
 
@@ -332,11 +376,10 @@ func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, err)
 		return
 	}
-	a.render(w, http.StatusOK, "detail", struct {
-		Title     string
-		Ingestion ingestion.Ingestion
-		SpecPath  string
-	}{Title: item.Name, Ingestion: item, SpecPath: filepath.Join(a.SpecDir, item.ID+".yaml")})
+	a.render(w, http.StatusOK, "detail", detailPageData{
+		Title: item.Name, Ingestion: item, SpecPath: filepath.Join(a.SpecDir, item.ID+".yaml"),
+		NextRun: a.Scheduler.NextRun(item.ID), ScheduleValue: item.Schedule, ScheduleSaved: r.URL.Query().Get("schedule") == "saved",
+	})
 }
 
 func (a *App) runIngestion(w http.ResponseWriter, r *http.Request) {
@@ -357,7 +400,72 @@ func (a *App) runIngestion(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/ingestions/"+item.ID, http.StatusSeeOther)
 }
 
+func (a *App) updateSchedule(w http.ResponseWriter, r *http.Request) {
+	item, err := a.Store.Get(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	schedule := strings.TrimSpace(r.FormValue("schedule"))
+	if err := a.Scheduler.Validate(schedule); err != nil {
+		a.render(w, http.StatusUnprocessableEntity, "detail", detailPageData{
+			Title: item.Name, Ingestion: item, SpecPath: filepath.Join(a.SpecDir, item.ID+".yaml"),
+			NextRun: a.Scheduler.NextRun(item.ID), ScheduleValue: schedule, ScheduleError: err.Error(),
+		})
+		return
+	}
+	previous := item.Schedule
+	item.Schedule = schedule
+	if err := a.Store.UpdateSchedule(r.Context(), item.ID, schedule); err != nil {
+		a.serverError(w, err)
+		return
+	}
+	if _, err := spec.Write(a.SpecDir, item); err != nil {
+		_ = a.Store.UpdateSchedule(r.Context(), item.ID, previous)
+		a.serverError(w, err)
+		return
+	}
+	if err := a.Scheduler.Upsert(item); err != nil {
+		_ = a.Store.UpdateSchedule(r.Context(), item.ID, previous)
+		item.Schedule = previous
+		_, _ = spec.Write(a.SpecDir, item)
+		_ = a.Scheduler.Upsert(item)
+		a.serverError(w, err)
+		return
+	}
+	a.Logger.Printf("schedule updated ingestion_id=%s schedule=%q timezone=UTC", item.ID, schedule)
+	http.Redirect(w, r, "/ingestions/"+item.ID+"?schedule=saved", http.StatusSeeOther)
+}
+
+func (a *App) RunScheduled(ctx context.Context, id string) error {
+	item, err := a.Store.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := a.execute(ctx, item); err != nil {
+		return err
+	}
+	updated, err := a.Store.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if updated.Status == ingestion.StatusFailed {
+		return fmt.Errorf("ingestion failed: %s", updated.LastError)
+	}
+	return nil
+}
+
 func (a *App) execute(ctx context.Context, item ingestion.Ingestion) error {
+	select {
+	case a.runGate <- struct{}{}:
+		defer func() { <-a.runGate }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	started := time.Now()
 	resolved, err := a.resolveSecrets(ctx, item)
 	if err != nil {
@@ -424,7 +532,7 @@ func (a *App) renderNew(w http.ResponseWriter, status int, data newPageData) {
 	a.render(w, status, "new", data)
 }
 
-func (a *App) renderGitHubError(w http.ResponseWriter, message, repository string, selected []string, secretKey, newSecretName string) {
+func (a *App) renderGitHubError(w http.ResponseWriter, message, repository string, selected []string, secretKey, newSecretName, schedule string) {
 	selectedSet := make(map[string]bool, len(selected))
 	for _, table := range selected {
 		selectedSet[table] = true
@@ -435,7 +543,7 @@ func (a *App) renderGitHubError(w http.ResponseWriter, message, repository strin
 	}
 	a.renderNew(w, http.StatusUnprocessableEntity, newPageData{
 		Source: "github", Error: message, Repository: repository, GitHubTables: tables,
-		SecretKey: secretKey, NewSecretName: newSecretName,
+		SecretKey: secretKey, NewSecretName: newSecretName, Schedule: schedule,
 	})
 }
 
@@ -628,3 +736,9 @@ func selectedSecretKey(secretKey string, newSecret bool) string {
 	}
 	return secretKey
 }
+
+type noopScheduleManager struct{}
+
+func (noopScheduleManager) Validate(string) error            { return nil }
+func (noopScheduleManager) Upsert(ingestion.Ingestion) error { return nil }
+func (noopScheduleManager) NextRun(string) *time.Time        { return nil }

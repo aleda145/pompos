@@ -1,6 +1,7 @@
 package spec
 
 import (
+	"strings"
 	"testing"
 
 	"pompos/internal/ingestion"
@@ -57,5 +58,19 @@ destination:
 `
 	if got := string(Generate(item)); got != want {
 		t.Fatalf("Generate() =\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestGenerateIncludesSchedule(t *testing.T) {
+	item := ingestion.Ingestion{
+		Name: "customers", Schedule: "0 6 * * *",
+		Source:      ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
+		Destination: ingestion.Destination{Type: "duckdb", Table: "customers"},
+	}
+	got := string(Generate(item))
+	for _, expected := range []string{"schedule:\n", `  cron: "0 6 * * *"`, "  timezone: UTC"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("Generate() does not contain %q:\n%s", expected, got)
+		}
 	}
 }

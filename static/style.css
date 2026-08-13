@@ -40,6 +40,9 @@ form.panel button { justify-self: start; margin-top: .5rem; }
 .details section { border-bottom: 1px solid #edf0eb; padding-bottom: 1rem; }
 .details section:last-child { border: 0; padding-bottom: 0; }
 .details p { margin: 0; }
+.schedule-form { display: grid; max-width: 36rem; }
+.schedule-controls { display: grid; grid-template-columns: 1fr auto; gap: .65rem; align-items: center; }
+.schedule-controls button { white-space: nowrap; }
 code { font-size: .9em; }
 .error { border: 1px solid #e5aaaa; background: #fff0f0; color: #7d2424; border-radius: .5rem; padding: .85rem; margin: 0 0 1rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 pre.error { font: .85rem/1.45 ui-monospace, monospace; margin: 0; max-height: 22rem; overflow: auto; }
@@ -96,5 +99,5 @@ legend { font-weight: 700; padding: 0; }
 .credential-choice { margin-bottom: .4rem; }
 .or-divider { display: flex; align-items: center; gap: .7rem; color: #7b867f; font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; margin: .25rem 0; }
 .or-divider::before, .or-divider::after { content: ""; height: 1px; flex: 1; background: #dfe4dc; }
-@media (max-width: 560px) { main { padding-top: 2rem; } .page-heading { display: block; } .page-heading form, .page-heading .button { margin-bottom: 1.5rem; } dl div { grid-template-columns: 5.5rem 1fr; } }
+@media (max-width: 560px) { main { padding-top: 2rem; } .page-heading { display: block; } .page-heading form, .page-heading .button { margin-bottom: 1.5rem; } dl div { grid-template-columns: 5.5rem 1fr; } .schedule-controls { grid-template-columns: 1fr; } .schedule-controls button { justify-self: start; } }
 @media (max-width: 680px) { .source-heading { display: block; } .source-search { width: 100%; margin-bottom: 1rem; } .source-grid, .table-options { grid-template-columns: 1fr; } }

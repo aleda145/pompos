@@ -17,7 +17,7 @@ import (
 
 var ErrNotFound = errors.New("ingestion not found")
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 type SQLite struct {
 	db              *sql.DB
@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS ingestions (
     status TEXT NOT NULL,
     last_run_at TEXT,
     last_error TEXT NOT NULL DEFAULT '',
+    schedule TEXT NOT NULL DEFAULT '',
     source_type TEXT NOT NULL,
     source_owner TEXT NOT NULL DEFAULT '',
     source_repository TEXT NOT NULL DEFAULT '',
@@ -73,7 +74,7 @@ CREATE TABLE IF NOT EXISTS secrets (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
-PRAGMA user_version = 1;`
+PRAGMA user_version = 2;`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize metadata database: %w", err)
 	}
@@ -85,11 +86,11 @@ func (s *SQLite) Close() error { return s.db.Close() }
 func (s *SQLite) Create(ctx context.Context, item ingestion.Ingestion) error {
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO ingestions (
-    id, name, csv_url, destination_table, status, last_error,
+    id, name, csv_url, destination_table, status, last_error, schedule,
     source_type, source_owner, source_repository, source_secret_key, source_table
 )
-VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`,
-		item.ID, item.Name, item.Source.URL, item.Destination.Table, item.Status,
+VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)`,
+		item.ID, item.Name, item.Source.URL, item.Destination.Table, item.Status, item.Schedule,
 		item.Source.Type, item.Source.Owner, item.Source.Repository, item.Source.SecretKey, item.Source.Table)
 	if err != nil {
 		return fmt.Errorf("create ingestion metadata: %w", err)
@@ -99,7 +100,7 @@ VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`,
 
 func (s *SQLite) Get(ctx context.Context, id string) (ingestion.Ingestion, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, name, csv_url, destination_table, status, last_run_at, last_error,
+SELECT id, name, csv_url, destination_table, status, last_run_at, last_error, schedule,
        source_type, source_owner, source_repository, source_secret_key, source_table
 FROM ingestions WHERE id = ?`, id)
 	item, err := s.scan(row)
@@ -114,7 +115,7 @@ FROM ingestions WHERE id = ?`, id)
 
 func (s *SQLite) List(ctx context.Context) ([]ingestion.Ingestion, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, name, csv_url, destination_table, status, last_run_at, last_error,
+SELECT id, name, csv_url, destination_table, status, last_run_at, last_error, schedule,
        source_type, source_owner, source_repository, source_secret_key, source_table
 FROM ingestions ORDER BY name, id`)
 	if err != nil {
@@ -144,6 +145,10 @@ func (s *SQLite) Finish(ctx context.Context, id, status, lastError string) error
 	return s.update(ctx, `UPDATE ingestions SET status = ?, last_error = ? WHERE id = ?`, status, lastError, id)
 }
 
+func (s *SQLite) UpdateSchedule(ctx context.Context, id, schedule string) error {
+	return s.update(ctx, `UPDATE ingestions SET schedule = ? WHERE id = ?`, schedule, id)
+}
+
 func (s *SQLite) update(ctx context.Context, query string, args ...any) error {
 	result, err := s.db.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -166,7 +171,7 @@ type scanner interface {
 func (s *SQLite) scan(row scanner) (ingestion.Ingestion, error) {
 	var item ingestion.Ingestion
 	var lastRun sql.NullString
-	err := row.Scan(&item.ID, &item.Name, &item.Source.URL, &item.Destination.Table, &item.Status, &lastRun, &item.LastError,
+	err := row.Scan(&item.ID, &item.Name, &item.Source.URL, &item.Destination.Table, &item.Status, &lastRun, &item.LastError, &item.Schedule,
 		&item.Source.Type, &item.Source.Owner, &item.Source.Repository, &item.Source.SecretKey, &item.Source.Table)
 	if err != nil {
 		return ingestion.Ingestion{}, err
