@@ -40,7 +40,8 @@ func main() {
 		Policy: policy.DefaultEngine{
 			DestinationPath: cfg.Destination.Path,
 		},
-		Runner: runneringestr.Runner{Binary: cfg.Runner.Binary, Logger: logger},
+		Runner:  runneringestr.Runner{Binary: cfg.Runner.Binary, Logger: logger},
+		Secrets: metadata.Secrets(),
 		Validator: validation.HTTPSourceValidator{Client: &http.Client{
 			Timeout: cfg.RequestTimeout,
 		}},

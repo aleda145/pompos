@@ -12,9 +12,12 @@ import (
 	_ "modernc.org/sqlite"
 
 	"pompos/internal/ingestion"
+	"pompos/internal/secrets"
 )
 
 var ErrNotFound = errors.New("ingestion not found")
+
+const schemaVersion = 1
 
 type SQLite struct {
 	db              *sql.DB
@@ -39,6 +42,15 @@ func Open(ctx context.Context, path, destinationPath string) (*SQLite, error) {
 }
 
 func (s *SQLite) initialize(ctx context.Context) error {
+	var version int
+	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("read metadata schema version: %w", err)
+	}
+	if version != schemaVersion {
+		if _, err := s.db.ExecContext(ctx, `DROP TABLE IF EXISTS ingestions; DROP TABLE IF EXISTS secrets;`); err != nil {
+			return fmt.Errorf("reset incompatible metadata schema: %w", err)
+		}
+	}
 	const schema = `
 PRAGMA journal_mode = WAL;
 CREATE TABLE IF NOT EXISTS ingestions (
@@ -48,51 +60,22 @@ CREATE TABLE IF NOT EXISTS ingestions (
     destination_table TEXT NOT NULL,
     status TEXT NOT NULL,
     last_run_at TEXT,
-    last_error TEXT NOT NULL DEFAULT ''
-);`
+    last_error TEXT NOT NULL DEFAULT '',
+    source_type TEXT NOT NULL,
+    source_owner TEXT NOT NULL DEFAULT '',
+    source_repository TEXT NOT NULL DEFAULT '',
+    source_secret_key TEXT NOT NULL DEFAULT '',
+    source_table TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS secrets (
+    key TEXT PRIMARY KEY,
+    value BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+PRAGMA user_version = 1;`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize metadata database: %w", err)
-	}
-	columns := []struct{ name, definition string }{
-		{"source_type", "TEXT NOT NULL DEFAULT 'csv'"},
-		{"source_owner", "TEXT NOT NULL DEFAULT ''"},
-		{"source_repository", "TEXT NOT NULL DEFAULT ''"},
-		{"source_token", "TEXT NOT NULL DEFAULT ''"},
-		{"source_table", "TEXT NOT NULL DEFAULT ''"},
-	}
-	for _, column := range columns {
-		if err := s.addColumn(ctx, column.name, column.definition); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *SQLite) addColumn(ctx context.Context, name, definition string) error {
-	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(ingestions)`)
-	if err != nil {
-		return fmt.Errorf("inspect metadata schema: %w", err)
-	}
-	found := false
-	for rows.Next() {
-		var cid int
-		var columnName, columnType string
-		var notNull, primaryKey int
-		var defaultValue any
-		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan metadata schema: %w", err)
-		}
-		found = found || columnName == name
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close metadata schema rows: %w", err)
-	}
-	if found {
-		return nil
-	}
-	if _, err := s.db.ExecContext(ctx, `ALTER TABLE ingestions ADD COLUMN `+name+` `+definition); err != nil {
-		return fmt.Errorf("add metadata column %s: %w", name, err)
 	}
 	return nil
 }
@@ -103,11 +86,11 @@ func (s *SQLite) Create(ctx context.Context, item ingestion.Ingestion) error {
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO ingestions (
     id, name, csv_url, destination_table, status, last_error,
-    source_type, source_owner, source_repository, source_token, source_table
+    source_type, source_owner, source_repository, source_secret_key, source_table
 )
 VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`,
 		item.ID, item.Name, item.Source.URL, item.Destination.Table, item.Status,
-		item.Source.Type, item.Source.Owner, item.Source.Repository, item.Source.AccessToken, item.Source.Table)
+		item.Source.Type, item.Source.Owner, item.Source.Repository, item.Source.SecretKey, item.Source.Table)
 	if err != nil {
 		return fmt.Errorf("create ingestion metadata: %w", err)
 	}
@@ -117,7 +100,7 @@ VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`,
 func (s *SQLite) Get(ctx context.Context, id string) (ingestion.Ingestion, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT id, name, csv_url, destination_table, status, last_run_at, last_error,
-       source_type, source_owner, source_repository, source_token, source_table
+       source_type, source_owner, source_repository, source_secret_key, source_table
 FROM ingestions WHERE id = ?`, id)
 	item, err := s.scan(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -132,7 +115,7 @@ FROM ingestions WHERE id = ?`, id)
 func (s *SQLite) List(ctx context.Context) ([]ingestion.Ingestion, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, name, csv_url, destination_table, status, last_run_at, last_error,
-       source_type, source_owner, source_repository, source_token, source_table
+       source_type, source_owner, source_repository, source_secret_key, source_table
 FROM ingestions ORDER BY name, id`)
 	if err != nil {
 		return nil, fmt.Errorf("list ingestion metadata: %w", err)
@@ -184,7 +167,7 @@ func (s *SQLite) scan(row scanner) (ingestion.Ingestion, error) {
 	var item ingestion.Ingestion
 	var lastRun sql.NullString
 	err := row.Scan(&item.ID, &item.Name, &item.Source.URL, &item.Destination.Table, &item.Status, &lastRun, &item.LastError,
-		&item.Source.Type, &item.Source.Owner, &item.Source.Repository, &item.Source.AccessToken, &item.Source.Table)
+		&item.Source.Type, &item.Source.Owner, &item.Source.Repository, &item.Source.SecretKey, &item.Source.Table)
 	if err != nil {
 		return ingestion.Ingestion{}, err
 	}
@@ -198,4 +181,57 @@ func (s *SQLite) scan(row scanner) (ingestion.Ingestion, error) {
 		item.LastRun = &parsed
 	}
 	return item, nil
+}
+
+func (s *SQLite) Secrets() secrets.Store { return sqliteSecrets{db: s.db} }
+
+type sqliteSecrets struct{ db *sql.DB }
+
+func (s sqliteSecrets) Put(ctx context.Context, key string, value []byte) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO secrets (key, value, created_at, updated_at) VALUES (?, ?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, key, value, now, now)
+	if err != nil {
+		return fmt.Errorf("store secret: %w", err)
+	}
+	return nil
+}
+
+func (s sqliteSecrets) Get(ctx context.Context, key string) ([]byte, error) {
+	var value []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT value FROM secrets WHERE key = ?`, key).Scan(&value); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, secrets.ErrNotFound
+		}
+		return nil, fmt.Errorf("get secret: %w", err)
+	}
+	return value, nil
+}
+
+func (s sqliteSecrets) List(ctx context.Context) ([]secrets.Entry, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT key, created_at, updated_at FROM secrets ORDER BY key`)
+	if err != nil {
+		return nil, fmt.Errorf("list secrets: %w", err)
+	}
+	defer rows.Close()
+	var entries []secrets.Entry
+	for rows.Next() {
+		var entry secrets.Entry
+		if err := rows.Scan(&entry.Key, &entry.CreatedAt, &entry.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan secret metadata: %w", err)
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate secrets: %w", err)
+	}
+	return entries, nil
+}
+
+func (s sqliteSecrets) Delete(ctx context.Context, key string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM secrets WHERE key = ?`, key); err != nil {
+		return fmt.Errorf("delete secret: %w", err)
+	}
+	return nil
 }

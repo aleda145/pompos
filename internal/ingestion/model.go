@@ -26,6 +26,7 @@ type Source struct {
 	Owner       string
 	Repository  string
 	AccessToken string
+	SecretKey   string
 	Table       string
 }
 

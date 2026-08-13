@@ -69,9 +69,23 @@
   <input id="repository" name="repository" value="{{.Repository}}" placeholder="github.com/openai/codex or openai/codex" required autofocus>
   <p class="hint">Paste a GitHub repository URL or enter owner/repository.</p>
 
-  <label for="access_token">Personal access token</label>
-  <input id="access_token" name="access_token" type="password" placeholder="github_pat_…" autocomplete="off" required>
-  <p class="hint">Required because ingestr reads these tables through GitHub's authenticated GraphQL API.</p>
+  <fieldset class="credential-choice">
+    <legend>Credentials</legend>
+    <label for="secret_key">Use a saved secret</label>
+    <select id="secret_key" name="secret_key">
+      <option value="">Choose a secret…</option>
+      {{range .SavedSecrets}}<option value="{{.Key}}" {{if eq $.SecretKey .Key}}selected{{end}}>{{.Key}}</option>{{end}}
+    </select>
+    {{if not .SavedSecrets}}<p class="hint">No saved secrets yet. Add one below or from <a href="/secrets">Secrets</a>.</p>{{else}}<p class="hint">Select the exact secret this ingestion should use.</p>{{end}}
+
+    <div class="or-divider">or add a new secret</div>
+
+    <label for="new_secret_name">Secret name</label>
+    <input id="new_secret_name" name="new_secret_name" value="{{.NewSecretName}}" placeholder="github-production" maxlength="200">
+    <label for="access_token">Personal access token</label>
+    <input id="access_token" name="access_token" type="password" placeholder="github_pat_…" autocomplete="off">
+    <p class="hint">The new secret is saved only after GitHub validates the token.</p>
+  </fieldset>
 
   <details class="token-guide">
     <summary>How to create a GitHub token</summary>

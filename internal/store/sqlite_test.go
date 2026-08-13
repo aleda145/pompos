@@ -2,11 +2,13 @@ package store
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"pompos/internal/ingestion"
+	"pompos/internal/secrets"
 )
 
 func TestSQLiteLifecycle(t *testing.T) {
@@ -38,5 +40,35 @@ func TestSQLiteLifecycle(t *testing.T) {
 	}
 	if got.Status != ingestion.StatusSucceeded || got.LastRun == nil || !got.LastRun.Equal(now.UTC()) {
 		t.Fatalf("Get() = %#v", got)
+	}
+}
+
+func TestSQLiteSecretsLifecycle(t *testing.T) {
+	ctx := context.Background()
+	metadata, err := Open(ctx, filepath.Join(t.TempDir(), "pompos.sqlite"), filepath.Join(t.TempDir(), "pompos.duckdb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer metadata.Close()
+	secretStore := metadata.Secrets()
+	if err := secretStore.Put(ctx, "github/example", []byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	if err := secretStore.Put(ctx, "github/example", []byte("updated")); err != nil {
+		t.Fatal(err)
+	}
+	value, err := secretStore.Get(ctx, "github/example")
+	if err != nil || string(value) != "updated" {
+		t.Fatalf("Get() = %q, %v", value, err)
+	}
+	entries, err := secretStore.List(ctx)
+	if err != nil || len(entries) != 1 || entries[0].Key != "github/example" {
+		t.Fatalf("List() = %#v, %v", entries, err)
+	}
+	if err := secretStore.Delete(ctx, "github/example"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := secretStore.Get(ctx, "github/example"); !errors.Is(err, secrets.ErrNotFound) {
+		t.Fatalf("Get() after delete = %v", err)
 	}
 }

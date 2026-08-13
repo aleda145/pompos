@@ -19,6 +19,7 @@ import (
 	"pompos/internal/ingestion"
 	"pompos/internal/policy"
 	"pompos/internal/runner"
+	"pompos/internal/secrets"
 	"pompos/internal/spec"
 	"pompos/internal/store"
 	"pompos/internal/validation"
@@ -38,6 +39,7 @@ type App struct {
 	Store       MetadataStore
 	Policy      policy.Engine
 	Runner      runner.Runner
+	Secrets     secrets.Store
 	Validator   validation.SourceValidator
 	Destination ingestion.Destination
 	SpecDir     string
@@ -46,14 +48,14 @@ type App struct {
 }
 
 func New(app App) (*App, error) {
-	if app.Store == nil || app.Policy == nil || app.Runner == nil || app.Validator == nil {
+	if app.Store == nil || app.Policy == nil || app.Runner == nil || app.Secrets == nil || app.Validator == nil {
 		return nil, errors.New("web app dependencies must not be nil")
 	}
 	if app.Logger == nil {
 		app.Logger = log.Default()
 	}
-	app.templates = make(map[string]*template.Template, 3)
-	for _, page := range []string{"home", "new", "detail"} {
+	app.templates = make(map[string]*template.Template, 4)
+	for _, page := range []string{"home", "new", "detail", "secrets"} {
 		parsed, err := template.New(page).ParseFS(templatefiles.FS, "layout.html", page+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s template: %w", page, err)
@@ -70,6 +72,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /ingestions", a.createIngestion)
 	mux.HandleFunc("GET /ingestions/{id}", a.ingestionDetail)
 	mux.HandleFunc("POST /ingestions/{id}/run", a.runIngestion)
+	mux.HandleFunc("GET /secrets", a.listSecrets)
+	mux.HandleFunc("POST /secrets", a.createSecret)
+	mux.HandleFunc("POST /secrets/delete", a.deleteSecret)
 	assets, _ := fs.Sub(staticfiles.FS, ".")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(assets))))
 	return a.logRequests(a.recover(mux))
@@ -108,6 +113,24 @@ type newPageData struct {
 	Repository    string
 	GitHubTables  []githubTableOption
 	GitHubDocsURL string
+	SavedSecrets  []secrets.Entry
+	SecretKey     string
+	NewSecretName string
+}
+
+type secretsPageData struct {
+	Title   string
+	Error   string
+	Name    string
+	Saved   bool
+	Deleted bool
+	Secrets []secretView
+}
+
+type secretView struct {
+	Entry      secrets.Entry
+	Type       string
+	Ingestions []ingestion.Ingestion
 }
 
 var githubTableOptions = []githubTableOption{
@@ -176,23 +199,54 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 	repositoryInput := strings.TrimSpace(r.FormValue("repository"))
 	owner, repository, err := validation.ParseGitHubRepository(repositoryInput)
 	if err != nil {
-		a.renderGitHubError(w, err.Error(), repositoryInput, r.Form["tables"])
+		a.renderGitHubError(w, err.Error(), repositoryInput, r.Form["tables"], r.FormValue("secret_key"), r.FormValue("new_secret_name"))
 		return
 	}
 	selectedTables := r.Form["tables"]
 	if len(selectedTables) == 0 {
-		a.renderGitHubError(w, "Choose at least one table to sync.", repositoryInput, nil)
+		a.renderGitHubError(w, "Choose at least one table to sync.", repositoryInput, nil, r.FormValue("secret_key"), r.FormValue("new_secret_name"))
 		return
 	}
 
+	secretKey := strings.TrimSpace(r.FormValue("secret_key"))
+	newSecretName := strings.TrimSpace(r.FormValue("new_secret_name"))
+	accessToken := strings.TrimSpace(r.FormValue("access_token"))
+	if secretKey != "" && (newSecretName != "" || accessToken != "") {
+		a.renderGitHubError(w, "Choose a saved secret or enter a new one, not both.", repositoryInput, selectedTables, secretKey, newSecretName)
+		return
+	}
+	if secretKey == "" && accessToken == "" {
+		a.renderGitHubError(w, "Select a saved secret or enter a new token.", repositoryInput, selectedTables, "", newSecretName)
+		return
+	}
+	if accessToken != "" && newSecretName == "" {
+		a.renderGitHubError(w, "Give the new token a secret name.", repositoryInput, selectedTables, "", "")
+		return
+	}
+	newSecret := secretKey == ""
+	if newSecret {
+		secretKey = newSecretName
+	} else {
+		stored, err := a.Secrets.Get(r.Context(), secretKey)
+		if errors.Is(err, secrets.ErrNotFound) {
+			a.renderGitHubError(w, "The selected secret no longer exists.", repositoryInput, selectedTables, "", "")
+			return
+		}
+		if err != nil {
+			a.serverError(w, err)
+			return
+		}
+		accessToken = string(stored)
+	}
 	baseSource := ingestion.Source{
 		Type:        "github",
 		Owner:       owner,
 		Repository:  repository,
-		AccessToken: strings.TrimSpace(r.FormValue("access_token")),
+		AccessToken: accessToken,
+		SecretKey:   secretKey,
 	}
 	a.Logger.Printf("GitHub ingestion requested repository=%s/%s tables=%s token_provided=%t",
-		owner, repository, strings.Join(selectedTables, ","), baseSource.AccessToken != "")
+		owner, repository, strings.Join(selectedTables, ","), newSecret)
 	validationSource := baseSource
 	if slices.Contains(selectedTables, "stargazers") {
 		validationSource.Table = "stargazers"
@@ -200,10 +254,19 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 	a.Logger.Printf("validating GitHub repository repository=%s/%s stargazers=%t", owner, repository, validationSource.Table == "stargazers")
 	if err := a.Validator.Validate(r.Context(), validationSource); err != nil {
 		a.Logger.Printf("GitHub repository validation failed repository=%s/%s error=%q", owner, repository, err)
-		a.renderGitHubError(w, err.Error(), repositoryInput, selectedTables)
+		a.renderGitHubError(w, err.Error(), repositoryInput, selectedTables, selectedSecretKey(secretKey, newSecret), newSecretName)
 		return
 	}
 	a.Logger.Printf("GitHub repository validation succeeded repository=%s/%s", owner, repository)
+	if newSecret {
+		if err := a.Secrets.Put(r.Context(), secretKey, []byte(accessToken)); err != nil {
+			a.serverError(w, err)
+			return
+		}
+		a.Logger.Printf("GitHub token saved repository=%s/%s secret_key=%s", owner, repository, secretKey)
+	} else {
+		a.Logger.Printf("using selected GitHub token repository=%s/%s secret_key=%s", owner, repository, secretKey)
+	}
 
 	items := make([]ingestion.Ingestion, 0, len(selectedTables))
 	for _, sourceTable := range selectedTables {
@@ -222,7 +285,7 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := a.Policy.Validate(item); err != nil {
 			a.Logger.Printf("validation failed ingestion_id=%s source=github source_table=%s error=%q", item.ID, sourceTable, err)
-			a.renderGitHubError(w, err.Error(), repositoryInput, selectedTables)
+			a.renderGitHubError(w, err.Error(), repositoryInput, selectedTables, selectedSecretKey(secretKey, newSecret), newSecretName)
 			return
 		}
 		a.Logger.Printf("prepared GitHub ingestion ingestion_id=%s source_table=%s destination_table=%s",
@@ -296,6 +359,12 @@ func (a *App) runIngestion(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) execute(ctx context.Context, item ingestion.Ingestion) error {
 	started := time.Now()
+	resolved, err := a.resolveSecrets(ctx, item)
+	if err != nil {
+		a.Logger.Printf("secret resolution failed ingestion_id=%s secret_key=%s error=%q", item.ID, item.Source.SecretKey, err)
+		return a.finish(item.ID, ingestion.StatusFailed, err.Error())
+	}
+	item = resolved
 	if err := a.Policy.Validate(item); err != nil {
 		a.Logger.Printf("run policy failed ingestion_id=%s error=%q", item.ID, err)
 		return a.finish(item.ID, ingestion.StatusFailed, err.Error())
@@ -313,6 +382,24 @@ func (a *App) execute(ctx context.Context, item ingestion.Ingestion) error {
 	return a.finish(item.ID, ingestion.StatusSucceeded, "")
 }
 
+func (a *App) resolveSecrets(ctx context.Context, item ingestion.Ingestion) (ingestion.Ingestion, error) {
+	if item.Source.Type != "github" || item.Source.AccessToken != "" {
+		return item, nil
+	}
+	if item.Source.SecretKey == "" {
+		return item, errors.New("GitHub ingestion has no saved token reference")
+	}
+	value, err := a.Secrets.Get(ctx, item.Source.SecretKey)
+	if errors.Is(err, secrets.ErrNotFound) {
+		return item, errors.New("the saved GitHub token no longer exists")
+	}
+	if err != nil {
+		return item, fmt.Errorf("load GitHub token: %w", err)
+	}
+	item.Source.AccessToken = string(value)
+	return item, nil
+}
+
 func (a *App) finish(id, status, message string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -326,10 +413,18 @@ func (a *App) renderNew(w http.ResponseWriter, status int, data newPageData) {
 	if data.GitHubTables == nil {
 		data.GitHubTables = append([]githubTableOption(nil), githubTableOptions...)
 	}
+	if data.Source == "github" {
+		entries, err := a.Secrets.List(context.Background())
+		if err != nil {
+			a.serverError(w, err)
+			return
+		}
+		data.SavedSecrets = entries
+	}
 	a.render(w, status, "new", data)
 }
 
-func (a *App) renderGitHubError(w http.ResponseWriter, message, repository string, selected []string) {
+func (a *App) renderGitHubError(w http.ResponseWriter, message, repository string, selected []string, secretKey, newSecretName string) {
 	selectedSet := make(map[string]bool, len(selected))
 	for _, table := range selected {
 		selectedSet[table] = true
@@ -340,7 +435,103 @@ func (a *App) renderGitHubError(w http.ResponseWriter, message, repository strin
 	}
 	a.renderNew(w, http.StatusUnprocessableEntity, newPageData{
 		Source: "github", Error: message, Repository: repository, GitHubTables: tables,
+		SecretKey: secretKey, NewSecretName: newSecretName,
 	})
+}
+
+func (a *App) listSecrets(w http.ResponseWriter, r *http.Request) {
+	a.renderSecrets(w, r, http.StatusOK, secretsPageData{})
+}
+
+func (a *App) createSecret(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		a.renderSecrets(w, r, http.StatusBadRequest, secretsPageData{Error: "Invalid form submission."})
+		return
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	value := r.FormValue("value")
+	if name == "" || len(name) > 200 {
+		a.renderSecrets(w, r, http.StatusUnprocessableEntity, secretsPageData{Error: "Secret name must be between 1 and 200 characters.", Name: name})
+		return
+	}
+	if value == "" {
+		a.renderSecrets(w, r, http.StatusUnprocessableEntity, secretsPageData{Error: "Secret value is required.", Name: name})
+		return
+	}
+	if err := a.Secrets.Put(r.Context(), name, []byte(value)); err != nil {
+		a.serverError(w, err)
+		return
+	}
+	a.Logger.Printf("secret saved secret_key=%s", name)
+	http.Redirect(w, r, "/secrets?saved=1", http.StatusSeeOther)
+}
+
+func (a *App) deleteSecret(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		a.renderSecrets(w, r, http.StatusBadRequest, secretsPageData{Error: "Invalid form submission."})
+		return
+	}
+	key := strings.TrimSpace(r.FormValue("key"))
+	if key == "" {
+		a.renderSecrets(w, r, http.StatusUnprocessableEntity, secretsPageData{Error: "Secret name is required."})
+		return
+	}
+	if _, err := a.Secrets.Get(r.Context(), key); errors.Is(err, secrets.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	} else if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	if err := a.Secrets.Delete(r.Context(), key); err != nil {
+		a.serverError(w, err)
+		return
+	}
+	a.Logger.Printf("secret deleted secret_key=%s", key)
+	http.Redirect(w, r, "/secrets?deleted=1", http.StatusSeeOther)
+}
+
+func (a *App) renderSecrets(w http.ResponseWriter, r *http.Request, status int, data secretsPageData) {
+	entries, err := a.Secrets.List(r.Context())
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	ingestions, err := a.Store.List(r.Context())
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	data.Title = "Secrets"
+	data.Secrets = describeSecrets(entries, ingestions)
+	data.Saved = data.Saved || r.URL.Query().Get("saved") == "1"
+	data.Deleted = data.Deleted || r.URL.Query().Get("deleted") == "1"
+	a.render(w, status, "secrets", data)
+}
+
+func describeSecrets(entries []secrets.Entry, ingestions []ingestion.Ingestion) []secretView {
+	views := make([]secretView, 0, len(entries))
+	for _, entry := range entries {
+		view := secretView{Entry: entry, Type: "generic"}
+		inferredType := ""
+		mixedTypes := false
+		for _, item := range ingestions {
+			if item.Source.SecretKey != entry.Key {
+				continue
+			}
+			view.Ingestions = append(view.Ingestions, item)
+			if inferredType == "" {
+				inferredType = item.Source.Type
+			} else if inferredType != item.Source.Type {
+				mixedTypes = true
+			}
+		}
+		if inferredType != "" && !mixedTypes {
+			view.Type = inferredType
+		}
+		views = append(views, view)
+	}
+	return views
 }
 
 func (a *App) render(w http.ResponseWriter, status int, name string, data any) {
@@ -429,4 +620,11 @@ func githubTableName(value string) string {
 		}
 	}
 	return value
+}
+
+func selectedSecretKey(secretKey string, newSecret bool) string {
+	if newSecret {
+		return ""
+	}
+	return secretKey
 }
