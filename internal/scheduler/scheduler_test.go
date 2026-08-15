@@ -4,17 +4,20 @@ import (
 	"context"
 	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"pompos/internal/ingestion"
+	"pompos/internal/spec"
 	"pompos/internal/store"
 )
 
 func TestDurablePollerRunsPersistedDueSchedule(t *testing.T) {
 	ctx := context.Background()
-	metadata, err := store.Open(ctx, filepath.Join(t.TempDir(), "pompos.sqlite"), filepath.Join(t.TempDir(), "pompos.duckdb"))
+	dataDir := t.TempDir()
+	metadata, err := store.Open(ctx, filepath.Join(dataDir, "pompos.sqlite"), filepath.Join(dataDir, "pompos.duckdb"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,11 +27,12 @@ func TestDurablePollerRunsPersistedDueSchedule(t *testing.T) {
 		Source:      ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
 		Destination: ingestion.Destination{Type: "duckdb", Table: "customers"},
 	}
+	persistSpec(t, dataDir, &item)
 	if err := metadata.Create(ctx, item); err != nil {
 		t.Fatal(err)
 	}
 	var ran string
-	manager, err := New(log.New(io.Discard, "", 0), metadata, func(_ context.Context, id string) error { ran = id; return nil })
+	manager, err := New(log.New(io.Discard, "", 0), metadata, func(_ context.Context, run ingestion.Run) error { ran = run.IngestionID; return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +40,7 @@ func TestDurablePollerRunsPersistedDueSchedule(t *testing.T) {
 	now := time.Date(2026, time.August, 13, 12, 2, 0, 0, time.UTC)
 	manager.now = func() time.Time { return now }
 	due := now.Add(-2 * time.Minute)
-	if err := metadata.UpdateSchedule(ctx, item.ID, item.Schedule, &due); err != nil {
+	if err := metadata.UpdateNextRun(ctx, item.ID, &due); err != nil {
 		t.Fatal(err)
 	}
 	manager.poll(ctx)
@@ -54,16 +58,18 @@ func TestDurablePollerRunsPersistedDueSchedule(t *testing.T) {
 
 func TestValidateAndDisable(t *testing.T) {
 	ctx := context.Background()
-	metadata, err := store.Open(ctx, filepath.Join(t.TempDir(), "pompos.sqlite"), filepath.Join(t.TempDir(), "pompos.duckdb"))
+	dataDir := t.TempDir()
+	metadata, err := store.Open(ctx, filepath.Join(dataDir, "pompos.sqlite"), filepath.Join(dataDir, "pompos.duckdb"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer metadata.Close()
-	item := ingestion.Ingestion{ID: "abc", Name: "abc", Status: ingestion.StatusPending, Source: ingestion.Source{Type: "csv"}}
+	item := ingestion.Ingestion{ID: "abc", Name: "abc", Status: ingestion.StatusPending, Source: ingestion.Source{Type: "csv", URL: "https://example.com/abc.csv"}, Destination: ingestion.Destination{Type: "duckdb", Table: "abc"}}
+	persistSpec(t, dataDir, &item)
 	if err := metadata.Create(ctx, item); err != nil {
 		t.Fatal(err)
 	}
-	manager, err := New(log.New(io.Discard, "", 0), metadata, func(context.Context, string) error { return nil })
+	manager, err := New(log.New(io.Discard, "", 0), metadata, func(context.Context, ingestion.Run) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,6 +100,9 @@ func TestWorkerRunsManualQueuePersistedBeforeStartup(t *testing.T) {
 	}
 	defer metadata.Close()
 	item := ingestion.Ingestion{ID: "manual", Name: "manual", Status: ingestion.StatusSucceeded, Source: ingestion.Source{Type: "csv"}}
+	item.Source.URL = "https://example.com/manual.csv"
+	item.Destination = ingestion.Destination{Type: "duckdb", Table: "manual"}
+	persistSpec(t, dataDir, &item)
 	if err := metadata.Create(ctx, item); err != nil {
 		t.Fatal(err)
 	}
@@ -104,8 +113,8 @@ func TestWorkerRunsManualQueuePersistedBeforeStartup(t *testing.T) {
 		t.Fatalf("simulate crashed claim: ok=%v, error=%v", ok, err)
 	}
 	ran := make(chan string, 1)
-	manager, err := New(log.New(io.Discard, "", 0), metadata, func(_ context.Context, id string) error {
-		ran <- id
+	manager, err := New(log.New(io.Discard, "", 0), metadata, func(_ context.Context, run ingestion.Run) error {
+		ran <- run.IngestionID
 		return nil
 	})
 	if err != nil {
@@ -123,4 +132,17 @@ func TestWorkerRunsManualQueuePersistedBeforeStartup(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("persisted manual run was not claimed after worker startup")
 	}
+}
+
+func persistSpec(t *testing.T, directory string, item *ingestion.Ingestion) {
+	t.Helper()
+	path, err := spec.Write(filepath.Join(directory, "ingestions"), *item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.SpecPath, item.SpecDigest = path, spec.Digest(data)
 }

@@ -1,0 +1,9 @@
+engine: ingestr
+engineVersion: 1.1.8
+sourceUri: https://example.com/customers.csv
+sourceTable: data#csv
+destinationRef: local-duckdb
+destinationUri: duckdb://data/pompos.duckdb
+destinationObject: customers
+strategy: replace
+schemaNaming: direct

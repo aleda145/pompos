@@ -17,7 +17,7 @@ import (
 
 var ErrNotFound = errors.New("ingestion not found")
 
-const schemaVersion = 4
+const schemaVersion = 6
 
 type SQLite struct {
 	db              *sql.DB
@@ -55,19 +55,12 @@ func (s *SQLite) initialize(ctx context.Context) error {
 PRAGMA journal_mode = WAL;
 CREATE TABLE IF NOT EXISTS ingestions (
     id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    csv_url TEXT NOT NULL,
-    destination_table TEXT NOT NULL,
     status TEXT NOT NULL,
     last_run_at TEXT,
     last_error TEXT NOT NULL DEFAULT '',
-    schedule TEXT NOT NULL DEFAULT '',
     next_run_at TEXT,
-    source_type TEXT NOT NULL,
-    source_owner TEXT NOT NULL DEFAULT '',
-    source_repository TEXT NOT NULL DEFAULT '',
-    source_secret_key TEXT NOT NULL DEFAULT '',
-    source_table TEXT NOT NULL DEFAULT ''
+    spec_path TEXT NOT NULL,
+    spec_digest TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS secrets (
     key TEXT PRIMARY KEY,
@@ -83,6 +76,8 @@ CREATE TABLE IF NOT EXISTS ingestion_runs (
     status TEXT NOT NULL,
     claimed_at TEXT,
     attempts INTEGER NOT NULL DEFAULT 0,
+    spec_path TEXT NOT NULL,
+    spec_digest TEXT NOT NULL,
     last_error TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     finished_at TEXT,
@@ -90,7 +85,7 @@ CREATE TABLE IF NOT EXISTS ingestion_runs (
 );
 CREATE INDEX IF NOT EXISTS ingestion_runs_claim
     ON ingestion_runs (status, scheduled_for);
-PRAGMA user_version = 4;`
+PRAGMA user_version = 6;`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize metadata database: %w", err)
 	}
@@ -102,22 +97,33 @@ func (s *SQLite) Close() error { return s.db.Close() }
 func (s *SQLite) Create(ctx context.Context, item ingestion.Ingestion) error {
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO ingestions (
-    id, name, csv_url, destination_table, status, last_error, schedule,
-    source_type, source_owner, source_repository, source_secret_key, source_table
+    id, status, last_error, spec_path, spec_digest
 )
-VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)`,
-		item.ID, item.Name, item.Source.URL, item.Destination.Table, item.Status, item.Schedule,
-		item.Source.Type, item.Source.Owner, item.Source.Repository, item.Source.SecretKey, item.Source.Table)
+VALUES (?, ?, '', ?, ?)`, item.ID, item.Status, item.SpecPath, item.SpecDigest)
 	if err != nil {
 		return fmt.Errorf("create ingestion metadata: %w", err)
 	}
 	return nil
 }
 
+// UpsertProjection rebuilds file-derived ingestion metadata without replacing
+// operational status or run history for an existing ingestion.
+func (s *SQLite) UpsertProjection(ctx context.Context, item ingestion.Ingestion) error {
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO ingestions (id, status, spec_path, spec_digest)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+next_run_at=CASE WHEN ingestions.spec_digest <> excluded.spec_digest THEN NULL ELSE ingestions.next_run_at END,
+spec_path=excluded.spec_path, spec_digest=excluded.spec_digest`, item.ID, item.Status, item.SpecPath, item.SpecDigest)
+	if err != nil {
+		return fmt.Errorf("upsert ingestion projection: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLite) Get(ctx context.Context, id string) (ingestion.Ingestion, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, name, csv_url, destination_table, status, last_run_at, last_error, schedule, next_run_at,
-       source_type, source_owner, source_repository, source_secret_key, source_table
+SELECT id, status, last_run_at, last_error, next_run_at, spec_path, spec_digest
 FROM ingestions WHERE id = ?`, id)
 	item, err := s.scan(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -131,9 +137,8 @@ FROM ingestions WHERE id = ?`, id)
 
 func (s *SQLite) List(ctx context.Context) ([]ingestion.Ingestion, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, name, csv_url, destination_table, status, last_run_at, last_error, schedule, next_run_at,
-       source_type, source_owner, source_repository, source_secret_key, source_table
-FROM ingestions ORDER BY name, id`)
+SELECT id, status, last_run_at, last_error, next_run_at, spec_path, spec_digest
+FROM ingestions ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("list ingestion metadata: %w", err)
 	}
@@ -161,12 +166,16 @@ func (s *SQLite) Finish(ctx context.Context, id, status, lastError string) error
 	return s.update(ctx, `UPDATE ingestions SET status = ?, last_error = ? WHERE id = ?`, status, lastError, id)
 }
 
-func (s *SQLite) UpdateSchedule(ctx context.Context, id, schedule string, nextRun *time.Time) error {
+func (s *SQLite) UpdateNextRun(ctx context.Context, id string, nextRun *time.Time) error {
 	var value any
 	if nextRun != nil {
 		value = nextRun.UTC().Format(time.RFC3339Nano)
 	}
-	return s.update(ctx, `UPDATE ingestions SET schedule = ?, next_run_at = ? WHERE id = ?`, schedule, value, id)
+	return s.update(ctx, `UPDATE ingestions SET next_run_at = ? WHERE id = ?`, value, id)
+}
+
+func (s *SQLite) UpdateSpecReference(ctx context.Context, id, path, digest string) error {
+	return s.update(ctx, `UPDATE ingestions SET spec_path = ?, spec_digest = ?, next_run_at = NULL WHERE id = ?`, path, digest, id)
 }
 
 // EnqueueRun durably records a manual run and marks the ingestion pending.
@@ -178,8 +187,8 @@ func (s *SQLite) EnqueueRun(ctx context.Context, ingestionID string, queuedAt ti
 	defer tx.Rollback()
 	value := queuedAt.UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO ingestion_runs (ingestion_id, trigger, scheduled_for, status, created_at)
-VALUES (?, 'manual', ?, 'pending', ?)`, ingestionID, value, value); err != nil {
+INSERT INTO ingestion_runs (ingestion_id, trigger, scheduled_for, status, created_at, spec_path, spec_digest)
+SELECT id, 'manual', ?, 'pending', ?, spec_path, spec_digest FROM ingestions WHERE id = ?`, value, value, ingestionID); err != nil {
 		return fmt.Errorf("enqueue ingestion run: %w", err)
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE ingestions SET status = ?, last_error = '' WHERE id = ?`, ingestion.StatusPending, ingestionID)
@@ -209,8 +218,8 @@ func (s *SQLite) EnqueueScheduledRun(ctx context.Context, ingestionID string, sc
 	defer tx.Rollback()
 	scheduledValue := scheduledFor.UTC().Format(time.RFC3339Nano)
 	result, err := tx.ExecContext(ctx, `
-INSERT OR IGNORE INTO ingestion_runs (ingestion_id, trigger, scheduled_for, status, created_at)
-VALUES (?, 'scheduled', ?, 'pending', ?)`, ingestionID, scheduledValue, time.Now().UTC().Format(time.RFC3339Nano))
+INSERT OR IGNORE INTO ingestion_runs (ingestion_id, trigger, scheduled_for, status, created_at, spec_path, spec_digest)
+SELECT id, 'scheduled', ?, 'pending', ?, spec_path, spec_digest FROM ingestions WHERE id = ?`, scheduledValue, time.Now().UTC().Format(time.RFC3339Nano), ingestionID)
 	if err != nil {
 		return false, fmt.Errorf("enqueue scheduled run: %w", err)
 	}
@@ -223,7 +232,7 @@ VALUES (?, 'scheduled', ?, 'pending', ?)`, ingestionID, scheduledValue, time.Now
 	}
 	result, err = tx.ExecContext(ctx, `
 UPDATE ingestions SET next_run_at = ?
-WHERE id = ? AND schedule <> '' AND next_run_at = ?`, nextRun.UTC().Format(time.RFC3339Nano), ingestionID, scheduledValue)
+WHERE id = ? AND next_run_at = ?`, nextRun.UTC().Format(time.RFC3339Nano), ingestionID, scheduledValue)
 	if err != nil {
 		return false, fmt.Errorf("advance ingestion schedule: %w", err)
 	}
@@ -247,13 +256,13 @@ func (s *SQLite) ClaimRun(ctx context.Context, now, staleBefore time.Time) (inge
 	}
 	defer tx.Rollback()
 	row := tx.QueryRowContext(ctx, `
-SELECT id, ingestion_id, trigger, scheduled_for, attempts
+SELECT id, ingestion_id, trigger, scheduled_for, attempts, spec_path, spec_digest
 FROM ingestion_runs
 WHERE status = 'pending' OR (status = 'running' AND claimed_at <= ?)
 ORDER BY scheduled_for, id LIMIT 1`, staleBefore.UTC().Format(time.RFC3339Nano))
 	var run ingestion.Run
 	var scheduledFor string
-	if err := row.Scan(&run.ID, &run.IngestionID, &run.Trigger, &scheduledFor, &run.Attempts); errors.Is(err, sql.ErrNoRows) {
+	if err := row.Scan(&run.ID, &run.IngestionID, &run.Trigger, &scheduledFor, &run.Attempts, &run.SpecPath, &run.SpecDigest); errors.Is(err, sql.ErrNoRows) {
 		return ingestion.Run{}, false, nil
 	} else if err != nil {
 		return ingestion.Run{}, false, fmt.Errorf("select run: %w", err)
@@ -355,8 +364,7 @@ func (s *SQLite) scan(row scanner) (ingestion.Ingestion, error) {
 	var item ingestion.Ingestion
 	var lastRun sql.NullString
 	var nextRun sql.NullString
-	err := row.Scan(&item.ID, &item.Name, &item.Source.URL, &item.Destination.Table, &item.Status, &lastRun, &item.LastError, &item.Schedule, &nextRun,
-		&item.Source.Type, &item.Source.Owner, &item.Source.Repository, &item.Source.SecretKey, &item.Source.Table)
+	err := row.Scan(&item.ID, &item.Status, &lastRun, &item.LastError, &nextRun, &item.SpecPath, &item.SpecDigest)
 	if err != nil {
 		return ingestion.Ingestion{}, err
 	}

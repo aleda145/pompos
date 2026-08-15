@@ -3,9 +3,9 @@ package runner
 import (
 	"context"
 
-	"pompos/internal/ingestion"
+	"pompos/internal/compiler"
 )
 
 type Runner interface {
-	Run(context.Context, ingestion.Ingestion) error
+	Run(context.Context, string, compiler.ExecutionPlan, string) error
 }

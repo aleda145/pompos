@@ -12,6 +12,7 @@ import (
 	"github.com/jonboulle/clockwork"
 
 	"pompos/internal/ingestion"
+	"pompos/internal/spec"
 )
 
 const (
@@ -19,12 +20,13 @@ const (
 	claimTimeout = time.Hour
 )
 
-type RunFunc func(context.Context, string) error
+type RunFunc func(context.Context, ingestion.Run) error
 
 type Store interface {
 	Get(context.Context, string) (ingestion.Ingestion, error)
 	List(context.Context) ([]ingestion.Ingestion, error)
-	UpdateSchedule(context.Context, string, string, *time.Time) error
+	UpdateNextRun(context.Context, string, *time.Time) error
+	UpdateSpecReference(context.Context, string, string, string) error
 	EnqueueRun(context.Context, string, time.Time) error
 	EnqueueScheduledRun(context.Context, string, time.Time, time.Time) (bool, error)
 	ClaimRun(context.Context, time.Time, time.Time) (ingestion.Run, bool, error)
@@ -101,7 +103,7 @@ func (m *Manager) Upsert(item ingestion.Ingestion) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := m.store.UpdateSchedule(ctx, item.ID, item.Schedule, next); err != nil {
+	if err := m.store.UpdateNextRun(ctx, item.ID, next); err != nil {
 		return fmt.Errorf("persist schedule: %w", err)
 	}
 	if next == nil {
@@ -202,7 +204,28 @@ func (m *Manager) enqueueDue(ctx context.Context) error {
 	}
 	now := m.now().UTC()
 	for _, item := range items {
+		document, data, err := spec.Read(item.SpecPath)
+		if err != nil {
+			m.logger.Printf("schedule spec load failed ingestion_id=%s spec_path=%s error=%q", item.ID, item.SpecPath, err)
+			continue
+		}
+		digest := spec.Digest(data)
+		if digest != item.SpecDigest {
+			if err := m.store.UpdateSpecReference(ctx, item.ID, item.SpecPath, digest); err != nil {
+				return fmt.Errorf("refresh spec reference %s: %w", item.ID, err)
+			}
+			item.NextRun = nil
+		}
+		item.Schedule = ""
+		if document.Schedule != nil {
+			item.Schedule = document.Schedule.Cron
+		}
 		if item.Schedule == "" {
+			if item.NextRun != nil {
+				if err := m.store.UpdateNextRun(ctx, item.ID, nil); err != nil {
+					return fmt.Errorf("disable schedule %s: %w", item.ID, err)
+				}
+			}
 			continue
 		}
 		if item.NextRun == nil {
@@ -211,7 +234,7 @@ func (m *Manager) enqueueDue(ctx context.Context) error {
 				m.logger.Printf("schedule invalid during reconciliation ingestion_id=%s error=%q", item.ID, err)
 				continue
 			}
-			if err := m.store.UpdateSchedule(ctx, item.ID, item.Schedule, &next); err != nil {
+			if err := m.store.UpdateNextRun(ctx, item.ID, &next); err != nil {
 				return fmt.Errorf("initialize schedule %s: %w", item.ID, err)
 			}
 			continue
@@ -238,7 +261,7 @@ func (m *Manager) enqueueDue(ctx context.Context) error {
 func (m *Manager) executeClaim(ctx context.Context, queued ingestion.Run) {
 	started := m.now()
 	m.logger.Printf("ingestion run claimed run_id=%d ingestion_id=%s trigger=%s queued_for=%s attempt=%d", queued.ID, queued.IngestionID, queued.Trigger, queued.ScheduledFor.UTC().Format(time.RFC3339), queued.Attempts)
-	runError := m.run(ctx, queued.IngestionID)
+	runError := m.run(ctx, queued)
 	if runError != nil && ctx.Err() != nil {
 		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

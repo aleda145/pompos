@@ -20,6 +20,7 @@ type Ingestion struct {
 	LastRun     *time.Time
 	LastError   string
 	SpecPath    string
+	SpecDigest  string
 }
 
 type Run struct {
@@ -28,6 +29,8 @@ type Run struct {
 	Trigger      string
 	ScheduledFor time.Time
 	Attempts     int
+	SpecPath     string
+	SpecDigest   string
 }
 
 type Source struct {

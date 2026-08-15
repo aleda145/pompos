@@ -25,6 +25,7 @@
     </form>
   </section>
   {{if .Ingestion.LastError}}<section><h2>Latest error</h2><pre class="error">{{.Ingestion.LastError}}</pre></section>{{end}}
+  {{if .Plan}}<section><h2>Execution plan</h2><p class="hint">Effective, compiled behavior. Credential values are never included.</p><pre>{{.Plan}}</pre></section>{{end}}
   <section class="metadata"><h2>Metadata</h2><dl><div><dt>Ingestion ID</dt><dd><code>{{.Ingestion.ID}}</code></dd></div><div><dt>Spec path</dt><dd><code>{{.SpecPath}}</code></dd></div></dl></section>
 </div>
 {{end}}

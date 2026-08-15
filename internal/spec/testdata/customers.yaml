@@ -1,0 +1,17 @@
+apiVersion: pompos.dev/v1alpha1
+kind: Ingestion
+metadata:
+  name: customers
+  owner: data-platform
+source:
+  type: http-file
+  url: https://example.com/customers.csv
+  format: csv
+destination:
+  connectionRef: local-duckdb
+  object: customers
+materialization:
+  strategy: replace
+runtime:
+  target: direct
+  implementation: ingestr

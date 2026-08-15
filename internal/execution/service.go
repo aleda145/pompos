@@ -7,10 +7,11 @@ import (
 	"log"
 	"time"
 
+	"pompos/internal/compiler"
 	"pompos/internal/ingestion"
-	"pompos/internal/policy"
 	"pompos/internal/runner"
 	"pompos/internal/secrets"
+	"pompos/internal/spec"
 )
 
 type Store interface {
@@ -21,16 +22,16 @@ type Store interface {
 
 // Service executes ingestions independently of any transport such as HTTP.
 type Service struct {
-	Store   Store
-	Policy  policy.Engine
-	Runner  runner.Runner
-	Secrets secrets.Store
-	Logger  *log.Logger
-	gate    chan struct{}
+	Store     Store
+	Blueprint compiler.Blueprint
+	Runner    runner.Runner
+	Secrets   secrets.Store
+	Logger    *log.Logger
+	gate      chan struct{}
 }
 
 func New(service Service) (*Service, error) {
-	if service.Store == nil || service.Policy == nil || service.Runner == nil || service.Secrets == nil {
+	if service.Store == nil || service.Runner == nil || service.Secrets == nil {
 		return nil, errors.New("execution service dependencies must not be nil")
 	}
 	if service.Logger == nil {
@@ -40,15 +41,16 @@ func New(service Service) (*Service, error) {
 	return &service, nil
 }
 
-func (s *Service) Run(ctx context.Context, id string) error {
-	item, err := s.Store.Get(ctx, id)
+func (s *Service) Run(ctx context.Context, queued ingestion.Run) error {
+	item, err := s.Store.Get(ctx, queued.IngestionID)
 	if err != nil {
 		return err
 	}
-	if err := s.Execute(ctx, item); err != nil {
+	item.SpecPath, item.SpecDigest = queued.SpecPath, queued.SpecDigest
+	if err := s.execute(ctx, item); err != nil {
 		return err
 	}
-	updated, err := s.Store.Get(ctx, id)
+	updated, err := s.Store.Get(ctx, queued.IngestionID)
 	if err != nil {
 		return err
 	}
@@ -58,7 +60,7 @@ func (s *Service) Run(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *Service) Execute(ctx context.Context, item ingestion.Ingestion) error {
+func (s *Service) execute(ctx context.Context, item ingestion.Ingestion) error {
 	select {
 	case s.gate <- struct{}{}:
 		defer func() { <-s.gate }()
@@ -66,45 +68,41 @@ func (s *Service) Execute(ctx context.Context, item ingestion.Ingestion) error {
 		return ctx.Err()
 	}
 	started := time.Now()
-	resolved, err := s.resolveSecrets(ctx, item)
+	document, data, err := spec.Read(item.SpecPath)
 	if err != nil {
-		s.Logger.Printf("secret resolution failed ingestion_id=%s secret_key=%s error=%q", item.ID, item.Source.SecretKey, err)
+		s.Logger.Printf("spec load failed ingestion_id=%s spec_path=%s error=%q", item.ID, item.SpecPath, err)
 		return s.finish(item.ID, ingestion.StatusFailed, err.Error())
 	}
-	item = resolved
-	if err := s.Policy.Validate(item); err != nil {
-		s.Logger.Printf("run policy failed ingestion_id=%s error=%q", item.ID, err)
+	if digest := spec.Digest(data); item.SpecDigest != "" && digest != item.SpecDigest {
+		err := fmt.Errorf("spec digest changed: queued %s, found %s", item.SpecDigest, digest)
 		return s.finish(item.ID, ingestion.StatusFailed, err.Error())
 	}
-	s.Logger.Printf("marking ingestion running ingestion_id=%s destination_table=%s", item.ID, item.Destination.Table)
+	plan, err := compiler.Compile(document, s.Blueprint)
+	if err != nil {
+		return s.finish(item.ID, ingestion.StatusFailed, err.Error())
+	}
+	credentialValue := ""
+	if plan.CredentialRef != "" {
+		value, err := s.Secrets.Get(ctx, plan.CredentialRef)
+		if errors.Is(err, secrets.ErrNotFound) {
+			return s.finish(item.ID, ingestion.StatusFailed, "referenced credential no longer exists")
+		}
+		if err != nil {
+			return s.finish(item.ID, ingestion.StatusFailed, fmt.Sprintf("load credential: %v", err))
+		}
+		credentialValue = string(value)
+	}
+	s.Logger.Printf("marking ingestion running ingestion_id=%s destination_table=%s", item.ID, plan.DestinationObject)
 	if err := s.Store.MarkRunning(ctx, item.ID, time.Now()); err != nil {
 		s.Logger.Printf("failed to mark ingestion running ingestion_id=%s error=%q", item.ID, err)
 		return err
 	}
-	if err := s.Runner.Run(ctx, item); err != nil {
+	if err := s.Runner.Run(ctx, item.ID, plan, credentialValue); err != nil {
 		s.Logger.Printf("ingestion failed ingestion_id=%s duration=%s error=%q", item.ID, time.Since(started).Round(time.Millisecond), err)
 		return s.finish(item.ID, ingestion.StatusFailed, err.Error())
 	}
 	s.Logger.Printf("ingestion succeeded ingestion_id=%s duration=%s", item.ID, time.Since(started).Round(time.Millisecond))
 	return s.finish(item.ID, ingestion.StatusSucceeded, "")
-}
-
-func (s *Service) resolveSecrets(ctx context.Context, item ingestion.Ingestion) (ingestion.Ingestion, error) {
-	if item.Source.Type != "github" || item.Source.AccessToken != "" {
-		return item, nil
-	}
-	if item.Source.SecretKey == "" {
-		return item, errors.New("GitHub ingestion has no saved token reference")
-	}
-	value, err := s.Secrets.Get(ctx, item.Source.SecretKey)
-	if errors.Is(err, secrets.ErrNotFound) {
-		return item, errors.New("the saved GitHub token no longer exists")
-	}
-	if err != nil {
-		return item, fmt.Errorf("load GitHub token: %w", err)
-	}
-	item.Source.AccessToken = string(value)
-	return item, nil
 }
 
 func (s *Service) finish(id, status, message string) error {

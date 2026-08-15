@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"pompos/internal/compiler"
 	"pompos/internal/ingestion"
 )
 
@@ -22,8 +23,9 @@ func TestBuildArgs(t *testing.T) {
 		"--dest-uri", "duckdb://data/pompos.duckdb",
 		"--dest-table", "customers",
 		"--schema-naming", "direct",
+		"--incremental-strategy", "replace",
 	}
-	got, err := BuildArgs(item)
+	got, err := BuildArgs(planFor(item), item.Source.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,12 +50,19 @@ func TestLogWriterRedactsGitHubToken(t *testing.T) {
 	}
 }
 
+func TestExecutionErrorMaterialIsRedacted(t *testing.T) {
+	got := redact("token=github_pat_a%26b raw=github_pat_a&b", "github_pat_a&b")
+	if strings.Contains(got, "github_pat") || strings.Count(got, "[REDACTED]") != 2 {
+		t.Fatalf("redacted = %q", got)
+	}
+}
+
 func TestBuildArgsAbsoluteDestination(t *testing.T) {
 	item := ingestion.Ingestion{
 		Source:      ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
 		Destination: ingestion.Destination{Type: "duckdb", Path: "/data/pompos.duckdb", Table: "customers"},
 	}
-	args, err := BuildArgs(item)
+	args, err := BuildArgs(planFor(item), item.Source.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +76,7 @@ func TestBuildArgsRepoRelativeDestination(t *testing.T) {
 		Source:      ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
 		Destination: ingestion.Destination{Type: "duckdb", Path: "data/pompos.duckdb", Table: "customers"},
 	}
-	args, err := BuildArgs(item)
+	args, err := BuildArgs(planFor(item), item.Source.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,8 +99,9 @@ func TestBuildArgsGitHub(t *testing.T) {
 		"--dest-uri", "duckdb://data/pompos.duckdb",
 		"--dest-table", "openai_codex_pull_requests",
 		"--schema-naming", "direct",
+		"--incremental-strategy", "replace",
 	}
-	got, err := BuildArgs(item)
+	got, err := BuildArgs(planFor(item), item.Source.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,8 +117,25 @@ func TestBuildArgsGitHubRequiresAccessToken(t *testing.T) {
 		},
 		Destination: ingestion.Destination{Type: "duckdb", Path: "data/pompos.duckdb", Table: "openai_codex_stargazers"},
 	}
-	_, err := BuildArgs(item)
+	_, err := BuildArgs(planFor(item), item.Source.AccessToken)
 	if err == nil || !strings.Contains(err.Error(), "access token is required") {
 		t.Fatalf("BuildArgs() error = %v", err)
 	}
+}
+
+func planFor(item ingestion.Ingestion) compiler.ExecutionPlan {
+	plan := compiler.ExecutionPlan{Engine: "ingestr", EngineVersion: "1.1.8", SourceURI: item.Source.URL, SourceTable: "data#csv",
+		DestinationURI: destinationURI(item.Destination.Path), DestinationObject: item.Destination.Table, SchemaNaming: "direct", Strategy: "replace"}
+	if item.Source.Type == "github" {
+		plan.SourceURI = "github://?owner=" + item.Source.Owner + "&repo=" + item.Source.Repository
+		plan.SourceTable, plan.CredentialRef = item.Source.Table, "github"
+	}
+	return plan
+}
+
+func destinationURI(path string) string {
+	if strings.HasPrefix(path, "/") {
+		return "duckdb://" + path
+	}
+	return "duckdb://" + strings.TrimPrefix(path, "./")
 }

@@ -17,6 +17,7 @@ import (
 
 	"pompos/internal/ingestion"
 	"pompos/internal/policy"
+	"pompos/internal/spec"
 	"pompos/internal/store"
 )
 
@@ -31,7 +32,7 @@ func TestCreateIngestionEnqueuesAndRendersPendingDetail(t *testing.T) {
 	defer metadata.Close()
 
 	schedules := &scheduleManagerStub{
-		persist: func(item ingestion.Ingestion) error { return metadata.UpdateSchedule(ctx, item.ID, item.Schedule, nil) },
+		persist: func(item ingestion.Ingestion) error { return nil },
 		enqueue: func(ctx context.Context, id string) error { return metadata.EnqueueRun(ctx, id, time.Now()) },
 	}
 	var logs bytes.Buffer
@@ -67,8 +68,12 @@ func TestCreateIngestionEnqueuesAndRendersPendingDetail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if item.Status != ingestion.StatusPending || item.LastRun != nil || item.Schedule != "0 6 * * *" {
+	if item.Status != ingestion.StatusPending || item.LastRun != nil || item.Schedule != "" {
 		t.Fatalf("stored ingestion = %#v", item)
+	}
+	document, _, err := spec.Read(item.SpecPath)
+	if err != nil || document.Schedule == nil || document.Schedule.Cron != "0 6 * * *" {
+		t.Fatalf("document = %#v, error = %v", document, err)
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "ingestions", item.ID+".yaml")); err != nil {
 		t.Fatal(err)
@@ -82,7 +87,7 @@ func TestCreateIngestionEnqueuesAndRendersPendingDetail(t *testing.T) {
 	detailRequest := httptest.NewRequest(http.MethodGet, response.Header().Get("Location"), nil)
 	detailResponse := httptest.NewRecorder()
 	app.Handler().ServeHTTP(detailResponse, detailRequest)
-	if detailResponse.Code != http.StatusOK || !strings.Contains(detailResponse.Body.String(), "pending") || !strings.Contains(detailResponse.Body.String(), "Run queued") {
+	if detailResponse.Code != http.StatusOK || !strings.Contains(detailResponse.Body.String(), "pending") || !strings.Contains(detailResponse.Body.String(), "Run queued") || !strings.Contains(detailResponse.Body.String(), "engine: ingestr") {
 		t.Fatalf("GET detail status = %d, body = %s", detailResponse.Code, detailResponse.Body.String())
 	}
 }
@@ -101,12 +106,19 @@ func TestUpdateSchedulePersistsAndRegisters(t *testing.T) {
 		Source:      ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
 		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "customers"},
 	}
+	path, err := spec.Write(filepath.Join(dataDir, "ingestions"), item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.SpecPath, item.SpecDigest = path, spec.Digest(data)
 	if err := metadata.Create(ctx, item); err != nil {
 		t.Fatal(err)
 	}
-	schedules := &scheduleManagerStub{persist: func(item ingestion.Ingestion) error {
-		return metadata.UpdateSchedule(ctx, item.ID, item.Schedule, nil)
-	}}
+	schedules := &scheduleManagerStub{}
 	app, err := New(App{
 		Store: metadata, Policy: policy.DefaultEngine{DestinationPath: destination},
 		Secrets: metadata.Secrets(), Scheduler: schedules,
@@ -126,11 +138,11 @@ func TestUpdateSchedulePersistsAndRegisters(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
 	stored, err := metadata.Get(ctx, item.ID)
-	if err != nil || stored.Schedule != "15 * * * *" || schedules.item.Schedule != "15 * * * *" {
+	if err != nil || stored.Schedule != "" || schedules.item.Schedule != "15 * * * *" {
 		t.Fatalf("stored = %#v, scheduled = %#v, error = %v", stored, schedules.item, err)
 	}
 	specContent, err := os.ReadFile(filepath.Join(dataDir, "ingestions", item.ID+".yaml"))
-	if err != nil || !strings.Contains(string(specContent), `cron: "15 * * * *"`) {
+	if err != nil || !strings.Contains(string(specContent), `cron: 15 * * * *`) {
 		t.Fatalf("spec = %s, error = %v", specContent, err)
 	}
 }
@@ -150,6 +162,15 @@ func TestRunAgainOnlyEnqueuesDurableWork(t *testing.T) {
 		Source:      ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
 		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "customers"},
 	}
+	path, err := spec.Write(filepath.Join(dataDir, "ingestions"), item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.SpecPath, item.SpecDigest = path, spec.Digest(data)
 	if err := metadata.Create(ctx, item); err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +250,15 @@ func TestCreateGitHubIngestionsForSelectedTables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	first, err = app.hydrate(first)
+	if err != nil {
+		t.Fatal(err)
+	}
 	second, err := metadata.Get(ctx, schedules.enqueued[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err = app.hydrate(second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,11 +376,21 @@ func TestSecretsPageAddsAndListsNamesWithoutValues(t *testing.T) {
 	if response.Code != http.StatusSeeOther {
 		t.Fatalf("POST status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if err := metadata.Create(ctx, ingestion.Ingestion{
+	secretItem := ingestion.Ingestion{
 		ID: "uses-secret", Name: "Codex issues", Status: ingestion.StatusSucceeded,
 		Source:      ingestion.Source{Type: "github", Owner: "openai", Repository: "codex", SecretKey: "github-production", Table: "issues"},
 		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "codex_issues"},
-	}); err != nil {
+	}
+	secretPath, err := spec.Write(filepath.Join(dataDir, "ingestions"), secretItem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretData, err := os.ReadFile(secretPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretItem.SpecPath, secretItem.SpecDigest = secretPath, spec.Digest(secretData)
+	if err := metadata.Create(ctx, secretItem); err != nil {
 		t.Fatal(err)
 	}
 	listResponse := httptest.NewRecorder()

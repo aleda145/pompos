@@ -5,11 +5,13 @@ import (
 	"errors"
 	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"testing"
 
+	"pompos/internal/compiler"
 	"pompos/internal/ingestion"
-	"pompos/internal/policy"
+	"pompos/internal/spec"
 	"pompos/internal/store"
 )
 
@@ -27,18 +29,31 @@ func TestRunPersistsRunnerFailure(t *testing.T) {
 		Source:      ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
 		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "customers"},
 	}
+	document := spec.FromLegacy(item)
+	data, err := spec.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.SpecPath = filepath.Join(dataDir, "customers.yaml")
+	item.SpecDigest = spec.Digest(data)
+	if err := os.WriteFile(item.SpecPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := metadata.Create(ctx, item); err != nil {
 		t.Fatal(err)
 	}
 	service, err := New(Service{
-		Store: metadata, Policy: policy.DefaultEngine{DestinationPath: destination},
-		Runner:  runnerFunc(func(context.Context, ingestion.Ingestion) error { return errors.New("ingestr exploded") }),
+		Store: metadata, Blueprint: compiler.LocalDuckDB(destination),
+		Runner: runnerFunc(func(context.Context, string, compiler.ExecutionPlan, string) error {
+			return errors.New("ingestr exploded")
+		}),
 		Secrets: metadata.Secrets(), Logger: log.New(io.Discard, "", 0),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Run(ctx, item.ID); err == nil || err.Error() != "ingestion failed: ingestr exploded" {
+	queued := ingestion.Run{IngestionID: item.ID, SpecPath: item.SpecPath, SpecDigest: item.SpecDigest}
+	if err := service.Run(ctx, queued); err == nil || err.Error() != "ingestion failed: ingestr exploded" {
 		t.Fatalf("run error = %v", err)
 	}
 	stored, err := metadata.Get(ctx, item.ID)
@@ -47,6 +62,8 @@ func TestRunPersistsRunnerFailure(t *testing.T) {
 	}
 }
 
-type runnerFunc func(context.Context, ingestion.Ingestion) error
+type runnerFunc func(context.Context, string, compiler.ExecutionPlan, string) error
 
-func (f runnerFunc) Run(ctx context.Context, item ingestion.Ingestion) error { return f(ctx, item) }
+func (f runnerFunc) Run(ctx context.Context, id string, plan compiler.ExecutionPlan, credential string) error {
+	return f(ctx, id, plan, credential)
+}

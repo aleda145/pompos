@@ -1,0 +1,86 @@
+package compiler
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+
+	"pompos/internal/spec"
+)
+
+type Blueprint struct{ DestinationRef, DestinationType, DestinationPath, Engine, EngineVersion, SchemaNaming string }
+
+func LocalDuckDB(path string) Blueprint {
+	return Blueprint{DestinationRef: "local-duckdb", DestinationType: "duckdb", DestinationPath: path, Engine: "ingestr", EngineVersion: "1.1.8", SchemaNaming: "direct"}
+}
+
+type ExecutionPlan struct {
+	Engine            string `yaml:"engine"`
+	EngineVersion     string `yaml:"engineVersion"`
+	SourceURI         string `yaml:"sourceUri"`
+	SourceTable       string `yaml:"sourceTable"`
+	CredentialRef     string `yaml:"credentialRef,omitempty"`
+	DestinationRef    string `yaml:"destinationRef"`
+	DestinationURI    string `yaml:"destinationUri"`
+	DestinationObject string `yaml:"destinationObject"`
+	Strategy          string `yaml:"strategy"`
+	SchemaNaming      string `yaml:"schemaNaming"`
+}
+
+func Compile(document spec.Ingestion, blueprint Blueprint) (ExecutionPlan, error) {
+	if err := document.Validate(); err != nil {
+		return ExecutionPlan{}, err
+	}
+	if document.Destination.ConnectionRef != blueprint.DestinationRef {
+		return ExecutionPlan{}, fmt.Errorf("policy.destination-connection: connectionRef %q is not allowed; use %q", document.Destination.ConnectionRef, blueprint.DestinationRef)
+	}
+	if document.Runtime.Target != "" && document.Runtime.Target != "direct" {
+		return ExecutionPlan{}, fmt.Errorf("policy.runtime-target: target %q is not enabled", document.Runtime.Target)
+	}
+	if document.Runtime.Implementation != "" && document.Runtime.Implementation != blueprint.Engine {
+		return ExecutionPlan{}, fmt.Errorf("policy.runtime-implementation: implementation %q is not allowed", document.Runtime.Implementation)
+	}
+	plan := ExecutionPlan{Engine: blueprint.Engine, EngineVersion: blueprint.EngineVersion, DestinationRef: blueprint.DestinationRef,
+		DestinationURI: duckDBURI(blueprint.DestinationPath), DestinationObject: document.Destination.Object, Strategy: defaultValue(document.Materialization.Strategy, "replace"), SchemaNaming: blueprint.SchemaNaming}
+	switch document.Source.Type {
+	case "http-file":
+		plan.SourceURI, plan.SourceTable = document.Source.URL, "data#csv"
+	case "github":
+		plan.SourceURI = fmt.Sprintf("github://?owner=%s&repo=%s", document.Source.Owner, document.Source.Repository)
+		plan.SourceTable = document.Source.Table
+		plan.CredentialRef = document.Source.CredentialRef
+	default:
+		return ExecutionPlan{}, errors.New("policy.source-type: source is not supported by the direct blueprint")
+	}
+	return plan, nil
+}
+
+func MarshalPlan(plan ExecutionPlan) ([]byte, error) {
+	var out bytes.Buffer
+	enc := yaml.NewEncoder(&out)
+	enc.SetIndent(2)
+	if err := enc.Encode(plan); err != nil {
+		return nil, err
+	}
+	_ = enc.Close()
+	return out.Bytes(), nil
+}
+
+func defaultValue(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+func duckDBURI(path string) string {
+	absolute := filepath.IsAbs(path)
+	path = filepath.ToSlash(path)
+	if absolute {
+		return "duckdb://" + path
+	}
+	return "duckdb://" + strings.TrimPrefix(path, "./")
+}

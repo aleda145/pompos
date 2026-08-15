@@ -10,12 +10,14 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	"pompos/internal/compiler"
 	"pompos/internal/ingestion"
 	"pompos/internal/policy"
 	"pompos/internal/secrets"
@@ -31,6 +33,7 @@ type MetadataStore interface {
 	Get(context.Context, string) (ingestion.Ingestion, error)
 	List(context.Context) ([]ingestion.Ingestion, error)
 	Finish(context.Context, string, string, string) error
+	UpdateSpecReference(context.Context, string, string, string) error
 }
 
 type ScheduleManager interface {
@@ -42,7 +45,7 @@ type ScheduleManager interface {
 
 type App struct {
 	Store       MetadataStore
-	Policy      policy.Engine
+	Policy      policy.Engine // retained for source compatibility; compilation owns policy decisions
 	Secrets     secrets.Store
 	Scheduler   ScheduleManager
 	Validator   validation.SourceValidator
@@ -53,7 +56,7 @@ type App struct {
 }
 
 func New(app App) (*App, error) {
-	if app.Store == nil || app.Policy == nil || app.Secrets == nil || app.Validator == nil {
+	if app.Store == nil || app.Secrets == nil || app.Validator == nil {
 		return nil, errors.New("web app dependencies must not be nil")
 	}
 	if app.Logger == nil {
@@ -98,6 +101,13 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.serverError(w, err)
 		return
+	}
+	for index := range items {
+		items[index], err = a.hydrate(items[index])
+		if err != nil {
+			a.serverError(w, err)
+			return
+		}
 	}
 	a.render(w, http.StatusOK, "home", struct {
 		Title      string
@@ -152,6 +162,7 @@ type detailPageData struct {
 	ScheduleSaved bool
 	ScheduleError string
 	RunQueued     bool
+	Plan          string
 }
 
 var githubTableOptions = []githubTableOption{
@@ -204,7 +215,7 @@ func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
 	}
 	a.Logger.Printf("CSV ingestion requested ingestion_id=%s url=%s destination_table=%s", item.ID, item.Source.URL, item.Destination.Table)
 	a.Logger.Printf("validating ingestion ingestion_id=%s source=csv", item.ID)
-	if err := a.Policy.Validate(item); err != nil {
+	if _, err := compiler.Compile(spec.FromLegacy(item), compiler.LocalDuckDB(a.Destination.Path)); err != nil {
 		a.Logger.Printf("validation failed ingestion_id=%s source=csv error=%q", item.ID, err)
 		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule})
 		return
@@ -316,7 +327,7 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 				Table: safeTableName(owner + "_" + repository + "_" + sourceTable),
 			},
 		}
-		if err := a.Policy.Validate(item); err != nil {
+		if _, err := compiler.Compile(spec.FromLegacy(item), compiler.LocalDuckDB(a.Destination.Path)); err != nil {
 			a.Logger.Printf("validation failed ingestion_id=%s source=github source_table=%s error=%q", item.ID, sourceTable, err)
 			a.renderGitHubError(w, err.Error(), repositoryInput, selectedTables, selectedSecretKey(secretKey, newSecret), newSecretName, schedule)
 			return
@@ -337,21 +348,30 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) persistAndEnqueue(ctx context.Context, item ingestion.Ingestion) error {
+	specPath, err := spec.Write(a.SpecDir, item)
+	if err != nil {
+		a.Logger.Printf("spec write failed ingestion_id=%s error=%q", item.ID, err)
+		return err
+	}
+	data, err := os.ReadFile(specPath)
+	if err != nil {
+		return fmt.Errorf("read written spec: %w", err)
+	}
+	item.SpecPath, item.SpecDigest = specPath, spec.Digest(data)
+	document, err := spec.Parse(data)
+	if err != nil {
+		return err
+	}
+	if _, err := compiler.Compile(document, compiler.LocalDuckDB(a.Destination.Path)); err != nil {
+		return err
+	}
+	a.Logger.Printf("spec written ingestion_id=%s path=%s", item.ID, specPath)
 	a.Logger.Printf("persisting ingestion ingestion_id=%s name=%q", item.ID, item.Name)
 	if err := a.Store.Create(ctx, item); err != nil {
 		a.Logger.Printf("metadata persistence failed ingestion_id=%s error=%q", item.ID, err)
 		return err
 	}
 	a.Logger.Printf("metadata persisted ingestion_id=%s", item.ID)
-	specPath, err := spec.Write(a.SpecDir, item)
-	if err != nil {
-		a.Logger.Printf("spec write failed ingestion_id=%s error=%q", item.ID, err)
-		if updateErr := a.finish(item.ID, ingestion.StatusFailed, err.Error()); updateErr != nil {
-			return errors.Join(err, updateErr)
-		}
-		return err
-	}
-	a.Logger.Printf("spec written ingestion_id=%s path=%s", item.ID, specPath)
 	if err := a.Scheduler.Upsert(item); err != nil {
 		a.Logger.Printf("schedule registration failed ingestion_id=%s schedule=%q error=%q", item.ID, item.Schedule, err)
 		if updateErr := a.finish(item.ID, ingestion.StatusFailed, err.Error()); updateErr != nil {
@@ -379,10 +399,24 @@ func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, err)
 		return
 	}
+	item, err = a.hydrate(item)
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	planPreview := ""
+	if document, _, readErr := spec.Read(item.SpecPath); readErr == nil {
+		if plan, compileErr := compiler.Compile(document, compiler.LocalDuckDB(a.Destination.Path)); compileErr == nil {
+			if data, marshalErr := compiler.MarshalPlan(plan); marshalErr == nil {
+				planPreview = string(data)
+			}
+		}
+	}
 	a.render(w, http.StatusOK, "detail", detailPageData{
 		Title: item.Name, Ingestion: item, SpecPath: filepath.Join(a.SpecDir, item.ID+".yaml"),
 		NextRun: a.Scheduler.NextRun(item.ID), ScheduleValue: item.Schedule, ScheduleSaved: r.URL.Query().Get("schedule") == "saved",
 		RunQueued: r.URL.Query().Get("run") == "queued",
+		Plan:      planPreview,
 	})
 }
 
@@ -396,12 +430,24 @@ func (a *App) runIngestion(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, err)
 		return
 	}
-	a.Logger.Printf("rerun requested ingestion_id=%s source=%s source_table=%s", item.ID, item.Source.Type, item.Source.Table)
+	_, data, err := spec.Read(item.SpecPath)
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	digest := spec.Digest(data)
+	if digest != item.SpecDigest {
+		if err := a.Store.UpdateSpecReference(r.Context(), item.ID, item.SpecPath, digest); err != nil {
+			a.serverError(w, err)
+			return
+		}
+	}
+	a.Logger.Printf("rerun requested ingestion_id=%s", item.ID)
 	if err := a.Scheduler.Enqueue(r.Context(), item.ID); err != nil {
 		a.serverError(w, err)
 		return
 	}
-	a.Logger.Printf("rerun enqueued ingestion_id=%s source=%s source_table=%s", item.ID, item.Source.Type, item.Source.Table)
+	a.Logger.Printf("rerun enqueued ingestion_id=%s", item.ID)
 	http.Redirect(w, r, "/ingestions/"+item.ID+"?run=queued", http.StatusSeeOther)
 }
 
@@ -411,6 +457,11 @@ func (a *App) updateSchedule(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	item, err = a.hydrate(item)
 	if err != nil {
 		a.serverError(w, err)
 		return
@@ -426,6 +477,15 @@ func (a *App) updateSchedule(w http.ResponseWriter, r *http.Request) {
 	previous := item.Schedule
 	item.Schedule = schedule
 	if _, err := spec.Write(a.SpecDir, item); err != nil {
+		a.serverError(w, err)
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(a.SpecDir, item.ID+".yaml"))
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	if err := a.Store.UpdateSpecReference(r.Context(), item.ID, filepath.Join(a.SpecDir, item.ID+".yaml"), spec.Digest(data)); err != nil {
 		a.serverError(w, err)
 		return
 	}
@@ -542,11 +602,28 @@ func (a *App) renderSecrets(w http.ResponseWriter, r *http.Request, status int, 
 		a.serverError(w, err)
 		return
 	}
+	for index := range ingestions {
+		ingestions[index], err = a.hydrate(ingestions[index])
+		if err != nil {
+			a.serverError(w, err)
+			return
+		}
+	}
 	data.Title = "Secrets"
 	data.Secrets = describeSecrets(entries, ingestions)
 	data.Saved = data.Saved || r.URL.Query().Get("saved") == "1"
 	data.Deleted = data.Deleted || r.URL.Query().Get("deleted") == "1"
 	a.render(w, status, "secrets", data)
+}
+
+func (a *App) hydrate(state ingestion.Ingestion) (ingestion.Ingestion, error) {
+	document, data, err := spec.Read(state.SpecPath)
+	if err != nil {
+		return ingestion.Ingestion{}, err
+	}
+	projection := spec.ToProjection(document, state.ID, state.SpecPath, spec.Digest(data), a.Destination.Path)
+	projection.Status, projection.LastRun, projection.LastError, projection.NextRun = state.Status, state.LastRun, state.LastError, state.NextRun
+	return projection, nil
 }
 
 func describeSecrets(entries []secrets.Entry, ingestions []ingestion.Ingestion) []secretView {

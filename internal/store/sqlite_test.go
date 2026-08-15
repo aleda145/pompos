@@ -4,12 +4,40 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
 	"pompos/internal/ingestion"
 	"pompos/internal/secrets"
 )
+
+func TestIngestionProjectionSchemaIsOperationalOnly(t *testing.T) {
+	metadata, err := Open(context.Background(), filepath.Join(t.TempDir(), "pompos.sqlite"), "unused")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer metadata.Close()
+	rows, err := metadata.db.Query(`PRAGMA table_info(ingestions)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var columns []string
+	for rows.Next() {
+		var position, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&position, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatal(err)
+		}
+		columns = append(columns, name)
+	}
+	want := []string{"id", "status", "last_run_at", "last_error", "next_run_at", "spec_path", "spec_digest"}
+	if !reflect.DeepEqual(columns, want) {
+		t.Fatalf("columns = %v, want %v", columns, want)
+	}
+}
 
 func TestSQLiteLifecycle(t *testing.T) {
 	ctx := context.Background()
@@ -42,12 +70,12 @@ func TestSQLiteLifecycle(t *testing.T) {
 		t.Fatalf("Get() = %#v", got)
 	}
 	nextRun := time.Date(2026, time.August, 14, 6, 0, 0, 0, time.UTC)
-	if err := metadata.UpdateSchedule(ctx, item.ID, "0 6 * * *", &nextRun); err != nil {
+	if err := metadata.UpdateNextRun(ctx, item.ID, &nextRun); err != nil {
 		t.Fatal(err)
 	}
 	got, err = metadata.Get(ctx, item.ID)
-	if err != nil || got.Schedule != "0 6 * * *" || got.NextRun == nil || !got.NextRun.Equal(nextRun) {
-		t.Fatalf("schedule after update = %q, %v", got.Schedule, err)
+	if err != nil || got.NextRun == nil || !got.NextRun.Equal(nextRun) {
+		t.Fatalf("next run after update = %v, %v", got.NextRun, err)
 	}
 }
 
@@ -64,7 +92,7 @@ func TestRunCanBeReclaimedAfterWorkerCrash(t *testing.T) {
 	}
 	now := time.Date(2026, time.August, 13, 12, 0, 0, 0, time.UTC)
 	due := now.Add(-time.Minute)
-	if err := metadata.UpdateSchedule(ctx, item.ID, item.Schedule, &due); err != nil {
+	if err := metadata.UpdateNextRun(ctx, item.ID, &due); err != nil {
 		t.Fatal(err)
 	}
 	enqueued, err := metadata.EnqueueScheduledRun(ctx, item.ID, due, now.Add(time.Minute))
@@ -98,7 +126,7 @@ func TestManualRunIsPersistedBeforeClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer metadata.Close()
-	item := ingestion.Ingestion{ID: "manual", Name: "manual", Status: ingestion.StatusSucceeded, Source: ingestion.Source{Type: "csv"}}
+	item := ingestion.Ingestion{ID: "manual", Name: "manual", Status: ingestion.StatusSucceeded, Source: ingestion.Source{Type: "csv"}, SpecPath: "/data/specs/manual.yaml", SpecDigest: "sha256:abc"}
 	if err := metadata.Create(ctx, item); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +139,7 @@ func TestManualRunIsPersistedBeforeClaim(t *testing.T) {
 		t.Fatalf("stored = %#v, error = %v", stored, err)
 	}
 	run, ok, err := metadata.ClaimRun(ctx, now, now.Add(-time.Hour))
-	if err != nil || !ok || run.IngestionID != item.ID || run.Trigger != "manual" {
+	if err != nil || !ok || run.IngestionID != item.ID || run.Trigger != "manual" || run.SpecPath != item.SpecPath || run.SpecDigest != item.SpecDigest {
 		t.Fatalf("claim = %#v, %v, %v", run, ok, err)
 	}
 }
