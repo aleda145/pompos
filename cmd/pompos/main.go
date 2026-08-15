@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -148,46 +149,62 @@ func rebuildSpecProjections(ctx context.Context, metadata *store.SQLite, directo
 }
 
 func runCommand(args []string) error {
+	return runCommandIO(args, os.Stdout, os.Stderr)
+}
+
+func runCommandIO(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 2 {
 		return errors.New("usage: pompos <validate|plan|run> ingestion.yaml")
 	}
-	document, _, err := spec.Read(args[1])
+	command, path := args[0], args[1]
+	if command != "validate" && command != "plan" && command != "run" {
+		return fmt.Errorf("unknown command %q; use validate, plan, or run", command)
+	}
+	document, _, err := spec.Read(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %w", path, err)
 	}
 	cfg := config.Load()
 	plan, err := compiler.Compile(document, compiler.LocalDuckDB(cfg.Destination.Path))
 	if err != nil {
 		return err
 	}
-	switch args[0] {
+	switch command {
 	case "validate":
-		fmt.Fprintln(os.Stdout, "valid")
+		fmt.Fprintln(stdout, "valid")
 	case "plan":
 		data, err := compiler.MarshalPlan(plan)
 		if err != nil {
 			return err
 		}
-		_, err = os.Stdout.Write(data)
+		_, err = stdout.Write(data)
 		return err
 	case "run":
-		logger := log.New(os.Stderr, "pompos: ", log.LstdFlags)
+		logger := log.New(stderr, "pompos: ", log.LstdFlags)
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
 		credentialValue := ""
 		if plan.CredentialRef != "" {
-			metadata, err := store.Open(context.Background(), cfg.MetadataPath, cfg.Destination.Path)
+			metadata, err := store.Open(ctx, cfg.MetadataPath, cfg.Destination.Path)
 			if err != nil {
 				return err
 			}
 			defer metadata.Close()
-			value, err := metadata.Secrets().Get(context.Background(), plan.CredentialRef)
+			value, err := metadata.Secrets().Get(ctx, plan.CredentialRef)
 			if err != nil {
 				return fmt.Errorf("load credential %q: %w", plan.CredentialRef, err)
 			}
 			credentialValue = string(value)
 		}
-		return (runneringestr.Runner{Binary: cfg.Runner.Binary, Logger: logger}).Run(context.Background(), "cli", plan, credentialValue)
-	default:
-		return fmt.Errorf("unknown command %q; use validate, plan, or run", args[0])
+		started := time.Now()
+		fmt.Fprintf(stdout, "Running %s\n", document.Metadata.Name)
+		if err := (runneringestr.Runner{Binary: cfg.Runner.Binary, Logger: logger}).Run(ctx, document.Metadata.Name, plan, credentialValue); err != nil {
+			if ctx.Err() != nil {
+				return fmt.Errorf("run %q interrupted: %w", document.Metadata.Name, ctx.Err())
+			}
+			return fmt.Errorf("run %q failed: %w", document.Metadata.Name, err)
+		}
+		fmt.Fprintf(stdout, "Succeeded %s in %s\n", document.Metadata.Name, time.Since(started).Round(time.Millisecond))
 	}
 	return nil
 }
