@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -81,6 +82,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /", a.home)
 	mux.HandleFunc("GET /ingestions/new", a.newIngestion)
 	mux.HandleFunc("POST /ingestions", a.createIngestion)
+	mux.HandleFunc("POST /ingestions/preview", a.previewIngestionYAML)
 	mux.HandleFunc("GET /ingestions/{id}", a.ingestionDetail)
 	mux.HandleFunc("POST /ingestions/{id}/run", a.runIngestion)
 	mux.HandleFunc("POST /ingestions/{id}/schedule", a.updateSchedule)
@@ -162,7 +164,7 @@ type detailPageData struct {
 	ScheduleSaved bool
 	ScheduleError string
 	RunQueued     bool
-	Plan          string
+	YAML          string
 }
 
 var githubTableOptions = []githubTableOption{
@@ -191,6 +193,68 @@ func (a *App) createIngestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.createCSVIngestion(w, r)
+}
+
+type yamlPreviewDocument struct {
+	Name string `json:"name"`
+	YAML string `json:"yaml"`
+}
+
+type yamlPreviewResponse struct {
+	Documents []yamlPreviewDocument `json:"documents,omitempty"`
+	Error     string                `json:"error,omitempty"`
+}
+
+func (a *App) previewIngestionYAML(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := r.ParseMultipartForm(1 << 20); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+		_ = json.NewEncoder(w).Encode(yamlPreviewResponse{Error: "Could not read the form."})
+		return
+	}
+	var items []ingestion.Ingestion
+	schedule := strings.TrimSpace(r.FormValue("schedule"))
+	if r.FormValue("source_type") == "github" {
+		owner, repository, err := validation.ParseGitHubRepository(r.FormValue("repository"))
+		if err != nil {
+			_ = json.NewEncoder(w).Encode(yamlPreviewResponse{Error: err.Error()})
+			return
+		}
+		secretRef := strings.TrimSpace(r.FormValue("secret_key"))
+		if secretRef == "" {
+			secretRef = strings.TrimSpace(r.FormValue("new_secret_name"))
+		}
+		if secretRef == "" {
+			_ = json.NewEncoder(w).Encode(yamlPreviewResponse{Error: "Choose a saved secret or give the new token a secret name."})
+			return
+		}
+		for _, sourceTable := range r.Form["tables"] {
+			items = append(items, ingestion.Ingestion{
+				Name: owner + "/" + repository + " · " + githubTableName(sourceTable), Schedule: schedule,
+				Source:      ingestion.Source{Type: "github", Owner: owner, Repository: repository, Table: sourceTable, SecretKey: secretRef},
+				Destination: ingestion.Destination{Type: a.Destination.Type, Path: a.Destination.Path, Table: safeTableName(owner + "_" + repository + "_" + sourceTable)},
+			})
+		}
+		if len(items) == 0 {
+			_ = json.NewEncoder(w).Encode(yamlPreviewResponse{Error: "Choose at least one table to preview."})
+			return
+		}
+	} else {
+		items = []ingestion.Ingestion{{
+			Name: strings.TrimSpace(r.FormValue("table_name")), Schedule: schedule,
+			Source:      ingestion.Source{Type: "csv", URL: strings.TrimSpace(r.FormValue("csv_url"))},
+			Destination: ingestion.Destination{Type: a.Destination.Type, Path: a.Destination.Path, Table: strings.TrimSpace(r.FormValue("table_name"))},
+		}}
+	}
+	response := yamlPreviewResponse{Documents: make([]yamlPreviewDocument, 0, len(items))}
+	for _, item := range items {
+		data, err := spec.Marshal(spec.FromLegacy(item))
+		if err != nil {
+			_ = json.NewEncoder(w).Encode(yamlPreviewResponse{Error: err.Error()})
+			return
+		}
+		response.Documents = append(response.Documents, yamlPreviewDocument{Name: item.Name, YAML: string(data)})
+	}
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
@@ -404,19 +468,16 @@ func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, err)
 		return
 	}
-	planPreview := ""
-	if document, _, readErr := spec.Read(item.SpecPath); readErr == nil {
-		if plan, compileErr := compiler.Compile(document, compiler.LocalDuckDB(a.Destination.Path)); compileErr == nil {
-			if data, marshalErr := compiler.MarshalPlan(plan); marshalErr == nil {
-				planPreview = string(data)
-			}
-		}
+	_, yamlData, err := spec.Read(item.SpecPath)
+	if err != nil {
+		a.serverError(w, err)
+		return
 	}
 	a.render(w, http.StatusOK, "detail", detailPageData{
-		Title: item.Name, Ingestion: item, SpecPath: filepath.Join(a.SpecDir, item.ID+".yaml"),
+		Title: item.Name, Ingestion: item, SpecPath: item.SpecPath,
 		NextRun: a.Scheduler.NextRun(item.ID), ScheduleValue: item.Schedule, ScheduleSaved: r.URL.Query().Get("schedule") == "saved",
 		RunQueued: r.URL.Query().Get("run") == "queued",
-		Plan:      planPreview,
+		YAML:      string(yamlData),
 	})
 }
 

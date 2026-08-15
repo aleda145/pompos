@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -71,7 +72,7 @@ func TestCreateIngestionEnqueuesAndRendersPendingDetail(t *testing.T) {
 	if item.Status != ingestion.StatusPending || item.LastRun != nil || item.Schedule != "" {
 		t.Fatalf("stored ingestion = %#v", item)
 	}
-	document, _, err := spec.Read(item.SpecPath)
+	document, specYAML, err := spec.Read(item.SpecPath)
 	if err != nil || document.Schedule == nil || document.Schedule.Cron != "0 6 * * *" {
 		t.Fatalf("document = %#v, error = %v", document, err)
 	}
@@ -87,8 +88,15 @@ func TestCreateIngestionEnqueuesAndRendersPendingDetail(t *testing.T) {
 	detailRequest := httptest.NewRequest(http.MethodGet, response.Header().Get("Location"), nil)
 	detailResponse := httptest.NewRecorder()
 	app.Handler().ServeHTTP(detailResponse, detailRequest)
-	if detailResponse.Code != http.StatusOK || !strings.Contains(detailResponse.Body.String(), "pending") || !strings.Contains(detailResponse.Body.String(), "Run queued") || !strings.Contains(detailResponse.Body.String(), "engine: ingestr") {
+	detailBody := detailResponse.Body.String()
+	if detailResponse.Code != http.StatusOK || !strings.Contains(detailBody, "pending") || !strings.Contains(detailBody, "Run queued") || !strings.Contains(detailBody, string(specYAML)) {
 		t.Fatalf("GET detail status = %d, body = %s", detailResponse.Code, detailResponse.Body.String())
+	}
+	if strings.Contains(detailBody, "Effective execution plan") || strings.Contains(detailBody, "Source of truth") {
+		t.Fatalf("detail includes removed plan messaging: %s", detailBody)
+	}
+	if strings.Contains(detailBody, "yaml-disclosure") || strings.Index(detailBody, `class="yaml-section"`) < strings.Index(detailBody, `class="metadata"`) {
+		t.Fatalf("YAML is not visible at the bottom of the detail card: %s", detailBody)
 	}
 }
 
@@ -144,6 +152,52 @@ func TestUpdateSchedulePersistsAndRegisters(t *testing.T) {
 	specContent, err := os.ReadFile(filepath.Join(dataDir, "ingestions", item.ID+".yaml"))
 	if err != nil || !strings.Contains(string(specContent), `cron: 15 * * * *`) {
 		t.Fatalf("spec = %s, error = %v", specContent, err)
+	}
+}
+
+func TestCreationYAMLPreviewUsesCanonicalSerializer(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	destination := filepath.Join(dataDir, "pompos.duckdb")
+	metadata, err := store.Open(ctx, filepath.Join(dataDir, "pompos.sqlite"), destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer metadata.Close()
+	app, err := New(App{
+		Store: metadata, Secrets: metadata.Secrets(), Validator: validatorFunc(func(context.Context, ingestion.Source) error { return nil }),
+		Destination: ingestion.Destination{Type: "duckdb", Path: destination}, SpecDir: filepath.Join(dataDir, "ingestions"), Logger: log.New(io.Discard, "", 0),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"source_type": {"csv"}, "csv_url": {"https://example.com/customers.csv"}, "table_name": {"customers"}, "schedule": {"0 6 * * *"}}
+	request := httptest.NewRequest(http.MethodPost, "/ingestions/preview", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, request)
+	var preview yamlPreviewResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || preview.Error != "" || len(preview.Documents) != 1 {
+		t.Fatalf("status = %d, preview = %#v", response.Code, preview)
+	}
+	want, err := spec.Marshal(spec.FromLegacy(ingestion.Ingestion{
+		Name: "customers", Schedule: "0 6 * * *", Source: ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
+		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "customers"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Documents[0].YAML != string(want) {
+		t.Fatalf("preview =\n%s\nwant:\n%s", preview.Documents[0].YAML, want)
+	}
+
+	page := httptest.NewRecorder()
+	app.Handler().ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/ingestions/new?source=csv", nil))
+	if !strings.Contains(page.Body.String(), `<section class="yaml-preview" data-yaml-preview>`) || strings.Contains(page.Body.String(), `<details class="yaml-preview"`) {
+		t.Fatalf("YAML preview is not always visible: %s", page.Body.String())
 	}
 }
 

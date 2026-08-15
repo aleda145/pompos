@@ -37,6 +37,15 @@ input:focus, select:focus { border-color: #245c3c; outline: 3px solid #dceae1; }
 .hint { color: #617066; font-size: .86rem; margin: .35rem 0 1.15rem; }
 form.panel button { justify-self: start; margin-top: .5rem; }
 .details { display: grid; gap: 1.5rem; }
+.yaml-code { margin: 0; padding: 1.25rem; max-height: 38rem; overflow: auto; color: #26362c; background: #f3f6f2; white-space: pre; tab-size: 2; font: .86rem/1.62 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; }
+.yaml-code code { font: inherit; }
+.yaml-section .yaml-code { margin-top: .7rem; border: 1px solid #e0e7df; border-radius: .55rem; }
+.yaml-preview { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #dfe4dc; }
+.yaml-preview h2 { margin: 0; }
+.yaml-preview .hint { margin-top: .55rem; }
+.yaml-preview .yaml-code { margin-top: .7rem; border-radius: .55rem; max-height: 30rem; }
+.yaml-preview-empty { margin: .75rem 0 0; color: #617066; font-size: .86rem; }
+.yaml-document-name { margin-top: 1rem; color: #526158; font-size: .78rem; font-weight: 800; }
 .details section { border-bottom: 1px solid #edf0eb; padding-bottom: 1rem; }
 .details section:last-child { border: 0; padding-bottom: 0; }
 .details p { margin: 0; }

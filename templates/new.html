@@ -58,6 +58,11 @@
   <input id="schedule" name="schedule" value="{{.Schedule}}" placeholder="0 6 * * *" autocomplete="off">
   <p class="hint">Standard five-field cron in UTC. Example: <code>0 6 * * *</code> runs daily at 06:00 UTC.</p>
   <button type="submit">Create and run</button>
+  <section class="yaml-preview" data-yaml-preview>
+    <h2>YAML</h2>
+    <p class="hint">The canonical file Pompos will create.</p>
+    <div data-yaml-output><p class="yaml-preview-empty">Generating preview…</p></div>
+  </section>
 </form>
 
 {{else}}
@@ -118,6 +123,64 @@
   <input id="schedule" name="schedule" value="{{.Schedule}}" placeholder="0 6 * * *" autocomplete="off">
   <p class="hint">Standard five-field cron in UTC. The same schedule applies to every selected table.</p>
   <button type="submit">Create and run selected tables</button>
+  <section class="yaml-preview" data-yaml-preview>
+    <h2>YAML</h2>
+    <p class="hint">One canonical file is created for each selected table. Credential values are never included.</p>
+    <div data-yaml-output><p class="yaml-preview-empty">Generating preview…</p></div>
+  </section>
 </form>
+{{end}}
+
+{{if .Source}}
+<script>
+  (() => {
+    const form = document.querySelector('form.source-form');
+    const preview = form?.querySelector('[data-yaml-preview]');
+    const output = preview?.querySelector('[data-yaml-output]');
+    if (!form || !preview || !output) return;
+
+    let timer;
+    const render = async () => {
+      output.innerHTML = '<p class="yaml-preview-empty">Generating preview…</p>';
+      const data = new FormData(form);
+      data.delete('access_token');
+      try {
+        const response = await fetch('/ingestions/preview', {method: 'POST', body: data});
+        const result = await response.json();
+        output.replaceChildren();
+        if (result.error) {
+          const error = document.createElement('p');
+          error.className = 'yaml-preview-empty';
+          error.textContent = result.error;
+          output.append(error);
+          return;
+        }
+        result.documents.forEach((documentPreview, index) => {
+          if (result.documents.length > 1) {
+            const name = document.createElement('div');
+            name.className = 'yaml-document-name';
+            name.textContent = documentPreview.name;
+            output.append(name);
+          }
+          const pre = document.createElement('pre');
+          pre.className = 'yaml-code';
+          const code = document.createElement('code');
+          code.textContent = documentPreview.yaml;
+          pre.append(code);
+          output.append(pre);
+        });
+      } catch (_) {
+        output.innerHTML = '<p class="yaml-preview-empty">Could not generate the preview.</p>';
+      }
+    };
+    const queueRender = () => {
+      clearTimeout(timer);
+      timer = setTimeout(render, 250);
+    };
+    form.addEventListener('input', queueRender);
+    form.addEventListener('change', queueRender);
+    render();
+  })();
+</script>
 {{end}}
 {{end}}
