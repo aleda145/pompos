@@ -125,19 +125,21 @@ type githubTableOption struct {
 }
 
 type newPageData struct {
-	Title         string
-	Error         string
-	Source        string
-	Sources       []ingestion.SourceDefinition
-	CSVURL        string
-	TableName     string
-	Repository    string
-	GitHubTables  []githubTableOption
-	GitHubDocsURL string
-	SavedSecrets  []secrets.Entry
-	SecretKey     string
-	NewSecretName string
-	Schedule      string
+	Title                 string
+	Error                 string
+	Source                string
+	Sources               []ingestion.SourceDefinition
+	CSVURL                string
+	TableName             string
+	Repository            string
+	GitHubTables          []githubTableOption
+	GitHubDocsURL         string
+	SavedSecrets          []secrets.Entry
+	SecretKey             string
+	NewSecretName         string
+	Schedule              string
+	RuntimeImplementation string
+	RuntimeOrchestrator   string
 }
 
 type secretsPageData struct {
@@ -213,6 +215,11 @@ func (a *App) previewIngestionYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	var items []ingestion.Ingestion
 	schedule := strings.TrimSpace(r.FormValue("schedule"))
+	runtime, err := runtimeFromForm(r)
+	if err != nil {
+		_ = json.NewEncoder(w).Encode(yamlPreviewResponse{Error: err.Error()})
+		return
+	}
 	if r.FormValue("source_type") == "github" {
 		owner, repository, err := validation.ParseGitHubRepository(r.FormValue("repository"))
 		if err != nil {
@@ -232,6 +239,7 @@ func (a *App) previewIngestionYAML(w http.ResponseWriter, r *http.Request) {
 				Name: owner + "/" + repository + " · " + githubTableName(sourceTable), Schedule: schedule,
 				Source:      ingestion.Source{Type: "github", Owner: owner, Repository: repository, Table: sourceTable, SecretKey: secretRef},
 				Destination: ingestion.Destination{Type: a.Destination.Type, Path: a.Destination.Path, Table: safeTableName(owner + "_" + repository + "_" + sourceTable)},
+				Runtime:     runtime,
 			})
 		}
 		if len(items) == 0 {
@@ -243,6 +251,7 @@ func (a *App) previewIngestionYAML(w http.ResponseWriter, r *http.Request) {
 			Name: strings.TrimSpace(r.FormValue("table_name")), Schedule: schedule,
 			Source:      ingestion.Source{Type: "csv", URL: strings.TrimSpace(r.FormValue("csv_url"))},
 			Destination: ingestion.Destination{Type: a.Destination.Type, Path: a.Destination.Path, Table: strings.TrimSpace(r.FormValue("table_name"))},
+			Runtime:     runtime,
 		}}
 	}
 	response := yamlPreviewResponse{Documents: make([]yamlPreviewDocument, 0, len(items))}
@@ -261,8 +270,15 @@ func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
 	csvURL := strings.TrimSpace(r.FormValue("csv_url"))
 	tableName := strings.TrimSpace(r.FormValue("table_name"))
 	schedule := strings.TrimSpace(r.FormValue("schedule"))
+	runtime, err := runtimeFromForm(r)
+	if err != nil {
+		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule,
+			RuntimeImplementation: runtime.Implementation, RuntimeOrchestrator: runtime.Orchestrator})
+		return
+	}
 	if err := a.Scheduler.Validate(schedule); err != nil {
-		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule})
+		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule,
+			RuntimeImplementation: runtime.Implementation, RuntimeOrchestrator: runtime.Orchestrator})
 		return
 	}
 	item := ingestion.Ingestion{
@@ -270,6 +286,7 @@ func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
 		Name:     tableName,
 		Status:   ingestion.StatusPending,
 		Schedule: schedule,
+		Runtime:  runtime,
 		Source:   ingestion.Source{Type: "csv", URL: csvURL},
 		Destination: ingestion.Destination{
 			Type:  a.Destination.Type,
@@ -281,12 +298,14 @@ func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
 	a.Logger.Printf("validating ingestion ingestion_id=%s source=csv", item.ID)
 	if _, err := compiler.Compile(spec.FromLegacy(item), compiler.LocalDuckDB(a.Destination.Path)); err != nil {
 		a.Logger.Printf("validation failed ingestion_id=%s source=csv error=%q", item.ID, err)
-		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule})
+		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule,
+			RuntimeImplementation: runtime.Implementation, RuntimeOrchestrator: runtime.Orchestrator})
 		return
 	}
 	if err := a.Validator.Validate(r.Context(), item.Source); err != nil {
 		a.Logger.Printf("connectivity validation failed ingestion_id=%s source=csv error=%q", item.ID, err)
-		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule})
+		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule,
+			RuntimeImplementation: runtime.Implementation, RuntimeOrchestrator: runtime.Orchestrator})
 		return
 	}
 	a.Logger.Printf("validation succeeded ingestion_id=%s source=csv", item.ID)
@@ -300,6 +319,11 @@ func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
 func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 	repositoryInput := strings.TrimSpace(r.FormValue("repository"))
 	schedule := strings.TrimSpace(r.FormValue("schedule"))
+	runtime, runtimeErr := runtimeFromForm(r)
+	if runtimeErr != nil {
+		a.renderGitHubError(w, runtimeErr.Error(), repositoryInput, r.Form["tables"], r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
+		return
+	}
 	owner, repository, err := validation.ParseGitHubRepository(repositoryInput)
 	if err != nil {
 		a.renderGitHubError(w, err.Error(), repositoryInput, r.Form["tables"], r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
@@ -384,6 +408,7 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 			Name:     owner + "/" + repository + " · " + githubTableName(sourceTable),
 			Status:   ingestion.StatusPending,
 			Schedule: schedule,
+			Runtime:  runtime,
 			Source:   source,
 			Destination: ingestion.Destination{
 				Type:  a.Destination.Type,
@@ -571,6 +596,12 @@ func (a *App) renderNew(w http.ResponseWriter, status int, data newPageData) {
 	data.Title = "Add ingestion"
 	data.Sources = ingestion.DefaultSourceCatalog().List()
 	data.GitHubDocsURL = "https://bruin-data.github.io/ingestr/supported-sources/github.html"
+	if data.RuntimeImplementation == "" {
+		data.RuntimeImplementation = "ingestr"
+	}
+	if data.RuntimeOrchestrator == "" {
+		data.RuntimeOrchestrator = "direct"
+	}
 	if data.GitHubTables == nil {
 		data.GitHubTables = append([]githubTableOption(nil), githubTableOptions...)
 	}
@@ -583,6 +614,26 @@ func (a *App) renderNew(w http.ResponseWriter, status int, data newPageData) {
 		data.SavedSecrets = entries
 	}
 	a.render(w, status, "new", data)
+}
+
+func runtimeFromForm(r *http.Request) (ingestion.Runtime, error) {
+	runtime := ingestion.Runtime{
+		Implementation: strings.TrimSpace(r.FormValue("runtime_implementation")),
+		Orchestrator:   strings.TrimSpace(r.FormValue("runtime_orchestrator")),
+	}
+	if runtime.Implementation == "" {
+		runtime.Implementation = "ingestr"
+	}
+	if runtime.Orchestrator == "" {
+		runtime.Orchestrator = "direct"
+	}
+	if runtime.Implementation != "ingestr" {
+		return runtime, fmt.Errorf("runtime implementation %q is not available", runtime.Implementation)
+	}
+	if runtime.Orchestrator != "direct" {
+		return runtime, fmt.Errorf("runtime orchestrator %q is not available", runtime.Orchestrator)
+	}
+	return runtime, nil
 }
 
 func (a *App) renderGitHubError(w http.ResponseWriter, message, repository string, selected []string, secretKey, newSecretName, schedule string) {

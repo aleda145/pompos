@@ -13,5 +13,5 @@ destination:
 materialization:
   strategy: replace
 runtime:
-  target: direct
   implementation: ingestr
+  orchestrator: direct

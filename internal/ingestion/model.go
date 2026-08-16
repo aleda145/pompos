@@ -14,6 +14,7 @@ type Ingestion struct {
 	Name        string
 	Source      Source
 	Destination Destination
+	Runtime     Runtime
 	Status      string
 	Schedule    string
 	NextRun     *time.Time
@@ -54,4 +55,9 @@ type Destination struct {
 	Type  string
 	Path  string
 	Table string
+}
+
+type Runtime struct {
+	Implementation string
+	Orchestrator   string
 }

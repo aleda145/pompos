@@ -12,15 +12,16 @@ import (
 	"pompos/internal/spec"
 )
 
-type Blueprint struct{ DestinationRef, DestinationType, DestinationPath, Engine, EngineVersion, SchemaNaming string }
+type Blueprint struct{ DestinationRef, DestinationType, DestinationPath, Engine, EngineVersion, Orchestrator, SchemaNaming string }
 
 func LocalDuckDB(path string) Blueprint {
-	return Blueprint{DestinationRef: "local-duckdb", DestinationType: "duckdb", DestinationPath: path, Engine: "ingestr", EngineVersion: "1.1.8", SchemaNaming: "direct"}
+	return Blueprint{DestinationRef: "local-duckdb", DestinationType: "duckdb", DestinationPath: path, Engine: "ingestr", EngineVersion: "1.1.8", Orchestrator: "direct", SchemaNaming: "direct"}
 }
 
 type ExecutionPlan struct {
 	Engine            string `yaml:"engine"`
 	EngineVersion     string `yaml:"engineVersion"`
+	Orchestrator      string `yaml:"orchestrator"`
 	SourceURI         string `yaml:"sourceUri"`
 	SourceTable       string `yaml:"sourceTable"`
 	CredentialRef     string `yaml:"credentialRef,omitempty"`
@@ -38,13 +39,13 @@ func Compile(document spec.Ingestion, blueprint Blueprint) (ExecutionPlan, error
 	if document.Destination.ConnectionRef != blueprint.DestinationRef {
 		return ExecutionPlan{}, fmt.Errorf("policy.destination-connection: connectionRef %q is not allowed; use %q", document.Destination.ConnectionRef, blueprint.DestinationRef)
 	}
-	if document.Runtime.Target != "" && document.Runtime.Target != "direct" {
-		return ExecutionPlan{}, fmt.Errorf("policy.runtime-target: target %q is not enabled", document.Runtime.Target)
+	if orchestrator := document.Runtime.EffectiveOrchestrator(); orchestrator != "" && orchestrator != blueprint.Orchestrator {
+		return ExecutionPlan{}, fmt.Errorf("policy.runtime-orchestrator: orchestrator %q is not enabled", orchestrator)
 	}
 	if document.Runtime.Implementation != "" && document.Runtime.Implementation != blueprint.Engine {
 		return ExecutionPlan{}, fmt.Errorf("policy.runtime-implementation: implementation %q is not allowed", document.Runtime.Implementation)
 	}
-	plan := ExecutionPlan{Engine: blueprint.Engine, EngineVersion: blueprint.EngineVersion, DestinationRef: blueprint.DestinationRef,
+	plan := ExecutionPlan{Engine: blueprint.Engine, EngineVersion: blueprint.EngineVersion, Orchestrator: blueprint.Orchestrator, DestinationRef: blueprint.DestinationRef,
 		DestinationURI: duckDBURI(blueprint.DestinationPath), DestinationObject: document.Destination.Object, Strategy: defaultValue(document.Materialization.Strategy, "replace"), SchemaNaming: blueprint.SchemaNaming}
 	switch document.Source.Type {
 	case "http-file":

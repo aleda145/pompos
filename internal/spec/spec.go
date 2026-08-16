@@ -55,8 +55,9 @@ type Materialization struct {
 	Strategy string `yaml:"strategy,omitempty"`
 }
 type Runtime struct {
-	Target         string `yaml:"target,omitempty"`
 	Implementation string `yaml:"implementation,omitempty"`
+	Orchestrator   string `yaml:"orchestrator,omitempty"`
+	Target         string `yaml:"target,omitempty"` // accepted as a v1alpha1 compatibility alias
 }
 type Schedule struct {
 	Cron     string `yaml:"cron"`
@@ -76,6 +77,11 @@ func Parse(data []byte) (Ingestion, error) {
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return Ingestion{}, errors.New("parse ingestion YAML: exactly one document is required")
 	}
+	runtime, err := normalizeRuntime(document.Runtime)
+	if err != nil {
+		return Ingestion{}, err
+	}
+	document.Runtime = runtime
 	if err := document.Validate(); err != nil {
 		return Ingestion{}, err
 	}
@@ -92,6 +98,11 @@ func Read(path string) (Ingestion, []byte, error) {
 }
 
 func Marshal(document Ingestion) ([]byte, error) {
+	runtime, err := normalizeRuntime(document.Runtime)
+	if err != nil {
+		return nil, err
+	}
+	document.Runtime = runtime
 	if err := document.Validate(); err != nil {
 		return nil, err
 	}
@@ -106,6 +117,10 @@ func Marshal(document Ingestion) ([]byte, error) {
 }
 
 func (s Ingestion) Validate() error {
+	runtime, err := normalizeRuntime(s.Runtime)
+	if err != nil {
+		return err
+	}
 	if s.APIVersion != APIVersion {
 		return fmt.Errorf("spec.apiVersion: must be %q", APIVersion)
 	}
@@ -143,13 +158,32 @@ func (s Ingestion) Validate() error {
 	if s.Materialization.Strategy != "" && s.Materialization.Strategy != "replace" {
 		return fmt.Errorf("spec.materialization.strategy: unsupported strategy %q", s.Materialization.Strategy)
 	}
-	if s.Runtime.Target != "" && s.Runtime.Target != "direct" {
-		return fmt.Errorf("spec.runtime.target: unsupported target %q", s.Runtime.Target)
+	if runtime.Implementation != "" && runtime.Implementation != "ingestr" {
+		return fmt.Errorf("spec.runtime.implementation: unsupported implementation %q", runtime.Implementation)
 	}
-	if s.Runtime.Implementation != "" && s.Runtime.Implementation != "ingestr" {
-		return fmt.Errorf("spec.runtime.implementation: unsupported implementation %q", s.Runtime.Implementation)
+	orchestrator := runtime.Orchestrator
+	if orchestrator != "" && orchestrator != "direct" {
+		return fmt.Errorf("spec.runtime.orchestrator: unsupported orchestrator %q", orchestrator)
 	}
 	return nil
+}
+
+func normalizeRuntime(runtime Runtime) (Runtime, error) {
+	if runtime.Target != "" && runtime.Orchestrator != "" && runtime.Target != runtime.Orchestrator {
+		return Runtime{}, errors.New("spec.runtime: target and orchestrator cannot disagree")
+	}
+	if runtime.Orchestrator == "" {
+		runtime.Orchestrator = runtime.Target
+	}
+	runtime.Target = ""
+	return runtime, nil
+}
+
+func (r Runtime) EffectiveOrchestrator() string {
+	if r.Orchestrator != "" {
+		return r.Orchestrator
+	}
+	return r.Target
 }
 
 func Digest(data []byte) string {
@@ -163,8 +197,15 @@ func FromLegacy(item ingestion.Ingestion) Ingestion {
 	if item.Source.Type == "github" {
 		source = Source{Type: "github", Owner: item.Source.Owner, Repository: item.Source.Repository, Table: item.Source.Table, CredentialRef: item.Source.SecretKey}
 	}
+	implementation, orchestrator := item.Runtime.Implementation, item.Runtime.Orchestrator
+	if implementation == "" {
+		implementation = "ingestr"
+	}
+	if orchestrator == "" {
+		orchestrator = "direct"
+	}
 	document := Ingestion{APIVersion: APIVersion, Kind: Kind, Metadata: Metadata{Name: item.Name}, Source: source,
-		Destination: Destination{ConnectionRef: "local-duckdb", Object: item.Destination.Table}, Materialization: Materialization{Strategy: "replace"}, Runtime: Runtime{Target: "direct", Implementation: "ingestr"}}
+		Destination: Destination{ConnectionRef: "local-duckdb", Object: item.Destination.Table}, Materialization: Materialization{Strategy: "replace"}, Runtime: Runtime{Implementation: implementation, Orchestrator: orchestrator}}
 	if item.Schedule != "" {
 		document.Schedule = &Schedule{Cron: item.Schedule, Timezone: "UTC"}
 	}
@@ -176,8 +217,16 @@ func ToProjection(document Ingestion, id, path, digest, destinationPath string) 
 	if document.Source.Type == "github" {
 		source = ingestion.Source{Type: "github", Owner: document.Source.Owner, Repository: document.Source.Repository, Table: document.Source.Table, SecretKey: document.Source.CredentialRef}
 	}
+	implementation, orchestrator := document.Runtime.Implementation, document.Runtime.EffectiveOrchestrator()
+	if implementation == "" {
+		implementation = "ingestr"
+	}
+	if orchestrator == "" {
+		orchestrator = "direct"
+	}
 	item := ingestion.Ingestion{ID: id, Name: document.Metadata.Name, Status: ingestion.StatusPending, Source: source,
-		Destination: ingestion.Destination{Type: "duckdb", Path: destinationPath, Table: document.Destination.Object}, SpecPath: path, SpecDigest: digest}
+		Destination: ingestion.Destination{Type: "duckdb", Path: destinationPath, Table: document.Destination.Object},
+		Runtime:     ingestion.Runtime{Implementation: implementation, Orchestrator: orchestrator}, SpecPath: path, SpecDigest: digest}
 	if document.Schedule != nil {
 		item.Schedule = document.Schedule.Cron
 	}

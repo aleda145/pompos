@@ -55,3 +55,25 @@ destination: {connectionRef: local-duckdb, object: issues}
 		t.Fatalf("spec = %s", data)
 	}
 }
+
+func TestLegacyRuntimeTargetNormalizesToOrchestrator(t *testing.T) {
+	input, err := os.ReadFile("testdata/customers.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input = []byte(strings.Replace(string(input), "  orchestrator: direct", "  target: direct", 1))
+	document, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.Runtime.Orchestrator != "direct" || document.Runtime.Target != "" {
+		t.Fatalf("runtime = %#v", document.Runtime)
+	}
+	canonical, err := Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(canonical), "target:") || !strings.Contains(string(canonical), "orchestrator: direct") {
+		t.Fatalf("canonical runtime =\n%s", canonical)
+	}
+}

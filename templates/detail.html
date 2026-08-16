@@ -9,6 +9,7 @@
 <div class="panel details">
   <section><h2>Source</h2><p class="url">{{.Ingestion.Source.DisplayLocation}}</p>{{if eq .Ingestion.Source.Type "github"}}<p class="hint">GitHub table: <code>{{.Ingestion.Source.Table}}</code></p>{{end}}</section>
   <section><h2>Destination</h2><p>DuckDB<br><code>{{.Ingestion.Destination.Path}}</code><br><code>{{.Ingestion.Destination.Table}}</code></p></section>
+  <section><h2>Runtime</h2><dl><div><dt>Implementation</dt><dd><code>{{.Ingestion.Runtime.Implementation}}</code></dd></div><div><dt>Orchestrator</dt><dd><code>{{.Ingestion.Runtime.Orchestrator}}</code></dd></div></dl></section>
   <section><h2>Status</h2><p><span class="status status-{{.Ingestion.Status}}">{{.Ingestion.Status}}</span></p>{{if .Ingestion.LastRun}}<p class="hint">Last run: {{.Ingestion.LastRun.Format "2006-01-02 15:04:05 UTC"}}</p>{{end}}</section>
   <section>
     <h2>Schedule</h2>
