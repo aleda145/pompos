@@ -55,9 +55,10 @@ type Materialization struct {
 	Strategy string `yaml:"strategy,omitempty"`
 }
 type Runtime struct {
-	Implementation string `yaml:"implementation,omitempty"`
+	Engine         string `yaml:"engine,omitempty"`
 	Orchestrator   string `yaml:"orchestrator,omitempty"`
-	Target         string `yaml:"target,omitempty"` // accepted as a v1alpha1 compatibility alias
+	Implementation string `yaml:"implementation,omitempty"` // accepted as a v1alpha1 compatibility alias
+	Target         string `yaml:"target,omitempty"`         // accepted as a v1alpha1 compatibility alias
 }
 type Schedule struct {
 	Cron     string `yaml:"cron"`
@@ -158,8 +159,8 @@ func (s Ingestion) Validate() error {
 	if s.Materialization.Strategy != "" && s.Materialization.Strategy != "replace" {
 		return fmt.Errorf("spec.materialization.strategy: unsupported strategy %q", s.Materialization.Strategy)
 	}
-	if runtime.Implementation != "" && runtime.Implementation != "ingestr" {
-		return fmt.Errorf("spec.runtime.implementation: unsupported implementation %q", runtime.Implementation)
+	if runtime.Engine != "" && runtime.Engine != "ingestr" {
+		return fmt.Errorf("spec.runtime.engine: unsupported engine %q", runtime.Engine)
 	}
 	orchestrator := runtime.Orchestrator
 	if orchestrator != "" && orchestrator != "direct" {
@@ -169,14 +170,28 @@ func (s Ingestion) Validate() error {
 }
 
 func normalizeRuntime(runtime Runtime) (Runtime, error) {
+	if runtime.Implementation != "" && runtime.Engine != "" && runtime.Implementation != runtime.Engine {
+		return Runtime{}, errors.New("spec.runtime: implementation and engine cannot disagree")
+	}
 	if runtime.Target != "" && runtime.Orchestrator != "" && runtime.Target != runtime.Orchestrator {
 		return Runtime{}, errors.New("spec.runtime: target and orchestrator cannot disagree")
+	}
+	if runtime.Engine == "" {
+		runtime.Engine = runtime.Implementation
 	}
 	if runtime.Orchestrator == "" {
 		runtime.Orchestrator = runtime.Target
 	}
+	runtime.Implementation = ""
 	runtime.Target = ""
 	return runtime, nil
+}
+
+func (r Runtime) EffectiveEngine() string {
+	if r.Engine != "" {
+		return r.Engine
+	}
+	return r.Implementation
 }
 
 func (r Runtime) EffectiveOrchestrator() string {
@@ -197,15 +212,15 @@ func FromLegacy(item ingestion.Ingestion) Ingestion {
 	if item.Source.Type == "github" {
 		source = Source{Type: "github", Owner: item.Source.Owner, Repository: item.Source.Repository, Table: item.Source.Table, CredentialRef: item.Source.SecretKey}
 	}
-	implementation, orchestrator := item.Runtime.Implementation, item.Runtime.Orchestrator
-	if implementation == "" {
-		implementation = "ingestr"
+	engine, orchestrator := item.Runtime.Engine, item.Runtime.Orchestrator
+	if engine == "" {
+		engine = "ingestr"
 	}
 	if orchestrator == "" {
 		orchestrator = "direct"
 	}
 	document := Ingestion{APIVersion: APIVersion, Kind: Kind, Metadata: Metadata{Name: item.Name}, Source: source,
-		Destination: Destination{ConnectionRef: "local-duckdb", Object: item.Destination.Table}, Materialization: Materialization{Strategy: "replace"}, Runtime: Runtime{Implementation: implementation, Orchestrator: orchestrator}}
+		Destination: Destination{ConnectionRef: "local-duckdb", Object: item.Destination.Table}, Materialization: Materialization{Strategy: "replace"}, Runtime: Runtime{Engine: engine, Orchestrator: orchestrator}}
 	if item.Schedule != "" {
 		document.Schedule = &Schedule{Cron: item.Schedule, Timezone: "UTC"}
 	}
@@ -217,16 +232,16 @@ func ToProjection(document Ingestion, id, path, digest, destinationPath string) 
 	if document.Source.Type == "github" {
 		source = ingestion.Source{Type: "github", Owner: document.Source.Owner, Repository: document.Source.Repository, Table: document.Source.Table, SecretKey: document.Source.CredentialRef}
 	}
-	implementation, orchestrator := document.Runtime.Implementation, document.Runtime.EffectiveOrchestrator()
-	if implementation == "" {
-		implementation = "ingestr"
+	engine, orchestrator := document.Runtime.EffectiveEngine(), document.Runtime.EffectiveOrchestrator()
+	if engine == "" {
+		engine = "ingestr"
 	}
 	if orchestrator == "" {
 		orchestrator = "direct"
 	}
 	item := ingestion.Ingestion{ID: id, Name: document.Metadata.Name, Status: ingestion.StatusPending, Source: source,
 		Destination: ingestion.Destination{Type: "duckdb", Path: destinationPath, Table: document.Destination.Object},
-		Runtime:     ingestion.Runtime{Implementation: implementation, Orchestrator: orchestrator}, SpecPath: path, SpecDigest: digest}
+		Runtime:     ingestion.Runtime{Engine: engine, Orchestrator: orchestrator}, SpecPath: path, SpecDigest: digest}
 	if document.Schedule != nil {
 		item.Schedule = document.Schedule.Cron
 	}

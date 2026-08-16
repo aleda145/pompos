@@ -56,24 +56,25 @@ destination: {connectionRef: local-duckdb, object: issues}
 	}
 }
 
-func TestLegacyRuntimeTargetNormalizesToOrchestrator(t *testing.T) {
+func TestLegacyRuntimeAliasesNormalize(t *testing.T) {
 	input, err := os.ReadFile("testdata/customers.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	input = []byte(strings.Replace(string(input), "  orchestrator: direct", "  target: direct", 1))
+	input = []byte(strings.Replace(string(input), "  engine: ingestr", "  implementation: ingestr", 1))
 	document, err := Parse(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if document.Runtime.Orchestrator != "direct" || document.Runtime.Target != "" {
+	if document.Runtime.Engine != "ingestr" || document.Runtime.Orchestrator != "direct" || document.Runtime.Implementation != "" || document.Runtime.Target != "" {
 		t.Fatalf("runtime = %#v", document.Runtime)
 	}
 	canonical, err := Marshal(document)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(canonical), "target:") || !strings.Contains(string(canonical), "orchestrator: direct") {
+	if strings.Contains(string(canonical), "target:") || strings.Contains(string(canonical), "implementation:") || !strings.Contains(string(canonical), "engine: ingestr") || !strings.Contains(string(canonical), "orchestrator: direct") {
 		t.Fatalf("canonical runtime =\n%s", canonical)
 	}
 }

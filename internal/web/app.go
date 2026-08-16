@@ -125,21 +125,21 @@ type githubTableOption struct {
 }
 
 type newPageData struct {
-	Title                 string
-	Error                 string
-	Source                string
-	Sources               []ingestion.SourceDefinition
-	CSVURL                string
-	TableName             string
-	Repository            string
-	GitHubTables          []githubTableOption
-	GitHubDocsURL         string
-	SavedSecrets          []secrets.Entry
-	SecretKey             string
-	NewSecretName         string
-	Schedule              string
-	RuntimeImplementation string
-	RuntimeOrchestrator   string
+	Title               string
+	Error               string
+	Source              string
+	Sources             []ingestion.SourceDefinition
+	CSVURL              string
+	TableName           string
+	Repository          string
+	GitHubTables        []githubTableOption
+	GitHubDocsURL       string
+	SavedSecrets        []secrets.Entry
+	SecretKey           string
+	NewSecretName       string
+	Schedule            string
+	RuntimeEngine       string
+	RuntimeOrchestrator string
 }
 
 type secretsPageData struct {
@@ -273,12 +273,12 @@ func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
 	runtime, err := runtimeFromForm(r)
 	if err != nil {
 		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule,
-			RuntimeImplementation: runtime.Implementation, RuntimeOrchestrator: runtime.Orchestrator})
+			RuntimeEngine: runtime.Engine, RuntimeOrchestrator: runtime.Orchestrator})
 		return
 	}
 	if err := a.Scheduler.Validate(schedule); err != nil {
 		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule,
-			RuntimeImplementation: runtime.Implementation, RuntimeOrchestrator: runtime.Orchestrator})
+			RuntimeEngine: runtime.Engine, RuntimeOrchestrator: runtime.Orchestrator})
 		return
 	}
 	item := ingestion.Ingestion{
@@ -299,13 +299,13 @@ func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
 	if _, err := compiler.Compile(spec.FromLegacy(item), compiler.LocalDuckDB(a.Destination.Path)); err != nil {
 		a.Logger.Printf("validation failed ingestion_id=%s source=csv error=%q", item.ID, err)
 		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule,
-			RuntimeImplementation: runtime.Implementation, RuntimeOrchestrator: runtime.Orchestrator})
+			RuntimeEngine: runtime.Engine, RuntimeOrchestrator: runtime.Orchestrator})
 		return
 	}
 	if err := a.Validator.Validate(r.Context(), item.Source); err != nil {
 		a.Logger.Printf("connectivity validation failed ingestion_id=%s source=csv error=%q", item.ID, err)
 		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule,
-			RuntimeImplementation: runtime.Implementation, RuntimeOrchestrator: runtime.Orchestrator})
+			RuntimeEngine: runtime.Engine, RuntimeOrchestrator: runtime.Orchestrator})
 		return
 	}
 	a.Logger.Printf("validation succeeded ingestion_id=%s source=csv", item.ID)
@@ -596,8 +596,8 @@ func (a *App) renderNew(w http.ResponseWriter, status int, data newPageData) {
 	data.Title = "Add ingestion"
 	data.Sources = ingestion.DefaultSourceCatalog().List()
 	data.GitHubDocsURL = "https://bruin-data.github.io/ingestr/supported-sources/github.html"
-	if data.RuntimeImplementation == "" {
-		data.RuntimeImplementation = "ingestr"
+	if data.RuntimeEngine == "" {
+		data.RuntimeEngine = "ingestr"
 	}
 	if data.RuntimeOrchestrator == "" {
 		data.RuntimeOrchestrator = "direct"
@@ -618,17 +618,17 @@ func (a *App) renderNew(w http.ResponseWriter, status int, data newPageData) {
 
 func runtimeFromForm(r *http.Request) (ingestion.Runtime, error) {
 	runtime := ingestion.Runtime{
-		Implementation: strings.TrimSpace(r.FormValue("runtime_implementation")),
-		Orchestrator:   strings.TrimSpace(r.FormValue("runtime_orchestrator")),
+		Engine:       strings.TrimSpace(r.FormValue("runtime_engine")),
+		Orchestrator: strings.TrimSpace(r.FormValue("runtime_orchestrator")),
 	}
-	if runtime.Implementation == "" {
-		runtime.Implementation = "ingestr"
+	if runtime.Engine == "" {
+		runtime.Engine = "ingestr"
 	}
 	if runtime.Orchestrator == "" {
 		runtime.Orchestrator = "direct"
 	}
-	if runtime.Implementation != "ingestr" {
-		return runtime, fmt.Errorf("runtime implementation %q is not available", runtime.Implementation)
+	if runtime.Engine != "ingestr" {
+		return runtime, fmt.Errorf("runtime engine %q is not available", runtime.Engine)
 	}
 	if runtime.Orchestrator != "direct" {
 		return runtime, fmt.Errorf("runtime orchestrator %q is not available", runtime.Orchestrator)

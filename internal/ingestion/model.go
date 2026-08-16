@@ -58,6 +58,6 @@ type Destination struct {
 }
 
 type Runtime struct {
-	Implementation string
-	Orchestrator   string
+	Engine       string
+	Orchestrator string
 }

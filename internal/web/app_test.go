@@ -54,7 +54,7 @@ func TestCreateIngestionEnqueuesAndRendersPendingDetail(t *testing.T) {
 	}
 
 	form := url.Values{"csv_url": {"https://example.com/customers.csv"}, "table_name": {"customers"}, "schedule": {"0 6 * * *"},
-		"runtime_implementation": {"ingestr"}, "runtime_orchestrator": {"direct"}}
+		"runtime_engine": {"ingestr"}, "runtime_orchestrator": {"direct"}}
 	request := httptest.NewRequest(http.MethodPost, "/ingestions", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
@@ -74,7 +74,7 @@ func TestCreateIngestionEnqueuesAndRendersPendingDetail(t *testing.T) {
 		t.Fatalf("stored ingestion = %#v", item)
 	}
 	document, specYAML, err := spec.Read(item.SpecPath)
-	if err != nil || document.Schedule == nil || document.Schedule.Cron != "0 6 * * *" || document.Runtime.Implementation != "ingestr" || document.Runtime.Orchestrator != "direct" {
+	if err != nil || document.Schedule == nil || document.Schedule.Cron != "0 6 * * *" || document.Runtime.Engine != "ingestr" || document.Runtime.Orchestrator != "direct" {
 		t.Fatalf("document = %#v, error = %v", document, err)
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "ingestions", item.ID+".yaml")); err != nil {
@@ -173,7 +173,7 @@ func TestCreationYAMLPreviewUsesCanonicalSerializer(t *testing.T) {
 		t.Fatal(err)
 	}
 	form := url.Values{"source_type": {"csv"}, "csv_url": {"https://example.com/customers.csv"}, "table_name": {"customers"}, "schedule": {"0 6 * * *"},
-		"runtime_implementation": {"ingestr"}, "runtime_orchestrator": {"direct"}}
+		"runtime_engine": {"ingestr"}, "runtime_orchestrator": {"direct"}}
 	request := httptest.NewRequest(http.MethodPost, "/ingestions/preview", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
@@ -201,7 +201,7 @@ func TestCreationYAMLPreviewUsesCanonicalSerializer(t *testing.T) {
 	if !strings.Contains(page.Body.String(), `<section class="yaml-preview" data-yaml-preview>`) || strings.Contains(page.Body.String(), `<details class="yaml-preview"`) {
 		t.Fatalf("YAML preview is not always visible: %s", page.Body.String())
 	}
-	if !strings.Contains(page.Body.String(), `name="runtime_implementation"`) || !strings.Contains(page.Body.String(), `name="runtime_orchestrator"`) {
+	if !strings.Contains(page.Body.String(), `name="runtime_engine"`) || !strings.Contains(page.Body.String(), `name="runtime_orchestrator"`) {
 		t.Fatalf("runtime selectors are missing: %s", page.Body.String())
 	}
 }

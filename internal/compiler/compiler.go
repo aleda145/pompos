@@ -42,8 +42,8 @@ func Compile(document spec.Ingestion, blueprint Blueprint) (ExecutionPlan, error
 	if orchestrator := document.Runtime.EffectiveOrchestrator(); orchestrator != "" && orchestrator != blueprint.Orchestrator {
 		return ExecutionPlan{}, fmt.Errorf("policy.runtime-orchestrator: orchestrator %q is not enabled", orchestrator)
 	}
-	if document.Runtime.Implementation != "" && document.Runtime.Implementation != blueprint.Engine {
-		return ExecutionPlan{}, fmt.Errorf("policy.runtime-implementation: implementation %q is not allowed", document.Runtime.Implementation)
+	if engine := document.Runtime.EffectiveEngine(); engine != "" && engine != blueprint.Engine {
+		return ExecutionPlan{}, fmt.Errorf("policy.runtime-engine: engine %q is not allowed", engine)
 	}
 	plan := ExecutionPlan{Engine: blueprint.Engine, EngineVersion: blueprint.EngineVersion, Orchestrator: blueprint.Orchestrator, DestinationRef: blueprint.DestinationRef,
 		DestinationURI: duckDBURI(blueprint.DestinationPath), DestinationObject: document.Destination.Object, Strategy: defaultValue(document.Materialization.Strategy, "replace"), SchemaNaming: blueprint.SchemaNaming}
