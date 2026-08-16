@@ -58,6 +58,7 @@ type App struct {
 	Destinations DestinationCatalog
 	Scheduler    ScheduleManager
 	Validator    validation.SourceValidator
+	Inspector    validation.SourceInspector
 	Destination  ingestion.Destination
 	SpecDir      string
 	Logger       *log.Logger
@@ -73,6 +74,9 @@ func New(app App) (*App, error) {
 	}
 	if app.Scheduler == nil {
 		app.Scheduler = noopScheduleManager{}
+	}
+	if app.Inspector == nil {
+		app.Inspector, _ = app.Validator.(validation.SourceInspector)
 	}
 	if app.Destination.Ref == "" {
 		app.Destination.Ref = "local-duckdb"
@@ -101,6 +105,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /ingestions/new", a.newIngestion)
 	mux.HandleFunc("POST /ingestions", a.createIngestion)
 	mux.HandleFunc("POST /ingestions/preview", a.previewIngestionYAML)
+	mux.HandleFunc("POST /sources/columns", a.previewSourceColumns)
 	mux.HandleFunc("GET /ingestions/{id}", a.ingestionDetail)
 	mux.HandleFunc("POST /ingestions/{id}/run", a.runIngestion)
 	mux.HandleFunc("POST /ingestions/{id}/schedule", a.updateSchedule)
@@ -240,6 +245,117 @@ type yamlPreviewDocument struct {
 type yamlPreviewResponse struct {
 	Documents []yamlPreviewDocument `json:"documents,omitempty"`
 	Error     string                `json:"error,omitempty"`
+}
+
+type columnPreviewResponse struct {
+	Columns []string `json:"columns,omitempty"`
+	Scope   string   `json:"scope,omitempty"`
+	Error   string   `json:"error,omitempty"`
+}
+
+func (a *App) previewSourceColumns(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if a.Inspector == nil {
+		_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: "Column discovery is unavailable."})
+		return
+	}
+	if err := r.ParseMultipartForm(1 << 20); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+		_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: "Could not read the source details."})
+		return
+	}
+	if r.FormValue("source_type") != "github" {
+		source := ingestion.Source{Type: "csv", URL: strings.TrimSpace(r.FormValue("csv_url"))}
+		columns, err := a.Inspector.Columns(r.Context(), source)
+		if err != nil {
+			_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: err.Error()})
+			return
+		}
+		a.Logger.Printf("CSV columns discovered url=%s columns=%d", source.URL, len(columns))
+		_ = json.NewEncoder(w).Encode(columnPreviewResponse{Columns: columns, Scope: "the first CSV row"})
+		return
+	}
+
+	owner, repository, err := validation.ParseGitHubRepository(r.FormValue("repository"))
+	if err != nil {
+		_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: err.Error()})
+		return
+	}
+	tables := uniqueStrings(r.Form["tables"])
+	if len(tables) == 0 {
+		_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: "Choose a GitHub table to discover its columns."})
+		return
+	}
+	for _, table := range tables {
+		if !isGitHubTable(table) {
+			_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: "Choose a supported GitHub table to discover columns."})
+			return
+		}
+	}
+	secretKey := strings.TrimSpace(r.FormValue("secret_key"))
+	accessToken := strings.TrimSpace(r.FormValue("access_token"))
+	if secretKey != "" && accessToken != "" {
+		_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: "Choose a saved secret or enter a new token, not both."})
+		return
+	}
+	if secretKey != "" {
+		stored, getErr := a.Secrets.Get(r.Context(), secretKey)
+		if errors.Is(getErr, secrets.ErrNotFound) {
+			_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: "The selected secret no longer exists."})
+			return
+		}
+		if getErr != nil {
+			a.serverError(w, getErr)
+			return
+		}
+		accessToken = string(stored)
+	}
+	if accessToken == "" {
+		_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: "Choose a GitHub secret to discover columns."})
+		return
+	}
+
+	type sampleResult struct {
+		index   int
+		columns []string
+		err     error
+	}
+	results := make(chan sampleResult, len(tables))
+	for index, table := range tables {
+		go func() {
+			columns, inspectErr := a.Inspector.Columns(r.Context(), ingestion.Source{
+				Type: "github", Owner: owner, Repository: repository, Table: table, AccessToken: accessToken,
+			})
+			results <- sampleResult{index: index, columns: columns, err: inspectErr}
+		}()
+	}
+	samples := make([]sampleResult, len(tables))
+	for range tables {
+		result := <-results
+		samples[result.index] = result
+	}
+	var common []string
+	for index, sample := range samples {
+		if sample.err != nil {
+			_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: fmt.Sprintf("%s: %v", githubTableName(tables[index]), sample.err)})
+			return
+		}
+		if common == nil {
+			common = append([]string(nil), sample.columns...)
+		} else {
+			common = intersectStrings(common, sample.columns)
+		}
+	}
+	if len(common) == 0 {
+		_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: "The selected tables do not share any sampled columns. Choose one table or enter keys manually."})
+		return
+	}
+	scope := githubTableName(tables[0])
+	if len(tables) > 1 {
+		scope = fmt.Sprintf("all %d selected GitHub tables", len(tables))
+	}
+	a.Logger.Printf("GitHub columns discovered repository=%s/%s tables=%s columns=%d", owner, repository, strings.Join(tables, ","), len(common))
+	_ = json.NewEncoder(w).Encode(columnPreviewResponse{Columns: common, Scope: scope})
 }
 
 func (a *App) previewIngestionYAML(w http.ResponseWriter, r *http.Request) {
@@ -1024,11 +1140,51 @@ func githubTableName(value string) string {
 	return value
 }
 
+func isGitHubTable(value string) bool {
+	for _, option := range githubTableOptions {
+		if option.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
 func selectedSecretKey(secretKey string, newSecret bool) string {
 	if newSecret {
 		return ""
 	}
 	return secretKey
+}
+
+func uniqueStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func intersectStrings(left, right []string) []string {
+	rightSet := make(map[string]struct{}, len(right))
+	for _, value := range right {
+		rightSet[value] = struct{}{}
+	}
+	result := make([]string, 0, len(left))
+	for _, value := range left {
+		if _, exists := rightSet[value]; exists {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 type noopScheduleManager struct{}

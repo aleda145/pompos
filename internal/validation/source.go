@@ -2,12 +2,15 @@ package validation
 
 import (
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"pompos/internal/ingestion"
@@ -15,6 +18,10 @@ import (
 
 type SourceValidator interface {
 	Validate(context.Context, ingestion.Source) error
+}
+
+type SourceInspector interface {
+	Columns(context.Context, ingestion.Source) ([]string, error)
 }
 
 type HTTPSourceValidator struct {
@@ -33,14 +40,151 @@ func (v HTTPSourceValidator) Validate(ctx context.Context, source ingestion.Sour
 	if err != nil || parsed.Host == "" || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return fmt.Errorf("CSV URL must be a valid HTTP or HTTPS URL")
 	}
-	if err := v.validatePublicURL(ctx, parsed); err != nil {
+	safeClient, err := v.publicHTTPClient(ctx, parsed)
+	if err != nil {
 		return err
+	}
+	response, err := request(ctx, safeClient, http.MethodHead, rawURL)
+	if err != nil {
+		return fmt.Errorf("CSV URL is not reachable: %w", err)
+	}
+	response.Body.Close()
+	if response.StatusCode == http.StatusMethodNotAllowed || response.StatusCode == http.StatusNotImplemented {
+		response, err = request(ctx, safeClient, http.MethodGet, rawURL)
+		if err != nil {
+			return fmt.Errorf("CSV URL is not reachable: %w", err)
+		}
+		_, _ = io.CopyN(io.Discard, response.Body, 1)
+		response.Body.Close()
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 400 {
+		return fmt.Errorf("CSV URL returned HTTP %d", response.StatusCode)
+	}
+	return nil
+}
+
+func (v HTTPSourceValidator) Columns(ctx context.Context, source ingestion.Source) ([]string, error) {
+	if source.Type == "github" {
+		return v.githubColumns(ctx, source)
+	}
+	return v.csvColumns(ctx, source)
+}
+
+func (v HTTPSourceValidator) csvColumns(ctx context.Context, source ingestion.Source) ([]string, error) {
+	parsed, err := url.ParseRequestURI(source.URL)
+	if err != nil || parsed.Host == "" || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil, errors.New("enter a valid public CSV URL to discover its columns")
+	}
+	client, err := v.publicHTTPClient(ctx, parsed)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source.URL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build CSV sample request: %w", err)
+	}
+	const sampleLimit = 256 << 10
+	req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", sampleLimit-1))
+	response, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch CSV sample: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("CSV URL returned HTTP %d", response.StatusCode)
+	}
+	reader := csv.NewReader(io.LimitReader(response.Body, sampleLimit))
+	reader.FieldsPerRecord = -1
+	header, err := reader.Read()
+	if err != nil {
+		return nil, fmt.Errorf("read CSV header: %w", err)
+	}
+	if _, err := reader.Read(); err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("read first CSV row: %w", err)
+	}
+	columns := make([]string, 0, len(header))
+	seen := make(map[string]struct{}, len(header))
+	for index, name := range header {
+		name = strings.TrimSpace(strings.TrimPrefix(name, "\ufeff"))
+		if name == "" {
+			name = fmt.Sprintf("unknown_col_%d", index)
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		columns = append(columns, name)
+	}
+	if len(columns) == 0 {
+		return nil, errors.New("the CSV sample did not contain any columns")
+	}
+	return columns, nil
+}
+
+func (v HTTPSourceValidator) githubColumns(ctx context.Context, source ingestion.Source) ([]string, error) {
+	if strings.TrimSpace(source.AccessToken) == "" {
+		return nil, errors.New("choose a GitHub secret to discover columns")
+	}
+	path, ok := map[string]string{
+		"issues":        "issues?state=all&per_page=1",
+		"pull_requests": "pulls?state=all&per_page=1",
+		"repo_events":   "events?per_page=1",
+		"stargazers":    "stargazers?per_page=1",
+	}[source.Table]
+	if !ok {
+		return nil, errors.New("choose a supported GitHub table to discover columns")
 	}
 	client := v.Client
 	if client == nil {
 		client = http.DefaultClient
 	}
+	endpoint := "https://api.github.com/repos/" + url.PathEscape(source.Owner) + "/" + url.PathEscape(source.Repository) + "/" + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build GitHub sample request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if source.Table == "stargazers" {
+		req.Header.Set("Accept", "application/vnd.github.star+json")
+	}
+	req.Header.Set("Authorization", "Bearer "+source.AccessToken)
+	response, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch GitHub sample: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusUnauthorized {
+		return nil, errors.New("GitHub rejected the selected token")
+	}
+	if response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusNotFound {
+		return nil, errors.New("GitHub could not return a sample with the selected token")
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("GitHub returned HTTP %d", response.StatusCode)
+	}
+	var rows []map[string]json.RawMessage
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&rows); err != nil {
+		return nil, fmt.Errorf("read GitHub sample: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, errors.New("this GitHub table has no rows to sample yet")
+	}
+	columns := make([]string, 0, len(rows[0]))
+	for name := range rows[0] {
+		columns = append(columns, name)
+	}
+	sort.Strings(columns)
+	return columns, nil
+}
 
+func (v HTTPSourceValidator) publicHTTPClient(ctx context.Context, parsed *url.URL) (*http.Client, error) {
+	if err := v.validatePublicURL(ctx, parsed); err != nil {
+		return nil, err
+	}
+	client := v.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
 	safeClient := *client
 	if client.Transport == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -66,23 +210,7 @@ func (v HTTPSourceValidator) Validate(ctx context.Context, source ingestion.Sour
 		}
 		return nil
 	}
-	response, err := request(ctx, &safeClient, http.MethodHead, rawURL)
-	if err != nil {
-		return fmt.Errorf("CSV URL is not reachable: %w", err)
-	}
-	response.Body.Close()
-	if response.StatusCode == http.StatusMethodNotAllowed || response.StatusCode == http.StatusNotImplemented {
-		response, err = request(ctx, &safeClient, http.MethodGet, rawURL)
-		if err != nil {
-			return fmt.Errorf("CSV URL is not reachable: %w", err)
-		}
-		_, _ = io.CopyN(io.Discard, response.Body, 1)
-		response.Body.Close()
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 400 {
-		return fmt.Errorf("CSV URL returned HTTP %d", response.StatusCode)
-	}
-	return nil
+	return &safeClient, nil
 }
 
 func (v HTTPSourceValidator) validatePublicURL(ctx context.Context, parsed *url.URL) error {

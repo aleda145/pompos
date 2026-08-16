@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -220,6 +221,79 @@ func TestCreationYAMLPreviewUsesCanonicalSerializer(t *testing.T) {
 	}
 	if !strings.Contains(page.Body.String(), `value="merge"`) || !strings.Contains(page.Body.String(), `name="primary_key"`) || !strings.Contains(page.Body.String(), `name="incremental_key"`) {
 		t.Fatalf("loading strategy controls are missing: %s", page.Body.String())
+	}
+	if !strings.Contains(page.Body.String(), `data-column-discovery`) || !strings.Contains(page.Body.String(), `data-primary-suggestions`) || !strings.Contains(page.Body.String(), `data-incremental-suggestions`) {
+		t.Fatalf("column discovery controls are missing: %s", page.Body.String())
+	}
+}
+
+func TestColumnPreviewUsesSamplesAndSavedGitHubSecret(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	destination := filepath.Join(dataDir, "pompos.duckdb")
+	metadata, err := store.Open(ctx, filepath.Join(dataDir, "pompos.sqlite"), destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer metadata.Close()
+	if err := metadata.Secrets().Put(ctx, "github-production", []byte("saved-token")); err != nil {
+		t.Fatal(err)
+	}
+	var inspected []ingestion.Source
+	var inspectedMu sync.Mutex
+	app, err := New(App{
+		Store: metadata, Secrets: metadata.Secrets(), Validator: validatorFunc(func(context.Context, ingestion.Source) error { return nil }),
+		Inspector: inspectorFunc(func(_ context.Context, source ingestion.Source) ([]string, error) {
+			inspectedMu.Lock()
+			inspected = append(inspected, source)
+			inspectedMu.Unlock()
+			switch source.Table {
+			case "issues":
+				return []string{"id", "title", "updated_at"}, nil
+			case "pull_requests":
+				return []string{"id", "title", "merged_at"}, nil
+			default:
+				return []string{"id", "name"}, nil
+			}
+		}),
+		Destination: ingestion.Destination{Type: "duckdb", Path: destination}, SpecDir: filepath.Join(dataDir, "ingestions"), Logger: log.New(io.Discard, "", 0),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	csvResponse := httptest.NewRecorder()
+	csvForm := url.Values{"source_type": {"csv"}, "csv_url": {"https://example.com/customers.csv"}}
+	csvRequest := httptest.NewRequest(http.MethodPost, "/sources/columns", strings.NewReader(csvForm.Encode()))
+	csvRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	app.Handler().ServeHTTP(csvResponse, csvRequest)
+	var csvPreview columnPreviewResponse
+	if err := json.Unmarshal(csvResponse.Body.Bytes(), &csvPreview); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(csvPreview.Columns, ",") != "id,name" || csvPreview.Error != "" {
+		t.Fatalf("CSV preview = %#v", csvPreview)
+	}
+
+	githubResponse := httptest.NewRecorder()
+	githubForm := url.Values{"source_type": {"github"}, "repository": {"openai/codex"}, "secret_key": {"github-production"}, "tables": {"issues", "pull_requests"}}
+	githubRequest := httptest.NewRequest(http.MethodPost, "/sources/columns", strings.NewReader(githubForm.Encode()))
+	githubRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	app.Handler().ServeHTTP(githubResponse, githubRequest)
+	var githubPreview columnPreviewResponse
+	if err := json.Unmarshal(githubResponse.Body.Bytes(), &githubPreview); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(githubPreview.Columns, ",") != "id,title" || githubPreview.Scope != "all 2 selected GitHub tables" || githubPreview.Error != "" {
+		t.Fatalf("GitHub preview = %#v", githubPreview)
+	}
+	inspectedMu.Lock()
+	defer inspectedMu.Unlock()
+	if len(inspected) != 3 || inspected[1].AccessToken != "saved-token" || inspected[2].AccessToken != "saved-token" {
+		t.Fatalf("inspected sources = %#v", inspected)
+	}
+	if strings.Contains(githubResponse.Body.String(), "saved-token") {
+		t.Fatalf("column response exposed secret: %s", githubResponse.Body.String())
 	}
 }
 
@@ -530,6 +604,12 @@ func TestSecretsPageAddsAndListsNamesWithoutValues(t *testing.T) {
 type validatorFunc func(context.Context, ingestion.Source) error
 
 func (f validatorFunc) Validate(ctx context.Context, source ingestion.Source) error {
+	return f(ctx, source)
+}
+
+type inspectorFunc func(context.Context, ingestion.Source) ([]string, error)
+
+func (f inspectorFunc) Columns(ctx context.Context, source ingestion.Source) ([]string, error) {
 	return f(ctx, source)
 }
 

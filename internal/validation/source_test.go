@@ -30,6 +30,46 @@ func TestHTTPSourceValidatorFallsBackToRangeGET(t *testing.T) {
 	}
 }
 
+func TestHTTPSourceValidatorDiscoversCSVColumnsFromOneRow(t *testing.T) {
+	var gotRange string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotRange = r.Header.Get("Range")
+		return response(http.StatusPartialContent, "\ufeffid,name,updated_at\n1,Ada,2026-08-16\n2,Grace,2026-08-17\n"), nil
+	})}
+	columns, err := (HTTPSourceValidator{Client: client, Resolver: publicResolver()}).Columns(context.Background(), ingestion.Source{
+		Type: "csv", URL: "https://example.com/data.csv",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(columns, ",") != "id,name,updated_at" {
+		t.Fatalf("columns = %v", columns)
+	}
+	if gotRange != "bytes=0-262143" {
+		t.Fatalf("Range = %q", gotRange)
+	}
+}
+
+func TestHTTPSourceValidatorDiscoversGitHubColumns(t *testing.T) {
+	var authorization, path string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		authorization, path = r.Header.Get("Authorization"), r.URL.RequestURI()
+		return response(http.StatusOK, `[{"updated_at":"2026-08-16","id":1,"title":"Magic"}]`), nil
+	})}
+	columns, err := (HTTPSourceValidator{Client: client}).Columns(context.Background(), ingestion.Source{
+		Type: "github", Owner: "openai", Repository: "codex", Table: "issues", AccessToken: "secret-token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(columns, ",") != "id,title,updated_at" {
+		t.Fatalf("columns = %v", columns)
+	}
+	if authorization != "Bearer secret-token" || path != "/repos/openai/codex/issues?state=all&per_page=1" {
+		t.Fatalf("authorization = %q, path = %q", authorization, path)
+	}
+}
+
 func TestHTTPSourceValidatorRejectsPrivateNetworks(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		t.Fatal("private URL must be rejected before HTTP request")

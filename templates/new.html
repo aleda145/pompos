@@ -74,15 +74,24 @@
       </select>
     </label>
     <p class="hint" data-strategy-help></p>
+    <div class="column-discovery" data-column-discovery aria-live="polite">
+      <p data-column-status>Paste a CSV URL and Pompos will suggest columns from its first row.</p>
+    </div>
     <div class="load-key-grid">
-      <label data-primary-key>Primary key columns
-        <input name="primary_key" value="{{.PrimaryKey}}" placeholder="id, account_id">
-        <small>Comma-separated columns that identify one logical row.</small>
-      </label>
-      <label data-incremental-key>Incremental key
-        <input name="incremental_key" value="{{.IncrementalKey}}" placeholder="updated_at">
-        <small>A date, timestamp, or numeric column that identifies the changing slice.</small>
-      </label>
+      <div data-primary-key>
+        <label>Primary key columns
+          <input name="primary_key" value="{{.PrimaryKey}}" placeholder="id, account_id">
+          <small>Comma-separated columns that identify one logical row.</small>
+        </label>
+        <span class="column-suggestions" data-primary-suggestions hidden></span>
+      </div>
+      <div data-incremental-key>
+        <label>Incremental key
+          <input name="incremental_key" value="{{.IncrementalKey}}" placeholder="updated_at">
+          <small>A date, timestamp, or numeric column that identifies the changing slice.</small>
+        </label>
+        <span class="column-suggestions" data-incremental-suggestions hidden></span>
+      </div>
     </div>
   </fieldset>
   <fieldset class="runtime-options">
@@ -187,15 +196,24 @@
       </select>
     </label>
     <p class="hint" data-strategy-help></p>
+    <div class="column-discovery" data-column-discovery aria-live="polite">
+      <p data-column-status>Choose a repository, secret, and table to discover possible columns.</p>
+    </div>
     <div class="load-key-grid">
-      <label data-primary-key>Primary key columns
-        <input name="primary_key" value="{{.PrimaryKey}}" placeholder="id, account_id">
-        <small>Comma-separated columns that identify one logical row.</small>
-      </label>
-      <label data-incremental-key>Incremental key
-        <input name="incremental_key" value="{{.IncrementalKey}}" placeholder="updated_at">
-        <small>A date, timestamp, or numeric column that identifies the changing slice.</small>
-      </label>
+      <div data-primary-key>
+        <label>Primary key columns
+          <input name="primary_key" value="{{.PrimaryKey}}" placeholder="id, account_id">
+          <small>Comma-separated columns that identify one logical row.</small>
+        </label>
+        <span class="column-suggestions" data-primary-suggestions hidden></span>
+      </div>
+      <div data-incremental-key>
+        <label>Incremental key
+          <input name="incremental_key" value="{{.IncrementalKey}}" placeholder="updated_at">
+          <small>A date, timestamp, or numeric column that identifies the changing slice.</small>
+        </label>
+        <span class="column-suggestions" data-incremental-suggestions hidden></span>
+      </div>
     </div>
   </fieldset>
   <fieldset class="runtime-options">
@@ -239,7 +257,13 @@
     const strategy = loading?.querySelector('[name="strategy"]');
     const primary = loading?.querySelector('[data-primary-key]');
     const incremental = loading?.querySelector('[data-incremental-key]');
+    const primaryInput = primary?.querySelector('input');
+    const incrementalInput = incremental?.querySelector('input');
     const strategyHelp = loading?.querySelector('[data-strategy-help]');
+    const columnDiscovery = loading?.querySelector('[data-column-discovery]');
+    const columnStatus = columnDiscovery?.querySelector('[data-column-status]');
+    const primarySuggestions = primary?.querySelector('[data-primary-suggestions]');
+    const incrementalSuggestions = incremental?.querySelector('[data-incremental-suggestions]');
     const strategyDescriptions = {
       replace: 'Replace every destination row with the current source data.',
       append: 'Add every source row. Repeated runs can create duplicates.',
@@ -252,11 +276,126 @@
       const value = strategy.value;
       primary.hidden = value === 'replace' || value === 'append';
       incremental.hidden = value === 'replace';
-      primary.querySelector('input').required = value === 'merge' || value === 'scd2';
-      incremental.querySelector('input').required = value === 'delete+insert';
+      primaryInput.required = value === 'merge' || value === 'scd2';
+      incrementalInput.required = value === 'delete+insert';
       if (strategyHelp) strategyHelp.textContent = strategyDescriptions[value] || '';
     };
     updateLoadingOptions();
+
+    const primaryValues = () => primaryInput.value.split(',').map(value => value.trim()).filter(Boolean);
+    const syncSuggestionState = () => {
+      const selectedPrimary = new Set(primaryValues());
+      primarySuggestions?.querySelectorAll('button').forEach(button => {
+        const selected = selectedPrimary.has(button.dataset.column);
+        button.classList.toggle('selected', selected);
+        button.setAttribute('aria-pressed', String(selected));
+      });
+      incrementalSuggestions?.querySelectorAll('button').forEach(button => {
+        const selected = incrementalInput.value.trim() === button.dataset.column;
+        button.classList.toggle('selected', selected);
+        button.setAttribute('aria-pressed', String(selected));
+      });
+    };
+    const chooseColumn = (target, column) => {
+      if (target === primaryInput) {
+        const values = primaryValues();
+        const index = values.indexOf(column);
+        if (index === -1) values.push(column); else values.splice(index, 1);
+        target.value = values.join(', ');
+      } else {
+        target.value = target.value.trim() === column ? '' : column;
+      }
+      syncSuggestionState();
+      target.dispatchEvent(new Event('input', {bubbles: true}));
+    };
+    const renderColumnSuggestions = columns => {
+      [[primarySuggestions, primaryInput], [incrementalSuggestions, incrementalInput]].forEach(([container, target]) => {
+        if (!container || !target) return;
+        container.replaceChildren();
+        columns.forEach(column => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.dataset.column = column;
+          button.textContent = column;
+          button.setAttribute('aria-label', `Use ${column}`);
+          button.addEventListener('click', () => chooseColumn(target, column));
+          container.append(button);
+        });
+        container.hidden = columns.length === 0;
+      });
+      syncSuggestionState();
+    };
+
+    let discoveryTimer;
+    let discoveryController;
+    let lastDiscoverySignature = '';
+    const discoveryDetails = () => {
+      const sourceType = form.querySelector('[name="source_type"]')?.value;
+      if (sourceType === 'csv') {
+        const url = form.querySelector('[name="csv_url"]');
+        if (!url?.value.trim() || !url.checkValidity()) return null;
+        return {sourceType, signature: url.value.trim()};
+      }
+      const repository = form.querySelector('[name="repository"]')?.value.trim();
+      const tables = [...form.querySelectorAll('[name="tables"]:checked')].map(input => input.value);
+      const secret = form.querySelector('[name="secret_key"]')?.value;
+      const token = form.querySelector('[name="access_token"]')?.value.trim();
+      if (!repository || !repository.includes('/') || tables.length === 0 || (!secret && !token)) return null;
+      return {sourceType, signature: JSON.stringify([repository, tables, secret, token])};
+    };
+    const discoverColumns = async () => {
+      const details = discoveryDetails();
+      if (!columnStatus) return;
+      if (!details) {
+        discoveryController?.abort();
+        lastDiscoverySignature = '';
+        renderColumnSuggestions([]);
+        columnDiscovery.classList.remove('column-discovery-error');
+        columnStatus.textContent = form.querySelector('[name="source_type"]')?.value === 'csv'
+          ? 'Paste a CSV URL and Pompos will suggest columns from its first row.'
+          : 'Choose a repository, secret, and table to discover possible columns.';
+        return;
+      }
+      if (details.signature === lastDiscoverySignature) return;
+      lastDiscoverySignature = details.signature;
+      discoveryController?.abort();
+      discoveryController = new AbortController();
+      columnStatus.textContent = 'Fetching one row to discover columns…';
+      columnDiscovery.classList.remove('column-discovery-error');
+      try {
+        const response = await fetch('/sources/columns', {
+          method: 'POST', body: new FormData(form), signal: discoveryController.signal
+        });
+        const result = await response.json();
+        if (result.error) {
+          lastDiscoverySignature = '';
+          renderColumnSuggestions([]);
+          columnStatus.textContent = `${result.error} You can still enter column names manually.`;
+          columnDiscovery.classList.add('column-discovery-error');
+          return;
+        }
+        renderColumnSuggestions(result.columns || []);
+        columnStatus.textContent = `Found ${result.columns.length} columns from ${result.scope}. Pick one below or type it manually.`;
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+        lastDiscoverySignature = '';
+        renderColumnSuggestions([]);
+        columnStatus.textContent = 'Could not fetch a sample. You can still enter column names manually.';
+        columnDiscovery.classList.add('column-discovery-error');
+      }
+    };
+    const queueColumnDiscovery = () => {
+      clearTimeout(discoveryTimer);
+      discoveryTimer = setTimeout(discoverColumns, 600);
+    };
+    const discoveryControls = form.querySelectorAll('[name="csv_url"], [name="repository"], [name="tables"], [name="secret_key"], [name="access_token"]');
+    discoveryControls.forEach(control => {
+      control.addEventListener('input', queueColumnDiscovery);
+      control.addEventListener('change', queueColumnDiscovery);
+    });
+    primaryInput?.addEventListener('input', syncSuggestionState);
+    incrementalInput?.addEventListener('input', syncSuggestionState);
+    queueColumnDiscovery();
 
     let timer;
     const render = async () => {
