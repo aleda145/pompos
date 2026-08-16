@@ -10,18 +10,19 @@ const (
 )
 
 type Ingestion struct {
-	ID          string
-	Name        string
-	Source      Source
-	Destination Destination
-	Runtime     Runtime
-	Status      string
-	Schedule    string
-	NextRun     *time.Time
-	LastRun     *time.Time
-	LastError   string
-	SpecPath    string
-	SpecDigest  string
+	ID              string
+	Name            string
+	Source          Source
+	Destination     Destination
+	Materialization Materialization
+	Runtime         Runtime
+	Status          string
+	Schedule        string
+	NextRun         *time.Time
+	LastRun         *time.Time
+	LastError       string
+	SpecPath        string
+	SpecDigest      string
 }
 
 type Run struct {
@@ -61,4 +62,10 @@ type Destination struct {
 type Runtime struct {
 	Engine       string
 	Orchestrator string
+}
+
+type Materialization struct {
+	Strategy       string
+	PrimaryKey     []string
+	IncrementalKey string
 }

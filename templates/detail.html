@@ -9,6 +9,7 @@
 <div class="panel details">
   <section><h2>Source</h2><p class="url">{{.Ingestion.Source.DisplayLocation}}</p>{{if eq .Ingestion.Source.Type "github"}}<p class="hint">GitHub table: <code>{{.Ingestion.Source.Table}}</code></p>{{end}}</section>
   <section><h2>Destination</h2><p>DuckDB<br><code>{{.Ingestion.Destination.Path}}</code><br>Table <code>{{.Ingestion.Destination.Table}}</code></p></section>
+  <section><h2>Loading</h2><dl><div><dt>Strategy</dt><dd><code>{{.Ingestion.Materialization.Strategy}}</code></dd></div>{{if .Ingestion.Materialization.PrimaryKey}}<div><dt>Primary key</dt><dd><code>{{range $index, $key := .Ingestion.Materialization.PrimaryKey}}{{if $index}}, {{end}}{{$key}}{{end}}</code></dd></div>{{end}}{{if .Ingestion.Materialization.IncrementalKey}}<div><dt>Incremental key</dt><dd><code>{{.Ingestion.Materialization.IncrementalKey}}</code></dd></div>{{end}}</dl></section>
   <section><h2>Runtime</h2><dl><div><dt>Engine</dt><dd><code>{{.Ingestion.Runtime.Engine}}</code></dd></div><div><dt>Orchestrator</dt><dd><code>{{.Ingestion.Runtime.Orchestrator}}</code></dd></div></dl></section>
   <section><h2>Status</h2><p><span class="status status-{{.Ingestion.Status}}">{{.Ingestion.Status}}</span></p>{{if .Ingestion.LastRun}}<p class="hint">Last run: {{.Ingestion.LastRun.Format "2006-01-02 15:04:05 UTC"}}</p>{{end}}</section>
   <section>

@@ -123,6 +123,24 @@ func TestBuildArgsGitHubRequiresAccessToken(t *testing.T) {
 	}
 }
 
+func TestBuildArgsIncludesLoadingKeys(t *testing.T) {
+	plan := planFor(ingestion.Ingestion{
+		Source:      ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
+		Destination: ingestion.Destination{Type: "duckdb", Path: "data/pompos.duckdb", Table: "customers"},
+	})
+	plan.Strategy = "merge"
+	plan.PrimaryKey = []string{"account_id", "id"}
+	plan.IncrementalKey = "updated_at"
+	args, err := BuildArgs(plan, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTail := []string{"--primary-key", "account_id", "--primary-key", "id", "--incremental-key", "updated_at"}
+	if !reflect.DeepEqual(args[len(args)-len(wantTail):], wantTail) {
+		t.Fatalf("args = %#v", args)
+	}
+}
+
 func planFor(item ingestion.Ingestion) compiler.ExecutionPlan {
 	plan := compiler.ExecutionPlan{Engine: "ingestr", EngineVersion: "1.1.8", SourceURI: item.Source.URL, SourceTable: "data#csv",
 		DestinationURI: destinationURI(item.Destination.Path), DestinationObject: item.Destination.Table, SchemaNaming: "direct", Strategy: "replace"}

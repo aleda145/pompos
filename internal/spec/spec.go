@@ -54,7 +54,9 @@ type Destination struct {
 	ConnectionRef string `yaml:"connectionRef,omitempty"` // accepted for older v1alpha1 specs
 }
 type Materialization struct {
-	Strategy string `yaml:"strategy,omitempty"`
+	Strategy       string   `yaml:"strategy,omitempty"`
+	PrimaryKey     []string `yaml:"primaryKey,omitempty"`
+	IncrementalKey string   `yaml:"incrementalKey,omitempty"`
 }
 type Runtime struct {
 	Engine         string `yaml:"engine,omitempty"`
@@ -170,8 +172,8 @@ func (s Ingestion) Validate() error {
 	if !objectName.MatchString(s.Destination.Object) {
 		return errors.New("spec.destination.object: must start with a letter or underscore and contain only letters, numbers, and underscores")
 	}
-	if s.Materialization.Strategy != "" && s.Materialization.Strategy != "replace" {
-		return fmt.Errorf("spec.materialization.strategy: unsupported strategy %q", s.Materialization.Strategy)
+	if err := s.Materialization.Validate(); err != nil {
+		return err
 	}
 	if runtime.Engine != "" && runtime.Engine != "ingestr" {
 		return fmt.Errorf("spec.runtime.engine: unsupported engine %q", runtime.Engine)
@@ -179,6 +181,35 @@ func (s Ingestion) Validate() error {
 	orchestrator := runtime.Orchestrator
 	if orchestrator != "" && orchestrator != "direct" {
 		return fmt.Errorf("spec.runtime.orchestrator: unsupported orchestrator %q", orchestrator)
+	}
+	return nil
+}
+
+func (m Materialization) Validate() error {
+	strategy := m.Strategy
+	if strategy == "" {
+		strategy = "replace"
+	}
+	switch strategy {
+	case "replace", "append", "merge", "delete+insert", "scd2":
+	default:
+		return fmt.Errorf("spec.materialization.strategy: unsupported strategy %q", m.Strategy)
+	}
+	seenPrimaryKeys := make(map[string]struct{}, len(m.PrimaryKey))
+	for _, key := range m.PrimaryKey {
+		if strings.TrimSpace(key) == "" {
+			return errors.New("spec.materialization.primaryKey: values cannot be empty")
+		}
+		if _, exists := seenPrimaryKeys[key]; exists {
+			return fmt.Errorf("spec.materialization.primaryKey: duplicate key %q", key)
+		}
+		seenPrimaryKeys[key] = struct{}{}
+	}
+	if (strategy == "merge" || strategy == "scd2") && len(m.PrimaryKey) == 0 {
+		return fmt.Errorf("spec.materialization.primaryKey: strategy %q requires at least one primary key", strategy)
+	}
+	if strategy == "delete+insert" && strings.TrimSpace(m.IncrementalKey) == "" {
+		return errors.New("spec.materialization.incrementalKey: strategy \"delete+insert\" requires an incremental key")
 	}
 	return nil
 }
@@ -233,8 +264,14 @@ func FromLegacy(item ingestion.Ingestion) Ingestion {
 	if orchestrator == "" {
 		orchestrator = "direct"
 	}
+	strategy := item.Materialization.Strategy
+	if strategy == "" {
+		strategy = "replace"
+	}
 	document := Ingestion{APIVersion: APIVersion, Kind: Kind, Metadata: Metadata{Name: item.Name}, Source: source,
-		Destination: Destination{Type: item.Destination.Type, Path: item.Destination.Path, Object: item.Destination.Table}, Materialization: Materialization{Strategy: "replace"}, Runtime: Runtime{Engine: engine, Orchestrator: orchestrator}}
+		Destination:     Destination{Type: item.Destination.Type, Path: item.Destination.Path, Object: item.Destination.Table},
+		Materialization: Materialization{Strategy: strategy, PrimaryKey: item.Materialization.PrimaryKey, IncrementalKey: item.Materialization.IncrementalKey},
+		Runtime:         Runtime{Engine: engine, Orchestrator: orchestrator}}
 	if item.Schedule != "" {
 		document.Schedule = &Schedule{Cron: item.Schedule, Timezone: "UTC"}
 	}
@@ -254,8 +291,9 @@ func ToProjection(document Ingestion, id, path, digest, destinationPath string) 
 		orchestrator = "direct"
 	}
 	item := ingestion.Ingestion{ID: id, Name: document.Metadata.Name, Status: ingestion.StatusPending, Source: source,
-		Destination: ingestion.Destination{Ref: document.Destination.ConnectionRef, Type: document.Destination.Type, Path: document.Destination.Path, Table: document.Destination.Object},
-		Runtime:     ingestion.Runtime{Engine: engine, Orchestrator: orchestrator}, SpecPath: path, SpecDigest: digest}
+		Destination:     ingestion.Destination{Ref: document.Destination.ConnectionRef, Type: document.Destination.Type, Path: document.Destination.Path, Table: document.Destination.Object},
+		Materialization: ingestion.Materialization{Strategy: defaultStrategy(document.Materialization.Strategy), PrimaryKey: document.Materialization.PrimaryKey, IncrementalKey: document.Materialization.IncrementalKey},
+		Runtime:         ingestion.Runtime{Engine: engine, Orchestrator: orchestrator}, SpecPath: path, SpecDigest: digest}
 	if item.Destination.Type == "" {
 		item.Destination.Type, item.Destination.Path = "duckdb", destinationPath
 	}
@@ -263,6 +301,13 @@ func ToProjection(document Ingestion, id, path, digest, destinationPath string) 
 		item.Schedule = document.Schedule.Cron
 	}
 	return item
+}
+
+func defaultStrategy(strategy string) string {
+	if strategy == "" {
+		return "replace"
+	}
+	return strategy
 }
 
 func Generate(item ingestion.Ingestion) []byte { data, _ := Marshal(FromLegacy(item)); return data }

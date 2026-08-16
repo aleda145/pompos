@@ -23,18 +23,20 @@ func DuckDB(ref, path string) Blueprint {
 }
 
 type ExecutionPlan struct {
-	Engine            string `yaml:"engine"`
-	EngineVersion     string `yaml:"engineVersion"`
-	Orchestrator      string `yaml:"orchestrator"`
-	SourceURI         string `yaml:"sourceUri"`
-	SourceTable       string `yaml:"sourceTable"`
-	CredentialRef     string `yaml:"credentialRef,omitempty"`
-	DestinationType   string `yaml:"destinationType"`
-	DestinationRef    string `yaml:"destinationRef,omitempty"`
-	DestinationURI    string `yaml:"destinationUri"`
-	DestinationObject string `yaml:"destinationObject"`
-	Strategy          string `yaml:"strategy"`
-	SchemaNaming      string `yaml:"schemaNaming"`
+	Engine            string   `yaml:"engine"`
+	EngineVersion     string   `yaml:"engineVersion"`
+	Orchestrator      string   `yaml:"orchestrator"`
+	SourceURI         string   `yaml:"sourceUri"`
+	SourceTable       string   `yaml:"sourceTable"`
+	CredentialRef     string   `yaml:"credentialRef,omitempty"`
+	DestinationType   string   `yaml:"destinationType"`
+	DestinationRef    string   `yaml:"destinationRef,omitempty"`
+	DestinationURI    string   `yaml:"destinationUri"`
+	DestinationObject string   `yaml:"destinationObject"`
+	Strategy          string   `yaml:"strategy"`
+	PrimaryKey        []string `yaml:"primaryKey,omitempty"`
+	IncrementalKey    string   `yaml:"incrementalKey,omitempty"`
+	SchemaNaming      string   `yaml:"schemaNaming"`
 }
 
 func Compile(document spec.Ingestion, blueprint Blueprint) (ExecutionPlan, error) {
@@ -56,7 +58,8 @@ func Compile(document spec.Ingestion, blueprint Blueprint) (ExecutionPlan, error
 	}
 	plan := ExecutionPlan{Engine: blueprint.Engine, EngineVersion: blueprint.EngineVersion, Orchestrator: blueprint.Orchestrator,
 		DestinationType: destinationType, DestinationRef: destinationRef, DestinationURI: duckDBURI(destinationPath), DestinationObject: document.Destination.Object,
-		Strategy: defaultValue(document.Materialization.Strategy, "replace"), SchemaNaming: blueprint.SchemaNaming}
+		Strategy: defaultValue(document.Materialization.Strategy, "replace"), PrimaryKey: document.Materialization.PrimaryKey,
+		IncrementalKey: document.Materialization.IncrementalKey, SchemaNaming: blueprint.SchemaNaming}
 	switch document.Source.Type {
 	case "http-file":
 		plan.SourceURI, plan.SourceTable = document.Source.URL, "data#csv"

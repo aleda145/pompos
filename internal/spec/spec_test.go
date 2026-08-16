@@ -78,3 +78,26 @@ func TestLegacyRuntimeAliasesNormalize(t *testing.T) {
 		t.Fatalf("canonical runtime =\n%s", canonical)
 	}
 }
+
+func TestMaterializationStrategyRequirements(t *testing.T) {
+	input, err := os.ReadFile("testdata/customers.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document.Materialization = Materialization{Strategy: "merge"}
+	if err := document.Validate(); err == nil || !strings.Contains(err.Error(), "requires at least one primary key") {
+		t.Fatalf("merge validation error = %v", err)
+	}
+	document.Materialization = Materialization{Strategy: "delete+insert"}
+	if err := document.Validate(); err == nil || !strings.Contains(err.Error(), "requires an incremental key") {
+		t.Fatalf("delete+insert validation error = %v", err)
+	}
+	document.Materialization = Materialization{Strategy: "scd2", PrimaryKey: []string{"id"}, IncrementalKey: "updated_at"}
+	if err := document.Validate(); err != nil {
+		t.Fatalf("valid SCD2 materialization: %v", err)
+	}
+}

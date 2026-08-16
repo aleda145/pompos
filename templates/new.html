@@ -62,6 +62,29 @@
     <input id="table_name" name="table_name" value="{{.TableName}}" placeholder="customers" pattern="[A-Za-z_][A-Za-z0-9_]*" required>
     <p class="hint">Letters, numbers, and underscores; start with a letter or underscore.</p>
   </fieldset>
+  <fieldset class="loading-options" data-loading-options>
+    <legend>Loading</legend>
+    <label>Strategy
+      <select name="strategy" required>
+        <option value="replace" {{if eq .Strategy "replace"}}selected{{end}}>Full refresh</option>
+        <option value="append" {{if eq .Strategy "append"}}selected{{end}}>Append rows</option>
+        <option value="merge" {{if eq .Strategy "merge"}}selected{{end}}>Merge rows</option>
+        <option value="delete+insert" {{if eq .Strategy "delete+insert"}}selected{{end}}>Replace an interval</option>
+        <option value="scd2" {{if eq .Strategy "scd2"}}selected{{end}}>Keep row history (SCD2)</option>
+      </select>
+    </label>
+    <p class="hint" data-strategy-help></p>
+    <div class="load-key-grid">
+      <label data-primary-key>Primary key columns
+        <input name="primary_key" value="{{.PrimaryKey}}" placeholder="id, account_id">
+        <small>Comma-separated columns that identify one logical row.</small>
+      </label>
+      <label data-incremental-key>Incremental key
+        <input name="incremental_key" value="{{.IncrementalKey}}" placeholder="updated_at">
+        <small>A date, timestamp, or numeric column that identifies the changing slice.</small>
+      </label>
+    </div>
+  </fieldset>
   <fieldset class="runtime-options">
     <legend>Runtime</legend>
     <div class="runtime-grid">
@@ -152,6 +175,29 @@
     </select>
     <p class="hint">Selected tables are written to this destination. Manage paths from <a href="/destinations">Destinations</a>.</p>
   </fieldset>
+  <fieldset class="loading-options" data-loading-options>
+    <legend>Loading</legend>
+    <label>Strategy
+      <select name="strategy" required>
+        <option value="replace" {{if eq .Strategy "replace"}}selected{{end}}>Full refresh</option>
+        <option value="append" {{if eq .Strategy "append"}}selected{{end}}>Append rows</option>
+        <option value="merge" {{if eq .Strategy "merge"}}selected{{end}}>Merge rows</option>
+        <option value="delete+insert" {{if eq .Strategy "delete+insert"}}selected{{end}}>Replace an interval</option>
+        <option value="scd2" {{if eq .Strategy "scd2"}}selected{{end}}>Keep row history (SCD2)</option>
+      </select>
+    </label>
+    <p class="hint" data-strategy-help></p>
+    <div class="load-key-grid">
+      <label data-primary-key>Primary key columns
+        <input name="primary_key" value="{{.PrimaryKey}}" placeholder="id, account_id">
+        <small>Comma-separated columns that identify one logical row.</small>
+      </label>
+      <label data-incremental-key>Incremental key
+        <input name="incremental_key" value="{{.IncrementalKey}}" placeholder="updated_at">
+        <small>A date, timestamp, or numeric column that identifies the changing slice.</small>
+      </label>
+    </div>
+  </fieldset>
   <fieldset class="runtime-options">
     <legend>Runtime</legend>
     <div class="runtime-grid">
@@ -188,6 +234,29 @@
     const preview = form?.querySelector('[data-yaml-preview]');
     const output = preview?.querySelector('[data-yaml-output]');
     if (!form || !preview || !output) return;
+
+    const loading = form.querySelector('[data-loading-options]');
+    const strategy = loading?.querySelector('[name="strategy"]');
+    const primary = loading?.querySelector('[data-primary-key]');
+    const incremental = loading?.querySelector('[data-incremental-key]');
+    const strategyHelp = loading?.querySelector('[data-strategy-help]');
+    const strategyDescriptions = {
+      replace: 'Replace every destination row with the current source data.',
+      append: 'Add every source row. Repeated runs can create duplicates.',
+      merge: 'Insert new rows and update existing rows that share a primary key.',
+      'delete+insert': 'Replace the destination slice covered by the incremental key.',
+      scd2: 'Keep historical row versions and mark the current version.'
+    };
+    const updateLoadingOptions = () => {
+      if (!strategy || !primary || !incremental) return;
+      const value = strategy.value;
+      primary.hidden = value === 'replace' || value === 'append';
+      incremental.hidden = value === 'replace';
+      primary.querySelector('input').required = value === 'merge' || value === 'scd2';
+      incremental.querySelector('input').required = value === 'delete+insert';
+      if (strategyHelp) strategyHelp.textContent = strategyDescriptions[value] || '';
+    };
+    updateLoadingOptions();
 
     let timer;
     const render = async () => {
@@ -229,6 +298,7 @@
     };
     form.addEventListener('input', queueRender);
     form.addEventListener('change', queueRender);
+    strategy?.addEventListener('change', updateLoadingOptions);
     render();
   })();
 </script>

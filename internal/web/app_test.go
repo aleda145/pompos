@@ -182,7 +182,8 @@ func TestCreationYAMLPreviewUsesCanonicalSerializer(t *testing.T) {
 		t.Fatal(err)
 	}
 	form := url.Values{"source_type": {"csv"}, "csv_url": {"https://example.com/customers.csv"}, "table_name": {"customers"}, "schedule": {"0 6 * * *"},
-		"runtime_engine": {"ingestr"}, "runtime_orchestrator": {"direct"}, "destination_ref": {"preview"}}
+		"runtime_engine": {"ingestr"}, "runtime_orchestrator": {"direct"}, "destination_ref": {"preview"},
+		"strategy": {"merge"}, "primary_key": {"account_id, id"}, "incremental_key": {"updated_at"}}
 	request := httptest.NewRequest(http.MethodPost, "/ingestions/preview", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
@@ -196,7 +197,8 @@ func TestCreationYAMLPreviewUsesCanonicalSerializer(t *testing.T) {
 	}
 	want, err := spec.Marshal(spec.FromLegacy(ingestion.Ingestion{
 		Name: "customers", Schedule: "0 6 * * *", Source: ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
-		Destination: ingestion.Destination{Ref: "preview", Type: "duckdb", Path: configuredDestination, Table: "customers"},
+		Destination:     ingestion.Destination{Ref: "preview", Type: "duckdb", Path: configuredDestination, Table: "customers"},
+		Materialization: ingestion.Materialization{Strategy: "merge", PrimaryKey: []string{"account_id", "id"}, IncrementalKey: "updated_at"},
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -215,6 +217,9 @@ func TestCreationYAMLPreviewUsesCanonicalSerializer(t *testing.T) {
 	}
 	if !strings.Contains(page.Body.String(), `name="destination_ref"`) || strings.Contains(page.Body.String(), `name="destination_path"`) {
 		t.Fatalf("destination controls are missing: %s", page.Body.String())
+	}
+	if !strings.Contains(page.Body.String(), `value="merge"`) || !strings.Contains(page.Body.String(), `name="primary_key"`) || !strings.Contains(page.Body.String(), `name="incremental_key"`) {
+		t.Fatalf("loading strategy controls are missing: %s", page.Body.String())
 	}
 }
 

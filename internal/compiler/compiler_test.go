@@ -68,6 +68,21 @@ func TestPlanUsesInlineDestination(t *testing.T) {
 	}
 }
 
+func TestPlanIncludesLoadingKeys(t *testing.T) {
+	document, _, err := spec.Read("../spec/testdata/customers.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	document.Materialization = spec.Materialization{Strategy: "merge", PrimaryKey: []string{"account_id", "id"}, IncrementalKey: "updated_at"}
+	plan, err := Compile(document, LocalDuckDB("data/default.duckdb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Strategy != "merge" || len(plan.PrimaryKey) != 2 || plan.PrimaryKey[0] != "account_id" || plan.IncrementalKey != "updated_at" {
+		t.Fatalf("plan = %#v", plan)
+	}
+}
+
 func TestPlanContainsOnlyCredentialReference(t *testing.T) {
 	document := spec.Ingestion{APIVersion: spec.APIVersion, Kind: spec.Kind, Metadata: spec.Metadata{Name: "issues"},
 		Source:      spec.Source{Type: "github", Owner: "openai", Repository: "codex", Table: "issues", CredentialRef: "github-prod"},

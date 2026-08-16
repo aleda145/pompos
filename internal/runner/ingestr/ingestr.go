@@ -70,7 +70,7 @@ func BuildArgs(plan compiler.ExecutionPlan, credentialValue string) ([]string, e
 			sourceURI = parsed.String()
 		}
 	}
-	return []string{
+	args := []string{
 		"ingest",
 		"--source-uri", sourceURI,
 		"--source-table", plan.SourceTable,
@@ -78,7 +78,14 @@ func BuildArgs(plan compiler.ExecutionPlan, credentialValue string) ([]string, e
 		"--dest-table", plan.DestinationObject,
 		"--schema-naming", plan.SchemaNaming,
 		"--incremental-strategy", plan.Strategy,
-	}, nil
+	}
+	for _, key := range plan.PrimaryKey {
+		args = append(args, "--primary-key", key)
+	}
+	if plan.IncrementalKey != "" {
+		args = append(args, "--incremental-key", plan.IncrementalKey)
+	}
+	return args, nil
 }
 
 func (r Runner) Run(ctx context.Context, runID string, plan compiler.ExecutionPlan, credentialValue string) error {

@@ -160,6 +160,9 @@ type newPageData struct {
 	Schedule            string
 	RuntimeEngine       string
 	RuntimeOrchestrator string
+	Strategy            string
+	PrimaryKey          string
+	IncrementalKey      string
 	Destinations        []destination.Config
 	DestinationRef      string
 }
@@ -247,6 +250,11 @@ func (a *App) previewIngestionYAML(w http.ResponseWriter, r *http.Request) {
 	}
 	var items []ingestion.Ingestion
 	schedule := strings.TrimSpace(r.FormValue("schedule"))
+	materialization, err := materializationFromForm(r)
+	if err != nil {
+		_ = json.NewEncoder(w).Encode(yamlPreviewResponse{Error: err.Error()})
+		return
+	}
 	destination, err := a.destinationFromForm(r)
 	if err != nil {
 		_ = json.NewEncoder(w).Encode(yamlPreviewResponse{Error: err.Error()})
@@ -274,9 +282,10 @@ func (a *App) previewIngestionYAML(w http.ResponseWriter, r *http.Request) {
 		for _, sourceTable := range r.Form["tables"] {
 			items = append(items, ingestion.Ingestion{
 				Name: owner + "/" + repository + " · " + githubTableName(sourceTable), Schedule: schedule,
-				Source:      ingestion.Source{Type: "github", Owner: owner, Repository: repository, Table: sourceTable, SecretKey: secretRef},
-				Destination: ingestion.Destination{Ref: destination.Ref, Type: destination.Type, Path: destination.Path, Table: safeTableName(owner + "_" + repository + "_" + sourceTable)},
-				Runtime:     runtime,
+				Source:          ingestion.Source{Type: "github", Owner: owner, Repository: repository, Table: sourceTable, SecretKey: secretRef},
+				Destination:     ingestion.Destination{Ref: destination.Ref, Type: destination.Type, Path: destination.Path, Table: safeTableName(owner + "_" + repository + "_" + sourceTable)},
+				Runtime:         runtime,
+				Materialization: materialization,
 			})
 		}
 		if len(items) == 0 {
@@ -286,9 +295,10 @@ func (a *App) previewIngestionYAML(w http.ResponseWriter, r *http.Request) {
 	} else {
 		items = []ingestion.Ingestion{{
 			Name: strings.TrimSpace(r.FormValue("table_name")), Schedule: schedule,
-			Source:      ingestion.Source{Type: "csv", URL: strings.TrimSpace(r.FormValue("csv_url"))},
-			Destination: ingestion.Destination{Ref: destination.Ref, Type: destination.Type, Path: destination.Path, Table: strings.TrimSpace(r.FormValue("table_name"))},
-			Runtime:     runtime,
+			Source:          ingestion.Source{Type: "csv", URL: strings.TrimSpace(r.FormValue("csv_url"))},
+			Destination:     ingestion.Destination{Ref: destination.Ref, Type: destination.Type, Path: destination.Path, Table: strings.TrimSpace(r.FormValue("table_name"))},
+			Runtime:         runtime,
+			Materialization: materialization,
 		}}
 	}
 	response := yamlPreviewResponse{Documents: make([]yamlPreviewDocument, 0, len(items))}
@@ -307,30 +317,40 @@ func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
 	csvURL := strings.TrimSpace(r.FormValue("csv_url"))
 	tableName := strings.TrimSpace(r.FormValue("table_name"))
 	schedule := strings.TrimSpace(r.FormValue("schedule"))
+	materialization, err := materializationFromForm(r)
+	if err != nil {
+		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule,
+			Strategy: materialization.Strategy, PrimaryKey: strings.Join(materialization.PrimaryKey, ", "), IncrementalKey: materialization.IncrementalKey})
+		return
+	}
 	destination, err := a.destinationFromForm(r)
 	if err != nil {
 		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule,
-			DestinationRef: strings.TrimSpace(r.FormValue("destination_ref"))})
+			DestinationRef: strings.TrimSpace(r.FormValue("destination_ref")), Strategy: materialization.Strategy,
+			PrimaryKey: strings.Join(materialization.PrimaryKey, ", "), IncrementalKey: materialization.IncrementalKey})
 		return
 	}
 	runtime, err := runtimeFromForm(r)
 	if err != nil {
 		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule,
-			RuntimeEngine: runtime.Engine, RuntimeOrchestrator: runtime.Orchestrator, DestinationRef: destination.Ref})
+			RuntimeEngine: runtime.Engine, RuntimeOrchestrator: runtime.Orchestrator, DestinationRef: destination.Ref,
+			Strategy: materialization.Strategy, PrimaryKey: strings.Join(materialization.PrimaryKey, ", "), IncrementalKey: materialization.IncrementalKey})
 		return
 	}
 	if err := a.Scheduler.Validate(schedule); err != nil {
 		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule,
-			RuntimeEngine: runtime.Engine, RuntimeOrchestrator: runtime.Orchestrator, DestinationRef: destination.Ref})
+			RuntimeEngine: runtime.Engine, RuntimeOrchestrator: runtime.Orchestrator, DestinationRef: destination.Ref,
+			Strategy: materialization.Strategy, PrimaryKey: strings.Join(materialization.PrimaryKey, ", "), IncrementalKey: materialization.IncrementalKey})
 		return
 	}
 	item := ingestion.Ingestion{
-		ID:       newID(),
-		Name:     tableName,
-		Status:   ingestion.StatusPending,
-		Schedule: schedule,
-		Runtime:  runtime,
-		Source:   ingestion.Source{Type: "csv", URL: csvURL},
+		ID:              newID(),
+		Name:            tableName,
+		Status:          ingestion.StatusPending,
+		Schedule:        schedule,
+		Runtime:         runtime,
+		Materialization: materialization,
+		Source:          ingestion.Source{Type: "csv", URL: csvURL},
 		Destination: ingestion.Destination{
 			Ref:   destination.Ref,
 			Type:  destination.Type,
@@ -343,13 +363,15 @@ func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
 	if _, err := a.compile(spec.FromLegacy(item)); err != nil {
 		a.Logger.Printf("validation failed ingestion_id=%s source=csv error=%q", item.ID, err)
 		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule,
-			RuntimeEngine: runtime.Engine, RuntimeOrchestrator: runtime.Orchestrator, DestinationRef: destination.Ref})
+			RuntimeEngine: runtime.Engine, RuntimeOrchestrator: runtime.Orchestrator, DestinationRef: destination.Ref,
+			Strategy: materialization.Strategy, PrimaryKey: strings.Join(materialization.PrimaryKey, ", "), IncrementalKey: materialization.IncrementalKey})
 		return
 	}
 	if err := a.Validator.Validate(r.Context(), item.Source); err != nil {
 		a.Logger.Printf("connectivity validation failed ingestion_id=%s source=csv error=%q", item.ID, err)
 		a.renderNew(w, http.StatusUnprocessableEntity, newPageData{Source: "csv", Error: err.Error(), CSVURL: csvURL, TableName: tableName, Schedule: schedule,
-			RuntimeEngine: runtime.Engine, RuntimeOrchestrator: runtime.Orchestrator, DestinationRef: destination.Ref})
+			RuntimeEngine: runtime.Engine, RuntimeOrchestrator: runtime.Orchestrator, DestinationRef: destination.Ref,
+			Strategy: materialization.Strategy, PrimaryKey: strings.Join(materialization.PrimaryKey, ", "), IncrementalKey: materialization.IncrementalKey})
 		return
 	}
 	a.Logger.Printf("validation succeeded ingestion_id=%s source=csv", item.ID)
@@ -363,6 +385,11 @@ func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
 func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 	repositoryInput := strings.TrimSpace(r.FormValue("repository"))
 	schedule := strings.TrimSpace(r.FormValue("schedule"))
+	materialization, materializationErr := materializationFromForm(r)
+	if materializationErr != nil {
+		a.renderGitHubError(w, r, materializationErr.Error(), repositoryInput, r.Form["tables"], r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
+		return
+	}
 	destination, destinationErr := a.destinationFromForm(r)
 	if destinationErr != nil {
 		a.renderGitHubError(w, r, destinationErr.Error(), repositoryInput, r.Form["tables"], r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
@@ -453,12 +480,13 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 		source := baseSource
 		source.Table = sourceTable
 		item := ingestion.Ingestion{
-			ID:       newID(),
-			Name:     owner + "/" + repository + " · " + githubTableName(sourceTable),
-			Status:   ingestion.StatusPending,
-			Schedule: schedule,
-			Runtime:  runtime,
-			Source:   source,
+			ID:              newID(),
+			Name:            owner + "/" + repository + " · " + githubTableName(sourceTable),
+			Status:          ingestion.StatusPending,
+			Schedule:        schedule,
+			Runtime:         runtime,
+			Materialization: materialization,
+			Source:          source,
 			Destination: ingestion.Destination{
 				Ref:   destination.Ref,
 				Type:  destination.Type,
@@ -652,6 +680,9 @@ func (a *App) renderNew(w http.ResponseWriter, status int, data newPageData) {
 	if data.RuntimeOrchestrator == "" {
 		data.RuntimeOrchestrator = "direct"
 	}
+	if data.Strategy == "" {
+		data.Strategy = "replace"
+	}
 	destinations, err := a.Destinations.ListDestinations(context.Background())
 	if err != nil {
 		a.serverError(w, err)
@@ -695,6 +726,26 @@ func runtimeFromForm(r *http.Request) (ingestion.Runtime, error) {
 	return runtime, nil
 }
 
+func materializationFromForm(r *http.Request) (ingestion.Materialization, error) {
+	materialization := ingestion.Materialization{
+		Strategy:       strings.TrimSpace(r.FormValue("strategy")),
+		IncrementalKey: strings.TrimSpace(r.FormValue("incremental_key")),
+	}
+	if materialization.Strategy == "" {
+		materialization.Strategy = "replace"
+	}
+	for _, key := range strings.Split(r.FormValue("primary_key"), ",") {
+		if key = strings.TrimSpace(key); key != "" {
+			materialization.PrimaryKey = append(materialization.PrimaryKey, key)
+		}
+	}
+	definition := spec.Materialization{Strategy: materialization.Strategy, PrimaryKey: materialization.PrimaryKey, IncrementalKey: materialization.IncrementalKey}
+	if err := definition.Validate(); err != nil {
+		return materialization, err
+	}
+	return materialization, nil
+}
+
 func (a *App) destinationFromForm(r *http.Request) (ingestion.Destination, error) {
 	ref := strings.TrimSpace(r.FormValue("destination_ref"))
 	if ref == "" {
@@ -728,6 +779,7 @@ func (a *App) renderGitHubError(w http.ResponseWriter, r *http.Request, message,
 		SecretKey: secretKey, NewSecretName: newSecretName, Schedule: schedule,
 		RuntimeEngine: strings.TrimSpace(r.FormValue("runtime_engine")), RuntimeOrchestrator: strings.TrimSpace(r.FormValue("runtime_orchestrator")),
 		DestinationRef: strings.TrimSpace(r.FormValue("destination_ref")),
+		Strategy:       strings.TrimSpace(r.FormValue("strategy")), PrimaryKey: strings.TrimSpace(r.FormValue("primary_key")), IncrementalKey: strings.TrimSpace(r.FormValue("incremental_key")),
 	})
 }
 
