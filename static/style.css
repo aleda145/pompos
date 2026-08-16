@@ -92,6 +92,15 @@ legend { font-weight: 700; padding: 0; }
 .check-card strong, .check-card small { display: block; }
 .no-sources { color: #617066; text-align: center; padding: 2rem; }
 .secret-add { max-width: none !important; margin-bottom: 2.5rem; }
+.destination-add { max-width: none !important; margin-bottom: 2.5rem; }
+.saved-destinations > h2 { margin-bottom: .75rem; }
+.destination-list { display: grid; gap: .7rem; }
+.destination-row { display: grid; grid-template-columns: 3rem 1fr; align-items: center; gap: 1rem; padding: 1.15rem; border: 1px solid #dfe4dc; border-radius: .6rem; background: white; }
+.destination-row strong, .destination-row small { display: block; overflow-wrap: anywhere; }
+.destination-row small { margin: .15rem 0 .35rem; color: #617066; text-transform: capitalize; }
+.destination-edit { grid-column: 2; display: grid; grid-template-columns: 1fr auto; gap: .65rem; align-items: center; }
+.destination-edit label { margin: 0; }
+.destination-edit button { white-space: nowrap; }
 .saved-secrets > h2 { margin-bottom: .75rem; }
 .secret-list { display: grid; gap: .7rem; }
 .secret-row { display: grid; gap: 1rem; padding: 1.15rem; border: 1px solid #dfe4dc; border-radius: .6rem; background: white; }

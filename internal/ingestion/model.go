@@ -52,6 +52,7 @@ func (s Source) DisplayLocation() string {
 }
 
 type Destination struct {
+	Ref   string
 	Type  string
 	Path  string
 	Table string

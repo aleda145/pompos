@@ -25,7 +25,7 @@ func TestDurablePollerRunsPersistedDueSchedule(t *testing.T) {
 	item := ingestion.Ingestion{
 		ID: "abc", Name: "customers", Status: ingestion.StatusSucceeded, Schedule: "*/5 * * * *",
 		Source:      ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
-		Destination: ingestion.Destination{Type: "duckdb", Table: "customers"},
+		Destination: ingestion.Destination{Type: "duckdb", Path: filepath.Join(dataDir, "pompos.duckdb"), Table: "customers"},
 	}
 	persistSpec(t, dataDir, &item)
 	if err := metadata.Create(ctx, item); err != nil {
@@ -64,7 +64,7 @@ func TestValidateAndDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer metadata.Close()
-	item := ingestion.Ingestion{ID: "abc", Name: "abc", Status: ingestion.StatusPending, Source: ingestion.Source{Type: "csv", URL: "https://example.com/abc.csv"}, Destination: ingestion.Destination{Type: "duckdb", Table: "abc"}}
+	item := ingestion.Ingestion{ID: "abc", Name: "abc", Status: ingestion.StatusPending, Source: ingestion.Source{Type: "csv", URL: "https://example.com/abc.csv"}, Destination: ingestion.Destination{Type: "duckdb", Path: filepath.Join(dataDir, "pompos.duckdb"), Table: "abc"}}
 	persistSpec(t, dataDir, &item)
 	if err := metadata.Create(ctx, item); err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestWorkerRunsManualQueuePersistedBeforeStartup(t *testing.T) {
 	defer metadata.Close()
 	item := ingestion.Ingestion{ID: "manual", Name: "manual", Status: ingestion.StatusSucceeded, Source: ingestion.Source{Type: "csv"}}
 	item.Source.URL = "https://example.com/manual.csv"
-	item.Destination = ingestion.Destination{Type: "duckdb", Table: "manual"}
+	item.Destination = ingestion.Destination{Type: "duckdb", Path: filepath.Join(dataDir, "pompos.duckdb"), Table: "manual"}
 	persistSpec(t, dataDir, &item)
 	if err := metadata.Create(ctx, item); err != nil {
 		t.Fatal(err)

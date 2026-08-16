@@ -41,7 +41,7 @@ func TestCredentialIsReferenceOnly(t *testing.T) {
 kind: Ingestion
 metadata: {name: issues}
 source: {type: github, owner: openai, repository: codex, table: issues, credentialRef: github-prod}
-destination: {connectionRef: local-duckdb, object: issues}
+destination: {type: duckdb, path: data/pompos.duckdb, object: issues}
 `)
 	document, err := Parse(input)
 	if err != nil {

@@ -78,9 +78,10 @@ func runServer() {
 		Validator: validation.HTTPSourceValidator{Client: &http.Client{
 			Timeout: cfg.RequestTimeout,
 		}},
-		Destination: ingestion.Destination{Type: cfg.Destination.Type, Path: cfg.Destination.Path},
-		SpecDir:     filepath.Join(cfg.DataDir, "ingestions"),
-		Logger:      logger,
+		Destination:  ingestion.Destination{Ref: "local-duckdb", Type: cfg.Destination.Type, Path: cfg.Destination.Path},
+		Destinations: metadata,
+		SpecDir:      filepath.Join(cfg.DataDir, "ingestions"),
+		Logger:       logger,
 	})
 	if err != nil {
 		logger.Fatal(err)

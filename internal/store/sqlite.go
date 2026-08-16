@@ -11,6 +11,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"pompos/internal/destination"
 	"pompos/internal/ingestion"
 	"pompos/internal/secrets"
 )
@@ -47,7 +48,7 @@ func (s *SQLite) initialize(ctx context.Context) error {
 		return fmt.Errorf("read metadata schema version: %w", err)
 	}
 	if version != schemaVersion {
-		if _, err := s.db.ExecContext(ctx, `DROP TABLE IF EXISTS ingestion_runs; DROP TABLE IF EXISTS scheduled_runs; DROP TABLE IF EXISTS ingestions; DROP TABLE IF EXISTS secrets;`); err != nil {
+		if _, err := s.db.ExecContext(ctx, `DROP TABLE IF EXISTS ingestion_runs; DROP TABLE IF EXISTS scheduled_runs; DROP TABLE IF EXISTS ingestions; DROP TABLE IF EXISTS secrets; DROP TABLE IF EXISTS destinations;`); err != nil {
 			return fmt.Errorf("reset incompatible metadata schema: %w", err)
 		}
 	}
@@ -65,6 +66,13 @@ CREATE TABLE IF NOT EXISTS ingestions (
 CREATE TABLE IF NOT EXISTS secrets (
     key TEXT PRIMARY KEY,
     value BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS destinations (
+    name TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    path TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -88,6 +96,10 @@ CREATE INDEX IF NOT EXISTS ingestion_runs_claim
 PRAGMA user_version = 6;`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize metadata database: %w", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO destinations (name, type, path, created_at, updated_at) VALUES ('local-duckdb', 'duckdb', ?, ?, ?)`, s.destinationPath, now, now); err != nil {
+		return fmt.Errorf("initialize default destination: %w", err)
 	}
 	return nil
 }
@@ -388,6 +400,72 @@ func (s *SQLite) scan(row scanner) (ingestion.Ingestion, error) {
 }
 
 func (s *SQLite) Secrets() secrets.Store { return sqliteSecrets{db: s.db} }
+
+func (s *SQLite) PutDestination(ctx context.Context, config destination.Config) error {
+	if err := config.Validate(); err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO destinations (name, type, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(name) DO UPDATE SET type = excluded.type, path = excluded.path, updated_at = excluded.updated_at`,
+		config.Name, config.Type, config.Path, now, now)
+	if err != nil {
+		return fmt.Errorf("store destination: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLite) GetDestination(ctx context.Context, name string) (destination.Config, error) {
+	var config destination.Config
+	var createdAt, updatedAt string
+	err := s.db.QueryRowContext(ctx, `SELECT name, type, path, created_at, updated_at FROM destinations WHERE name = ?`, name).
+		Scan(&config.Name, &config.Type, &config.Path, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return destination.Config{}, destination.ErrNotFound
+	}
+	if err != nil {
+		return destination.Config{}, fmt.Errorf("get destination: %w", err)
+	}
+	config.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return destination.Config{}, fmt.Errorf("parse destination creation time: %w", err)
+	}
+	config.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
+	if err != nil {
+		return destination.Config{}, fmt.Errorf("parse destination update time: %w", err)
+	}
+	return config, nil
+}
+
+func (s *SQLite) ListDestinations(ctx context.Context) ([]destination.Config, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name, type, path, created_at, updated_at FROM destinations ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("list destinations: %w", err)
+	}
+	defer rows.Close()
+	var configs []destination.Config
+	for rows.Next() {
+		var config destination.Config
+		var createdAt, updatedAt string
+		if err := rows.Scan(&config.Name, &config.Type, &config.Path, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan destination: %w", err)
+		}
+		config.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse destination creation time: %w", err)
+		}
+		config.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse destination update time: %w", err)
+		}
+		configs = append(configs, config)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate destinations: %w", err)
+	}
+	return configs, nil
+}
 
 type sqliteSecrets struct{ db *sql.DB }
 

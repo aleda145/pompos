@@ -45,10 +45,26 @@ func TestPolicyErrorNamesRule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	document.Destination.Type, document.Destination.Path = "", ""
 	document.Destination.ConnectionRef = "production"
 	_, err = Compile(document, LocalDuckDB("data/pompos.duckdb"))
 	if err == nil || !strings.Contains(err.Error(), "policy.destination-connection") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPlanUsesInlineDestination(t *testing.T) {
+	document, _, err := spec.Read("../spec/testdata/customers.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	document.Destination.Path = "data/warehouse.duckdb"
+	plan, err := Compile(document, LocalDuckDB("data/default.duckdb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.DestinationURI != "duckdb://data/warehouse.duckdb" {
+		t.Fatalf("destination URI = %q", plan.DestinationURI)
 	}
 }
 

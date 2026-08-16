@@ -51,9 +51,17 @@
   <label for="csv_url">CSV URL</label>
   <input id="csv_url" name="csv_url" type="url" value="{{.CSVURL}}" placeholder="https://example.com/data.csv" required autofocus>
   <p class="hint">The file must be publicly reachable over HTTP or HTTPS.</p>
-  <label for="table_name">DuckDB table</label>
-  <input id="table_name" name="table_name" value="{{.TableName}}" placeholder="customers" pattern="[A-Za-z_][A-Za-z0-9_]*" required>
-  <p class="hint">Letters, numbers, and underscores; start with a letter or underscore.</p>
+  <fieldset class="destination-options">
+    <legend>Destination</legend>
+    <label for="destination_ref">Configured destination</label>
+    <select id="destination_ref" name="destination_ref" required>
+      {{range .Destinations}}<option value="{{.Name}}" {{if eq $.DestinationRef .Name}}selected{{end}}>{{.Name}} · {{.Type}}</option>{{end}}
+    </select>
+    <p class="hint">Manage paths and add destinations from <a href="/destinations">Destinations</a>.</p>
+    <label for="table_name">Table</label>
+    <input id="table_name" name="table_name" value="{{.TableName}}" placeholder="customers" pattern="[A-Za-z_][A-Za-z0-9_]*" required>
+    <p class="hint">Letters, numbers, and underscores; start with a letter or underscore.</p>
+  </fieldset>
   <fieldset class="runtime-options">
     <legend>Runtime</legend>
     <div class="runtime-grid">
@@ -135,6 +143,14 @@
       </label>
       {{end}}
     </div>
+  </fieldset>
+  <fieldset class="destination-options">
+    <legend>Destination</legend>
+    <label for="destination_ref">Configured destination</label>
+    <select id="destination_ref" name="destination_ref" required>
+      {{range .Destinations}}<option value="{{.Name}}" {{if eq $.DestinationRef .Name}}selected{{end}}>{{.Name}} · {{.Type}}</option>{{end}}
+    </select>
+    <p class="hint">Selected tables are written to this destination. Manage paths from <a href="/destinations">Destinations</a>.</p>
   </fieldset>
   <fieldset class="runtime-options">
     <legend>Runtime</legend>

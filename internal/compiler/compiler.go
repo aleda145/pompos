@@ -15,7 +15,11 @@ import (
 type Blueprint struct{ DestinationRef, DestinationType, DestinationPath, Engine, EngineVersion, Orchestrator, SchemaNaming string }
 
 func LocalDuckDB(path string) Blueprint {
-	return Blueprint{DestinationRef: "local-duckdb", DestinationType: "duckdb", DestinationPath: path, Engine: "ingestr", EngineVersion: "1.1.8", Orchestrator: "direct", SchemaNaming: "direct"}
+	return DuckDB("local-duckdb", path)
+}
+
+func DuckDB(ref, path string) Blueprint {
+	return Blueprint{DestinationRef: ref, DestinationType: "duckdb", DestinationPath: path, Engine: "ingestr", EngineVersion: "1.1.8", Orchestrator: "direct", SchemaNaming: "direct"}
 }
 
 type ExecutionPlan struct {
@@ -25,7 +29,8 @@ type ExecutionPlan struct {
 	SourceURI         string `yaml:"sourceUri"`
 	SourceTable       string `yaml:"sourceTable"`
 	CredentialRef     string `yaml:"credentialRef,omitempty"`
-	DestinationRef    string `yaml:"destinationRef"`
+	DestinationType   string `yaml:"destinationType"`
+	DestinationRef    string `yaml:"destinationRef,omitempty"`
 	DestinationURI    string `yaml:"destinationUri"`
 	DestinationObject string `yaml:"destinationObject"`
 	Strategy          string `yaml:"strategy"`
@@ -36,8 +41,12 @@ func Compile(document spec.Ingestion, blueprint Blueprint) (ExecutionPlan, error
 	if err := document.Validate(); err != nil {
 		return ExecutionPlan{}, err
 	}
-	if document.Destination.ConnectionRef != blueprint.DestinationRef {
-		return ExecutionPlan{}, fmt.Errorf("policy.destination-connection: connectionRef %q is not allowed; use %q", document.Destination.ConnectionRef, blueprint.DestinationRef)
+	destinationType, destinationPath, destinationRef := document.Destination.Type, document.Destination.Path, ""
+	if destinationType == "" {
+		if document.Destination.ConnectionRef != blueprint.DestinationRef {
+			return ExecutionPlan{}, fmt.Errorf("policy.destination-connection: legacy connectionRef %q cannot be resolved; make the destination explicit", document.Destination.ConnectionRef)
+		}
+		destinationType, destinationPath, destinationRef = blueprint.DestinationType, blueprint.DestinationPath, blueprint.DestinationRef
 	}
 	if orchestrator := document.Runtime.EffectiveOrchestrator(); orchestrator != "" && orchestrator != blueprint.Orchestrator {
 		return ExecutionPlan{}, fmt.Errorf("policy.runtime-orchestrator: orchestrator %q is not enabled", orchestrator)
@@ -45,8 +54,9 @@ func Compile(document spec.Ingestion, blueprint Blueprint) (ExecutionPlan, error
 	if engine := document.Runtime.EffectiveEngine(); engine != "" && engine != blueprint.Engine {
 		return ExecutionPlan{}, fmt.Errorf("policy.runtime-engine: engine %q is not allowed", engine)
 	}
-	plan := ExecutionPlan{Engine: blueprint.Engine, EngineVersion: blueprint.EngineVersion, Orchestrator: blueprint.Orchestrator, DestinationRef: blueprint.DestinationRef,
-		DestinationURI: duckDBURI(blueprint.DestinationPath), DestinationObject: document.Destination.Object, Strategy: defaultValue(document.Materialization.Strategy, "replace"), SchemaNaming: blueprint.SchemaNaming}
+	plan := ExecutionPlan{Engine: blueprint.Engine, EngineVersion: blueprint.EngineVersion, Orchestrator: blueprint.Orchestrator,
+		DestinationType: destinationType, DestinationRef: destinationRef, DestinationURI: duckDBURI(destinationPath), DestinationObject: document.Destination.Object,
+		Strategy: defaultValue(document.Materialization.Strategy, "replace"), SchemaNaming: blueprint.SchemaNaming}
 	switch document.Source.Type {
 	case "http-file":
 		plan.SourceURI, plan.SourceTable = document.Source.URL, "data#csv"

@@ -8,7 +8,8 @@ source:
   url: https://example.com/customers.csv
   format: csv
 destination:
-  connectionRef: local-duckdb
+  type: duckdb
+  path: data/pompos.duckdb
   object: customers
 materialization:
   strategy: replace

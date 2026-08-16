@@ -48,8 +48,10 @@ type Source struct {
 	CredentialRef string `yaml:"credentialRef,omitempty"`
 }
 type Destination struct {
-	ConnectionRef string `yaml:"connectionRef"`
+	Type          string `yaml:"type,omitempty"`
+	Path          string `yaml:"path,omitempty"`
 	Object        string `yaml:"object"`
+	ConnectionRef string `yaml:"connectionRef,omitempty"` // accepted for older v1alpha1 specs
 }
 type Materialization struct {
 	Strategy string `yaml:"strategy,omitempty"`
@@ -150,8 +152,20 @@ func (s Ingestion) Validate() error {
 	default:
 		return fmt.Errorf("spec.source.type: unsupported source type %q", s.Source.Type)
 	}
-	if s.Destination.ConnectionRef == "" {
-		return errors.New("spec.destination.connectionRef: is required")
+	if s.Destination.Type == "" && s.Destination.Path == "" {
+		if s.Destination.ConnectionRef == "" {
+			return errors.New("spec.destination: type and path are required")
+		}
+	} else {
+		if s.Destination.Type != "duckdb" {
+			return fmt.Errorf("spec.destination.type: unsupported type %q", s.Destination.Type)
+		}
+		if strings.TrimSpace(s.Destination.Path) == "" {
+			return errors.New("spec.destination.path: is required")
+		}
+		if strings.ContainsRune(s.Destination.Path, '\x00') {
+			return errors.New("spec.destination.path: contains an invalid null character")
+		}
 	}
 	if !objectName.MatchString(s.Destination.Object) {
 		return errors.New("spec.destination.object: must start with a letter or underscore and contain only letters, numbers, and underscores")
@@ -220,7 +234,7 @@ func FromLegacy(item ingestion.Ingestion) Ingestion {
 		orchestrator = "direct"
 	}
 	document := Ingestion{APIVersion: APIVersion, Kind: Kind, Metadata: Metadata{Name: item.Name}, Source: source,
-		Destination: Destination{ConnectionRef: "local-duckdb", Object: item.Destination.Table}, Materialization: Materialization{Strategy: "replace"}, Runtime: Runtime{Engine: engine, Orchestrator: orchestrator}}
+		Destination: Destination{Type: item.Destination.Type, Path: item.Destination.Path, Object: item.Destination.Table}, Materialization: Materialization{Strategy: "replace"}, Runtime: Runtime{Engine: engine, Orchestrator: orchestrator}}
 	if item.Schedule != "" {
 		document.Schedule = &Schedule{Cron: item.Schedule, Timezone: "UTC"}
 	}
@@ -240,8 +254,11 @@ func ToProjection(document Ingestion, id, path, digest, destinationPath string) 
 		orchestrator = "direct"
 	}
 	item := ingestion.Ingestion{ID: id, Name: document.Metadata.Name, Status: ingestion.StatusPending, Source: source,
-		Destination: ingestion.Destination{Type: "duckdb", Path: destinationPath, Table: document.Destination.Object},
+		Destination: ingestion.Destination{Ref: document.Destination.ConnectionRef, Type: document.Destination.Type, Path: document.Destination.Path, Table: document.Destination.Object},
 		Runtime:     ingestion.Runtime{Engine: engine, Orchestrator: orchestrator}, SpecPath: path, SpecDigest: digest}
+	if item.Destination.Type == "" {
+		item.Destination.Type, item.Destination.Path = "duckdb", destinationPath
+	}
 	if document.Schedule != nil {
 		item.Schedule = document.Schedule.Cron
 	}

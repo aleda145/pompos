@@ -3,7 +3,7 @@ engineVersion: 1.1.8
 orchestrator: direct
 sourceUri: https://example.com/customers.csv
 sourceTable: data#csv
-destinationRef: local-duckdb
+destinationType: duckdb
 destinationUri: duckdb://data/pompos.duckdb
 destinationObject: customers
 strategy: replace

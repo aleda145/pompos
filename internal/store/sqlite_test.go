@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"pompos/internal/destination"
 	"pompos/internal/ingestion"
 	"pompos/internal/secrets"
 )
@@ -171,5 +172,35 @@ func TestSQLiteSecretsLifecycle(t *testing.T) {
 	}
 	if _, err := secretStore.Get(ctx, "github/example"); !errors.Is(err, secrets.ErrNotFound) {
 		t.Fatalf("Get() after delete = %v", err)
+	}
+}
+
+func TestSQLiteDestinationsLifecycle(t *testing.T) {
+	ctx := context.Background()
+	defaultPath := filepath.Join(t.TempDir(), "pompos.duckdb")
+	metadata, err := Open(ctx, filepath.Join(t.TempDir(), "pompos.sqlite"), defaultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer metadata.Close()
+	local, err := metadata.GetDestination(ctx, "local-duckdb")
+	if err != nil || local.Path != defaultPath {
+		t.Fatalf("default destination = %#v, %v", local, err)
+	}
+	warehouse := destination.NewDuckDB("warehouse", filepath.Join(t.TempDir(), "warehouse.duckdb"))
+	if err := metadata.PutDestination(ctx, warehouse); err != nil {
+		t.Fatal(err)
+	}
+	warehouse.Path = filepath.Join(t.TempDir(), "updated.duckdb")
+	if err := metadata.PutDestination(ctx, warehouse); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := metadata.GetDestination(ctx, "warehouse")
+	if err != nil || stored.Path != warehouse.Path {
+		t.Fatalf("stored destination = %#v, %v", stored, err)
+	}
+	configs, err := metadata.ListDestinations(ctx)
+	if err != nil || len(configs) != 2 || configs[0].Name != "local-duckdb" || configs[1].Name != "warehouse" {
+		t.Fatalf("destinations = %#v, %v", configs, err)
 	}
 }

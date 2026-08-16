@@ -1,0 +1,46 @@
+{{define "content"}}
+<div class="page-heading">
+  <div><h1>Destinations</h1><p class="lead">Reusable presets for creating ingestion YAML.</p></div>
+</div>
+{{if .Saved}}<div class="notice notice-success" role="status">Destination saved.</div>{{end}}
+{{if .Error}}<div class="error" role="alert">{{.Error}}</div>{{end}}
+
+<form method="post" action="/destinations" class="panel destination-add">
+  <h2>Add or update destination</h2>
+  <label for="destination_name">Name</label>
+  <input id="destination_name" name="name" value="{{.Name}}" placeholder="analytics" maxlength="200" required>
+  <p class="hint">A reusable preset. Its type and path are copied into new ingestion YAML.</p>
+  <label for="destination_type">Type</label>
+  <select id="destination_type" name="type" required>
+    <option value="duckdb" {{if eq .Type "duckdb"}}selected{{end}}>DuckDB</option>
+  </select>
+  <label for="destination_path">DuckDB path</label>
+  <input id="destination_path" name="path" value="{{.Path}}" placeholder="data/analytics.duckdb" required>
+  <p class="hint">A filesystem path relative to Pompos, or an absolute path.</p>
+  <button type="submit">Save destination</button>
+</form>
+
+<section class="saved-destinations">
+  <h2>Configured destinations</h2>
+  {{if .Destinations}}
+  <div class="destination-list">
+    {{range .Destinations}}
+    <article class="destination-row">
+      <span class="source-logo source-logo-csv" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M4 6c0-1.66 3.58-3 8-3s8 1.34 8 3-3.58 3-8 3-8-1.34-8-3Z"/><path d="M4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
+      </span>
+      <div class="destination-summary"><strong>{{.Name}}</strong><small>{{.Type}}</small></div>
+      <form method="post" action="/destinations" class="destination-edit">
+        <input type="hidden" name="name" value="{{.Name}}">
+        <input type="hidden" name="type" value="{{.Type}}">
+        <label><span class="sr-only">Path for {{.Name}}</span><input name="path" value="{{.Path}}" required></label>
+        <button type="submit">Save path</button>
+      </form>
+    </article>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="empty">No destinations configured yet.</div>
+  {{end}}
+</section>
+{{end}}

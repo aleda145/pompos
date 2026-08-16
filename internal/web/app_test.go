@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	destinationconfig "pompos/internal/destination"
 	"pompos/internal/ingestion"
 	"pompos/internal/policy"
 	"pompos/internal/spec"
@@ -53,8 +54,12 @@ func TestCreateIngestionEnqueuesAndRendersPendingDetail(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	configuredDestination := filepath.Join(dataDir, "warehouse.duckdb")
+	if err := metadata.PutDestination(ctx, destinationconfig.NewDuckDB("warehouse", configuredDestination)); err != nil {
+		t.Fatal(err)
+	}
 	form := url.Values{"csv_url": {"https://example.com/customers.csv"}, "table_name": {"customers"}, "schedule": {"0 6 * * *"},
-		"runtime_engine": {"ingestr"}, "runtime_orchestrator": {"direct"}}
+		"runtime_engine": {"ingestr"}, "runtime_orchestrator": {"direct"}, "destination_ref": {"warehouse"}}
 	request := httptest.NewRequest(http.MethodPost, "/ingestions", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
@@ -74,7 +79,7 @@ func TestCreateIngestionEnqueuesAndRendersPendingDetail(t *testing.T) {
 		t.Fatalf("stored ingestion = %#v", item)
 	}
 	document, specYAML, err := spec.Read(item.SpecPath)
-	if err != nil || document.Schedule == nil || document.Schedule.Cron != "0 6 * * *" || document.Runtime.Engine != "ingestr" || document.Runtime.Orchestrator != "direct" {
+	if err != nil || document.Schedule == nil || document.Schedule.Cron != "0 6 * * *" || document.Runtime.Engine != "ingestr" || document.Runtime.Orchestrator != "direct" || document.Destination.Type != "duckdb" || document.Destination.Path != configuredDestination || document.Destination.ConnectionRef != "" {
 		t.Fatalf("document = %#v, error = %v", document, err)
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "ingestions", item.ID+".yaml")); err != nil {
@@ -165,6 +170,10 @@ func TestCreationYAMLPreviewUsesCanonicalSerializer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer metadata.Close()
+	configuredDestination := filepath.Join(dataDir, "preview.duckdb")
+	if err := metadata.PutDestination(ctx, destinationconfig.NewDuckDB("preview", configuredDestination)); err != nil {
+		t.Fatal(err)
+	}
 	app, err := New(App{
 		Store: metadata, Secrets: metadata.Secrets(), Validator: validatorFunc(func(context.Context, ingestion.Source) error { return nil }),
 		Destination: ingestion.Destination{Type: "duckdb", Path: destination}, SpecDir: filepath.Join(dataDir, "ingestions"), Logger: log.New(io.Discard, "", 0),
@@ -173,7 +182,7 @@ func TestCreationYAMLPreviewUsesCanonicalSerializer(t *testing.T) {
 		t.Fatal(err)
 	}
 	form := url.Values{"source_type": {"csv"}, "csv_url": {"https://example.com/customers.csv"}, "table_name": {"customers"}, "schedule": {"0 6 * * *"},
-		"runtime_engine": {"ingestr"}, "runtime_orchestrator": {"direct"}}
+		"runtime_engine": {"ingestr"}, "runtime_orchestrator": {"direct"}, "destination_ref": {"preview"}}
 	request := httptest.NewRequest(http.MethodPost, "/ingestions/preview", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
@@ -187,7 +196,7 @@ func TestCreationYAMLPreviewUsesCanonicalSerializer(t *testing.T) {
 	}
 	want, err := spec.Marshal(spec.FromLegacy(ingestion.Ingestion{
 		Name: "customers", Schedule: "0 6 * * *", Source: ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
-		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "customers"},
+		Destination: ingestion.Destination{Ref: "preview", Type: "duckdb", Path: configuredDestination, Table: "customers"},
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -203,6 +212,46 @@ func TestCreationYAMLPreviewUsesCanonicalSerializer(t *testing.T) {
 	}
 	if !strings.Contains(page.Body.String(), `name="runtime_engine"`) || !strings.Contains(page.Body.String(), `name="runtime_orchestrator"`) {
 		t.Fatalf("runtime selectors are missing: %s", page.Body.String())
+	}
+	if !strings.Contains(page.Body.String(), `name="destination_ref"`) || strings.Contains(page.Body.String(), `name="destination_path"`) {
+		t.Fatalf("destination controls are missing: %s", page.Body.String())
+	}
+}
+
+func TestDestinationsPageSavesSQLiteDestination(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	defaultPath := filepath.Join(dataDir, "pompos.duckdb")
+	metadata, err := store.Open(ctx, filepath.Join(dataDir, "pompos.sqlite"), defaultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer metadata.Close()
+	app, err := New(App{
+		Store: metadata, Secrets: metadata.Secrets(), Destinations: metadata,
+		Validator:   validatorFunc(func(context.Context, ingestion.Source) error { return nil }),
+		Destination: ingestion.Destination{Ref: "local-duckdb", Type: "duckdb", Path: defaultPath},
+		SpecDir:     filepath.Join(dataDir, "ingestions"), Logger: log.New(io.Discard, "", 0),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"name": {"warehouse"}, "type": {"duckdb"}, "path": {filepath.Join(dataDir, "warehouse.duckdb")}}
+	request := httptest.NewRequest(http.MethodPost, "/destinations", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/destinations?saved=1" {
+		t.Fatalf("status = %d, location = %q, body = %s", response.Code, response.Header().Get("Location"), response.Body.String())
+	}
+	stored, err := metadata.GetDestination(ctx, "warehouse")
+	if err != nil || stored.Path != filepath.Join(dataDir, "warehouse.duckdb") {
+		t.Fatalf("destination = %#v, error = %v", stored, err)
+	}
+	page := httptest.NewRecorder()
+	app.Handler().ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/destinations", nil))
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "warehouse") || !strings.Contains(page.Body.String(), "local-duckdb") {
+		t.Fatalf("destinations page = %d, body = %s", page.Code, page.Body.String())
 	}
 }
 
