@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -193,7 +192,7 @@ func TestCreationYAMLPreviewUsesCanonicalSerializer(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &preview); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusOK || preview.Error != "" || len(preview.Documents) != 1 {
+	if response.Code != http.StatusOK || preview.Error != "" || preview.YAML == "" {
 		t.Fatalf("status = %d, preview = %#v", response.Code, preview)
 	}
 	want, err := spec.Marshal(spec.FromLegacy(ingestion.Ingestion{
@@ -204,8 +203,8 @@ func TestCreationYAMLPreviewUsesCanonicalSerializer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if preview.Documents[0].YAML != string(want) {
-		t.Fatalf("preview =\n%s\nwant:\n%s", preview.Documents[0].YAML, want)
+	if preview.YAML != string(want) {
+		t.Fatalf("preview =\n%s\nwant:\n%s", preview.YAML, want)
 	}
 
 	page := httptest.NewRecorder()
@@ -240,18 +239,13 @@ func TestColumnPreviewUsesSamplesAndSavedGitHubSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	var inspected []ingestion.Source
-	var inspectedMu sync.Mutex
 	app, err := New(App{
 		Store: metadata, Secrets: metadata.Secrets(), Validator: validatorFunc(func(context.Context, ingestion.Source) error { return nil }),
 		Inspector: inspectorFunc(func(_ context.Context, source ingestion.Source) ([]string, error) {
-			inspectedMu.Lock()
 			inspected = append(inspected, source)
-			inspectedMu.Unlock()
 			switch source.Table {
 			case "issues":
 				return []string{"id", "title", "updated_at"}, nil
-			case "pull_requests":
-				return []string{"id", "title", "merged_at"}, nil
 			default:
 				return []string{"id", "name"}, nil
 			}
@@ -276,7 +270,7 @@ func TestColumnPreviewUsesSamplesAndSavedGitHubSecret(t *testing.T) {
 	}
 
 	githubResponse := httptest.NewRecorder()
-	githubForm := url.Values{"source_type": {"github"}, "repository": {"openai/codex"}, "secret_key": {"github-production"}, "tables": {"issues", "pull_requests"}}
+	githubForm := url.Values{"source_type": {"github"}, "repository": {"openai/codex"}, "secret_key": {"github-production"}, "source_table": {"issues"}}
 	githubRequest := httptest.NewRequest(http.MethodPost, "/sources/columns", strings.NewReader(githubForm.Encode()))
 	githubRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	app.Handler().ServeHTTP(githubResponse, githubRequest)
@@ -284,12 +278,10 @@ func TestColumnPreviewUsesSamplesAndSavedGitHubSecret(t *testing.T) {
 	if err := json.Unmarshal(githubResponse.Body.Bytes(), &githubPreview); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(githubPreview.Columns, ",") != "id,title" || githubPreview.Scope != "all 2 selected GitHub tables" || githubPreview.Error != "" {
+	if strings.Join(githubPreview.Columns, ",") != "id,title,updated_at" || githubPreview.Scope != "Issues" || githubPreview.Error != "" {
 		t.Fatalf("GitHub preview = %#v", githubPreview)
 	}
-	inspectedMu.Lock()
-	defer inspectedMu.Unlock()
-	if len(inspected) != 3 || inspected[1].AccessToken != "saved-token" || inspected[2].AccessToken != "saved-token" {
+	if len(inspected) != 2 || inspected[1].AccessToken != "saved-token" {
 		t.Fatalf("inspected sources = %#v", inspected)
 	}
 	if strings.Contains(githubResponse.Body.String(), "saved-token") {
@@ -394,7 +386,7 @@ func TestRunAgainOnlyEnqueuesDurableWork(t *testing.T) {
 	}
 }
 
-func TestCreateGitHubIngestionsForSelectedTables(t *testing.T) {
+func TestCreateGitHubIngestionForSelectedTable(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
 	destination := filepath.Join(dataDir, "pompos.duckdb")
@@ -419,9 +411,14 @@ func TestCreateGitHubIngestionsForSelectedTables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	page := httptest.NewRecorder()
+	app.Handler().ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/ingestions/new?source=github", nil))
+	if page.Code != http.StatusOK || strings.Count(page.Body.String(), `type="radio" name="source_table"`) != len(githubTableOptions) || strings.Contains(page.Body.String(), `name="tables"`) {
+		t.Fatalf("GitHub table choice is not singular: status = %d, body = %s", page.Code, page.Body.String())
+	}
 	form := url.Values{
 		"source_type": {"github"}, "repository": {"https://github.com/OpenAI/codex"},
-		"new_secret_name": {"github-codex"}, "access_token": {"github_pat_secret"}, "tables": {"issues", "stargazers"},
+		"new_secret_name": {"github-codex"}, "access_token": {"github_pat_secret"}, "source_table": {"issues"},
 	}
 	request := httptest.NewRequest(http.MethodPost, "/ingestions", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -430,8 +427,8 @@ func TestCreateGitHubIngestionsForSelectedTables(t *testing.T) {
 	if response.Code != http.StatusSeeOther {
 		t.Fatalf("POST status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if len(schedules.enqueued) != 2 {
-		t.Fatalf("queued runs = %d, want 2", len(schedules.enqueued))
+	if len(schedules.enqueued) != 1 {
+		t.Fatalf("queued runs = %d, want 1", len(schedules.enqueued))
 	}
 	first, err := metadata.Get(ctx, schedules.enqueued[0])
 	if err != nil {
@@ -441,16 +438,8 @@ func TestCreateGitHubIngestionsForSelectedTables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := metadata.Get(ctx, schedules.enqueued[1])
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err = app.hydrate(second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Destination.Table != "openai_codex_issues" || second.Destination.Table != "openai_codex_stargazers" {
-		t.Fatalf("destination tables = %q, %q", first.Destination.Table, second.Destination.Table)
+	if first.Destination.Table != "openai_codex_issues" {
+		t.Fatalf("destination table = %q", first.Destination.Table)
 	}
 	stored := first
 	if stored.Source.AccessToken != "" || stored.Source.SecretKey != "github-codex" || stored.Source.Table != "issues" {
@@ -466,6 +455,21 @@ func TestCreateGitHubIngestionsForSelectedTables(t *testing.T) {
 	}
 	if strings.Contains(string(specContent), "github_pat_secret") {
 		t.Fatal("GitHub token was written to the ingestion spec")
+	}
+
+	multiple := url.Values{
+		"source_type": {"github"}, "repository": {"openai/codex"}, "secret_key": {"github-codex"},
+		"source_table": {"issues", "stargazers"},
+	}
+	multipleRequest := httptest.NewRequest(http.MethodPost, "/ingestions", strings.NewReader(multiple.Encode()))
+	multipleRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	multipleResponse := httptest.NewRecorder()
+	app.Handler().ServeHTTP(multipleResponse, multipleRequest)
+	if multipleResponse.Code != http.StatusUnprocessableEntity || !strings.Contains(multipleResponse.Body.String(), "choose exactly one GitHub table") {
+		t.Fatalf("multiple-table status = %d, body = %s", multipleResponse.Code, multipleResponse.Body.String())
+	}
+	if len(schedules.enqueued) != 1 {
+		t.Fatalf("multiple-table request queued work: %#v", schedules.enqueued)
 	}
 }
 
@@ -499,7 +503,7 @@ func TestCreateGitHubIngestionUsesSelectedSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	form := url.Values{"source_type": {"github"}, "repository": {"openai/codex"}, "secret_key": {"github-codex"}, "tables": {"issues"}}
+	form := url.Values{"source_type": {"github"}, "repository": {"openai/codex"}, "secret_key": {"github-codex"}, "source_table": {"issues"}}
 	request := httptest.NewRequest(http.MethodPost, "/ingestions", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
@@ -527,7 +531,7 @@ func TestCreateGitHubIngestionRequiresExplicitCredentialChoice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	form := url.Values{"source_type": {"github"}, "repository": {"openai/codex"}, "tables": {"issues"}}
+	form := url.Values{"source_type": {"github"}, "repository": {"openai/codex"}, "source_table": {"issues"}}
 	request := httptest.NewRequest(http.MethodPost, "/ingestions", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()

@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
@@ -231,20 +230,15 @@ func (a *App) createIngestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.FormValue("source_type") == "github" {
-		a.createGitHubIngestions(w, r)
+		a.createGitHubIngestion(w, r)
 		return
 	}
 	a.createCSVIngestion(w, r)
 }
 
-type yamlPreviewDocument struct {
-	Name string `json:"name"`
-	YAML string `json:"yaml"`
-}
-
 type yamlPreviewResponse struct {
-	Documents []yamlPreviewDocument `json:"documents,omitempty"`
-	Error     string                `json:"error,omitempty"`
+	YAML  string `json:"yaml,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
 type columnPreviewResponse struct {
@@ -281,16 +275,10 @@ func (a *App) previewSourceColumns(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: err.Error()})
 		return
 	}
-	tables := uniqueStrings(r.Form["tables"])
-	if len(tables) == 0 {
-		_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: "Choose a GitHub table to discover its columns."})
+	table, err := githubSourceTable(r)
+	if err != nil {
+		_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: err.Error()})
 		return
-	}
-	for _, table := range tables {
-		if !isGitHubTable(table) {
-			_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: "Choose a supported GitHub table to discover columns."})
-			return
-		}
 	}
 	secretKey := strings.TrimSpace(r.FormValue("secret_key"))
 	accessToken := strings.TrimSpace(r.FormValue("access_token"))
@@ -315,47 +303,15 @@ func (a *App) previewSourceColumns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type sampleResult struct {
-		index   int
-		columns []string
-		err     error
-	}
-	results := make(chan sampleResult, len(tables))
-	for index, table := range tables {
-		go func() {
-			columns, inspectErr := a.Inspector.Columns(r.Context(), ingestion.Source{
-				Type: "github", Owner: owner, Repository: repository, Table: table, AccessToken: accessToken,
-			})
-			results <- sampleResult{index: index, columns: columns, err: inspectErr}
-		}()
-	}
-	samples := make([]sampleResult, len(tables))
-	for range tables {
-		result := <-results
-		samples[result.index] = result
-	}
-	var common []string
-	for index, sample := range samples {
-		if sample.err != nil {
-			_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: fmt.Sprintf("%s: %v", githubTableName(tables[index]), sample.err)})
-			return
-		}
-		if common == nil {
-			common = append([]string(nil), sample.columns...)
-		} else {
-			common = intersectStrings(common, sample.columns)
-		}
-	}
-	if len(common) == 0 {
-		_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: "The selected tables do not share any sampled columns. Choose one table or enter keys manually."})
+	columns, err := a.Inspector.Columns(r.Context(), ingestion.Source{
+		Type: "github", Owner: owner, Repository: repository, Table: table, AccessToken: accessToken,
+	})
+	if err != nil {
+		_ = json.NewEncoder(w).Encode(columnPreviewResponse{Error: fmt.Sprintf("%s: %v", githubTableName(table), err)})
 		return
 	}
-	scope := githubTableName(tables[0])
-	if len(tables) > 1 {
-		scope = fmt.Sprintf("all %d selected GitHub tables", len(tables))
-	}
-	a.Logger.Printf("GitHub columns discovered repository=%s/%s tables=%s columns=%d", owner, repository, strings.Join(tables, ","), len(common))
-	_ = json.NewEncoder(w).Encode(columnPreviewResponse{Columns: common, Scope: scope})
+	a.Logger.Printf("GitHub columns discovered repository=%s/%s table=%s columns=%d", owner, repository, table, len(columns))
+	_ = json.NewEncoder(w).Encode(columnPreviewResponse{Columns: columns, Scope: githubTableName(table)})
 }
 
 func (a *App) previewIngestionYAML(w http.ResponseWriter, r *http.Request) {
@@ -364,7 +320,7 @@ func (a *App) previewIngestionYAML(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(yamlPreviewResponse{Error: "Could not read the form."})
 		return
 	}
-	var items []ingestion.Ingestion
+	var item ingestion.Ingestion
 	schedule := strings.TrimSpace(r.FormValue("schedule"))
 	materialization, err := materializationFromForm(r)
 	if err != nil {
@@ -395,38 +351,33 @@ func (a *App) previewIngestionYAML(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(yamlPreviewResponse{Error: "Choose a saved secret or give the new token a secret name."})
 			return
 		}
-		for _, sourceTable := range r.Form["tables"] {
-			items = append(items, ingestion.Ingestion{
-				Name: owner + "/" + repository + " · " + githubTableName(sourceTable), Schedule: schedule,
-				Source:          ingestion.Source{Type: "github", Owner: owner, Repository: repository, Table: sourceTable, SecretKey: secretRef},
-				Destination:     ingestion.Destination{Ref: destination.Ref, Type: destination.Type, Path: destination.Path, Table: safeTableName(owner + "_" + repository + "_" + sourceTable)},
-				Runtime:         runtime,
-				Materialization: materialization,
-			})
-		}
-		if len(items) == 0 {
-			_ = json.NewEncoder(w).Encode(yamlPreviewResponse{Error: "Choose at least one table to preview."})
+		sourceTable, err := githubSourceTable(r)
+		if err != nil {
+			_ = json.NewEncoder(w).Encode(yamlPreviewResponse{Error: err.Error()})
 			return
 		}
+		item = ingestion.Ingestion{
+			Name: owner + "/" + repository + " · " + githubTableName(sourceTable), Schedule: schedule,
+			Source:          ingestion.Source{Type: "github", Owner: owner, Repository: repository, Table: sourceTable, SecretKey: secretRef},
+			Destination:     ingestion.Destination{Ref: destination.Ref, Type: destination.Type, Path: destination.Path, Table: safeTableName(owner + "_" + repository + "_" + sourceTable)},
+			Runtime:         runtime,
+			Materialization: materialization,
+		}
 	} else {
-		items = []ingestion.Ingestion{{
+		item = ingestion.Ingestion{
 			Name: strings.TrimSpace(r.FormValue("table_name")), Schedule: schedule,
 			Source:          ingestion.Source{Type: "csv", URL: strings.TrimSpace(r.FormValue("csv_url"))},
 			Destination:     ingestion.Destination{Ref: destination.Ref, Type: destination.Type, Path: destination.Path, Table: strings.TrimSpace(r.FormValue("table_name"))},
 			Runtime:         runtime,
 			Materialization: materialization,
-		}}
-	}
-	response := yamlPreviewResponse{Documents: make([]yamlPreviewDocument, 0, len(items))}
-	for _, item := range items {
-		data, err := spec.Marshal(spec.FromLegacy(item))
-		if err != nil {
-			_ = json.NewEncoder(w).Encode(yamlPreviewResponse{Error: err.Error()})
-			return
 		}
-		response.Documents = append(response.Documents, yamlPreviewDocument{Name: item.Name, YAML: string(data)})
 	}
-	_ = json.NewEncoder(w).Encode(response)
+	data, err := spec.Marshal(spec.FromLegacy(item))
+	if err != nil {
+		_ = json.NewEncoder(w).Encode(yamlPreviewResponse{Error: err.Error()})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(yamlPreviewResponse{YAML: string(data)})
 }
 
 func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
@@ -498,36 +449,37 @@ func (a *App) createCSVIngestion(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/ingestions/"+item.ID+"?run=queued", http.StatusSeeOther)
 }
 
-func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
+func (a *App) createGitHubIngestion(w http.ResponseWriter, r *http.Request) {
 	repositoryInput := strings.TrimSpace(r.FormValue("repository"))
+	selectedTable := strings.TrimSpace(r.FormValue("source_table"))
 	schedule := strings.TrimSpace(r.FormValue("schedule"))
 	materialization, materializationErr := materializationFromForm(r)
 	if materializationErr != nil {
-		a.renderGitHubError(w, r, materializationErr.Error(), repositoryInput, r.Form["tables"], r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
+		a.renderGitHubError(w, r, materializationErr.Error(), repositoryInput, selectedTable, r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
 		return
 	}
 	destination, destinationErr := a.destinationFromForm(r)
 	if destinationErr != nil {
-		a.renderGitHubError(w, r, destinationErr.Error(), repositoryInput, r.Form["tables"], r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
+		a.renderGitHubError(w, r, destinationErr.Error(), repositoryInput, selectedTable, r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
 		return
 	}
 	runtime, runtimeErr := runtimeFromForm(r)
 	if runtimeErr != nil {
-		a.renderGitHubError(w, r, runtimeErr.Error(), repositoryInput, r.Form["tables"], r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
+		a.renderGitHubError(w, r, runtimeErr.Error(), repositoryInput, selectedTable, r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
 		return
 	}
 	owner, repository, err := validation.ParseGitHubRepository(repositoryInput)
 	if err != nil {
-		a.renderGitHubError(w, r, err.Error(), repositoryInput, r.Form["tables"], r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
+		a.renderGitHubError(w, r, err.Error(), repositoryInput, selectedTable, r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
 		return
 	}
-	selectedTables := r.Form["tables"]
-	if len(selectedTables) == 0 {
-		a.renderGitHubError(w, r, "Choose at least one table to sync.", repositoryInput, nil, r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
+	selectedTable, err = githubSourceTable(r)
+	if err != nil {
+		a.renderGitHubError(w, r, err.Error(), repositoryInput, selectedTable, r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
 		return
 	}
 	if err := a.Scheduler.Validate(schedule); err != nil {
-		a.renderGitHubError(w, r, err.Error(), repositoryInput, selectedTables, r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
+		a.renderGitHubError(w, r, err.Error(), repositoryInput, selectedTable, r.FormValue("secret_key"), r.FormValue("new_secret_name"), schedule)
 		return
 	}
 
@@ -535,15 +487,15 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 	newSecretName := strings.TrimSpace(r.FormValue("new_secret_name"))
 	accessToken := strings.TrimSpace(r.FormValue("access_token"))
 	if secretKey != "" && (newSecretName != "" || accessToken != "") {
-		a.renderGitHubError(w, r, "Choose a saved secret or enter a new one, not both.", repositoryInput, selectedTables, secretKey, newSecretName, schedule)
+		a.renderGitHubError(w, r, "Choose a saved secret or enter a new one, not both.", repositoryInput, selectedTable, secretKey, newSecretName, schedule)
 		return
 	}
 	if secretKey == "" && accessToken == "" {
-		a.renderGitHubError(w, r, "Select a saved secret or enter a new token.", repositoryInput, selectedTables, "", newSecretName, schedule)
+		a.renderGitHubError(w, r, "Select a saved secret or enter a new token.", repositoryInput, selectedTable, "", newSecretName, schedule)
 		return
 	}
 	if accessToken != "" && newSecretName == "" {
-		a.renderGitHubError(w, r, "Give the new token a secret name.", repositoryInput, selectedTables, "", "", schedule)
+		a.renderGitHubError(w, r, "Give the new token a secret name.", repositoryInput, selectedTable, "", "", schedule)
 		return
 	}
 	newSecret := secretKey == ""
@@ -552,7 +504,7 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 	} else {
 		stored, err := a.Secrets.Get(r.Context(), secretKey)
 		if errors.Is(err, secrets.ErrNotFound) {
-			a.renderGitHubError(w, r, "The selected secret no longer exists.", repositoryInput, selectedTables, "", "", schedule)
+			a.renderGitHubError(w, r, "The selected secret no longer exists.", repositoryInput, selectedTable, "", "", schedule)
 			return
 		}
 		if err != nil {
@@ -568,16 +520,16 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 		AccessToken: accessToken,
 		SecretKey:   secretKey,
 	}
-	a.Logger.Printf("GitHub ingestion requested repository=%s/%s tables=%s token_provided=%t",
-		owner, repository, strings.Join(selectedTables, ","), newSecret)
+	a.Logger.Printf("GitHub ingestion requested repository=%s/%s table=%s token_provided=%t",
+		owner, repository, selectedTable, newSecret)
 	validationSource := baseSource
-	if slices.Contains(selectedTables, "stargazers") {
+	if selectedTable == "stargazers" {
 		validationSource.Table = "stargazers"
 	}
 	a.Logger.Printf("validating GitHub repository repository=%s/%s stargazers=%t", owner, repository, validationSource.Table == "stargazers")
 	if err := a.Validator.Validate(r.Context(), validationSource); err != nil {
 		a.Logger.Printf("GitHub repository validation failed repository=%s/%s error=%q", owner, repository, err)
-		a.renderGitHubError(w, r, err.Error(), repositoryInput, selectedTables, selectedSecretKey(secretKey, newSecret), newSecretName, schedule)
+		a.renderGitHubError(w, r, err.Error(), repositoryInput, selectedTable, selectedSecretKey(secretKey, newSecret), newSecretName, schedule)
 		return
 	}
 	a.Logger.Printf("GitHub repository validation succeeded repository=%s/%s", owner, repository)
@@ -591,43 +543,35 @@ func (a *App) createGitHubIngestions(w http.ResponseWriter, r *http.Request) {
 		a.Logger.Printf("using selected GitHub token repository=%s/%s secret_key=%s", owner, repository, secretKey)
 	}
 
-	items := make([]ingestion.Ingestion, 0, len(selectedTables))
-	for _, sourceTable := range selectedTables {
-		source := baseSource
-		source.Table = sourceTable
-		item := ingestion.Ingestion{
-			ID:              newID(),
-			Name:            owner + "/" + repository + " · " + githubTableName(sourceTable),
-			Status:          ingestion.StatusPending,
-			Schedule:        schedule,
-			Runtime:         runtime,
-			Materialization: materialization,
-			Source:          source,
-			Destination: ingestion.Destination{
-				Ref:   destination.Ref,
-				Type:  destination.Type,
-				Path:  destination.Path,
-				Table: safeTableName(owner + "_" + repository + "_" + sourceTable),
-			},
-		}
-		if _, err := a.compile(spec.FromLegacy(item)); err != nil {
-			a.Logger.Printf("validation failed ingestion_id=%s source=github source_table=%s error=%q", item.ID, sourceTable, err)
-			a.renderGitHubError(w, r, err.Error(), repositoryInput, selectedTables, selectedSecretKey(secretKey, newSecret), newSecretName, schedule)
-			return
-		}
-		a.Logger.Printf("prepared GitHub ingestion ingestion_id=%s source_table=%s destination_table=%s",
-			item.ID, item.Source.Table, item.Destination.Table)
-		items = append(items, item)
+	source := baseSource
+	source.Table = selectedTable
+	item := ingestion.Ingestion{
+		ID:              newID(),
+		Name:            owner + "/" + repository + " · " + githubTableName(selectedTable),
+		Status:          ingestion.StatusPending,
+		Schedule:        schedule,
+		Runtime:         runtime,
+		Materialization: materialization,
+		Source:          source,
+		Destination: ingestion.Destination{
+			Ref:   destination.Ref,
+			Type:  destination.Type,
+			Path:  destination.Path,
+			Table: safeTableName(owner + "_" + repository + "_" + selectedTable),
+		},
 	}
-	for index, item := range items {
-		a.Logger.Printf("queueing selected GitHub table ingestion_id=%s source_table=%s position=%d total=%d",
-			item.ID, item.Source.Table, index+1, len(items))
-		if err := a.persistAndEnqueue(r.Context(), item); err != nil {
-			a.serverError(w, err)
-			return
-		}
+	if _, err := a.compile(spec.FromLegacy(item)); err != nil {
+		a.Logger.Printf("validation failed ingestion_id=%s source=github source_table=%s error=%q", item.ID, selectedTable, err)
+		a.renderGitHubError(w, r, err.Error(), repositoryInput, selectedTable, selectedSecretKey(secretKey, newSecret), newSecretName, schedule)
+		return
 	}
-	http.Redirect(w, r, "/ingestions/"+items[0].ID+"?run=queued", http.StatusSeeOther)
+	a.Logger.Printf("prepared GitHub ingestion ingestion_id=%s source_table=%s destination_table=%s",
+		item.ID, item.Source.Table, item.Destination.Table)
+	if err := a.persistAndEnqueue(r.Context(), item); err != nil {
+		a.serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/ingestions/"+item.ID+"?run=queued", http.StatusSeeOther)
 }
 
 func (a *App) persistAndEnqueue(ctx context.Context, item ingestion.Ingestion) error {
@@ -881,14 +825,12 @@ func (a *App) compile(document spec.Ingestion) (compiler.ExecutionPlan, error) {
 	return compiler.Compile(document, compiler.LocalDuckDB(a.Destination.Path))
 }
 
-func (a *App) renderGitHubError(w http.ResponseWriter, r *http.Request, message, repository string, selected []string, secretKey, newSecretName, schedule string) {
-	selectedSet := make(map[string]bool, len(selected))
-	for _, table := range selected {
-		selectedSet[table] = true
-	}
+func (a *App) renderGitHubError(w http.ResponseWriter, r *http.Request, message, repository, selected, secretKey, newSecretName, schedule string) {
 	tables := append([]githubTableOption(nil), githubTableOptions...)
-	for index := range tables {
-		tables[index].Checked = selectedSet[tables[index].Value]
+	if selected != "" {
+		for index := range tables {
+			tables[index].Checked = tables[index].Value == selected
+		}
 	}
 	a.renderNew(w, http.StatusUnprocessableEntity, newPageData{
 		Source: "github", Error: message, Repository: repository, GitHubTables: tables,
@@ -1149,42 +1091,23 @@ func isGitHubTable(value string) bool {
 	return false
 }
 
+func githubSourceTable(r *http.Request) (string, error) {
+	values := r.Form["source_table"]
+	if len(values) != 1 {
+		return "", errors.New("choose exactly one GitHub table")
+	}
+	table := strings.TrimSpace(values[0])
+	if !isGitHubTable(table) {
+		return table, errors.New("choose a supported GitHub table")
+	}
+	return table, nil
+}
+
 func selectedSecretKey(secretKey string, newSecret bool) string {
 	if newSecret {
 		return ""
 	}
 	return secretKey
-}
-
-func uniqueStrings(values []string) []string {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}
-
-func intersectStrings(left, right []string) []string {
-	rightSet := make(map[string]struct{}, len(right))
-	for _, value := range right {
-		rightSet[value] = struct{}{}
-	}
-	result := make([]string, 0, len(left))
-	for _, value := range left {
-		if _, exists := rightSet[value]; exists {
-			result = append(result, value)
-		}
-	}
-	return result
 }
 
 type noopScheduleManager struct{}

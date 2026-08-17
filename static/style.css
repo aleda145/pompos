@@ -45,7 +45,6 @@ form.panel button { justify-self: start; margin-top: .5rem; }
 .yaml-preview .hint { margin-top: .55rem; }
 .yaml-preview .yaml-code { margin-top: .7rem; border-radius: .55rem; max-height: 30rem; }
 .yaml-preview-empty { margin: .75rem 0 0; color: #617066; font-size: .86rem; }
-.yaml-document-name { margin-top: 1rem; color: #526158; font-size: .78rem; font-weight: 800; }
 .details section { border-bottom: 1px solid #edf0eb; padding-bottom: 1rem; }
 .details section:last-child { border: 0; padding-bottom: 0; }
 .details p { margin: 0; }

@@ -165,12 +165,12 @@
   </details>
 
   <fieldset>
-    <legend>Tables to sync</legend>
-    <p class="hint">Choose one or more. Each becomes a separate DuckDB table.</p>
+    <legend>Table to sync</legend>
+    <p class="hint">One ingestion maps one GitHub table to one destination table.</p>
     <div class="table-options">
       {{range .GitHubTables}}
       <label class="check-card">
-        <input type="checkbox" name="tables" value="{{.Value}}" {{if .Checked}}checked{{end}}>
+        <input type="radio" name="source_table" value="{{.Value}}" {{if .Checked}}checked{{end}} required>
         <span><strong>{{.Name}}</strong><small>{{.Description}}</small></span>
       </label>
       {{end}}
@@ -182,7 +182,7 @@
     <select id="destination_ref" name="destination_ref" required>
       {{range .Destinations}}<option value="{{.Name}}" {{if eq $.DestinationRef .Name}}selected{{end}}>{{.Name}} · {{.Type}}</option>{{end}}
     </select>
-    <p class="hint">Selected tables are written to this destination. Manage paths from <a href="/destinations">Destinations</a>.</p>
+    <p class="hint">The selected table is written to this destination. Manage paths from <a href="/destinations">Destinations</a>.</p>
   </fieldset>
   <fieldset class="loading-options" data-loading-options>
     <legend>Loading</legend>
@@ -235,11 +235,11 @@
   </fieldset>
   <label for="schedule">Schedule <span class="optional">Optional</span></label>
   <input id="schedule" name="schedule" value="{{.Schedule}}" placeholder="0 6 * * *" autocomplete="off">
-  <p class="hint">Standard five-field cron in UTC. The same schedule applies to every selected table.</p>
-  <button type="submit">Create and run selected tables</button>
+  <p class="hint">Standard five-field cron in UTC.</p>
+  <button type="submit">Create and run</button>
   <section class="yaml-preview" data-yaml-preview>
     <h2>YAML</h2>
-    <p class="hint">One canonical file is created for each selected table. Credential values are never included.</p>
+    <p class="hint">The canonical file Pompos will create. Credential values are never included.</p>
     <div data-yaml-output><p class="yaml-preview-empty">Generating preview…</p></div>
   </section>
 </form>
@@ -337,11 +337,11 @@
         return {sourceType, signature: url.value.trim()};
       }
       const repository = form.querySelector('[name="repository"]')?.value.trim();
-      const tables = [...form.querySelectorAll('[name="tables"]:checked')].map(input => input.value);
+      const table = form.querySelector('[name="source_table"]:checked')?.value;
       const secret = form.querySelector('[name="secret_key"]')?.value;
       const token = form.querySelector('[name="access_token"]')?.value.trim();
-      if (!repository || !repository.includes('/') || tables.length === 0 || (!secret && !token)) return null;
-      return {sourceType, signature: JSON.stringify([repository, tables, secret, token])};
+      if (!repository || !repository.includes('/') || !table || (!secret && !token)) return null;
+      return {sourceType, signature: JSON.stringify([repository, table, secret, token])};
     };
     const discoverColumns = async () => {
       const details = discoveryDetails();
@@ -388,7 +388,7 @@
       clearTimeout(discoveryTimer);
       discoveryTimer = setTimeout(discoverColumns, 600);
     };
-    const discoveryControls = form.querySelectorAll('[name="csv_url"], [name="repository"], [name="tables"], [name="secret_key"], [name="access_token"]');
+    const discoveryControls = form.querySelectorAll('[name="csv_url"], [name="repository"], [name="source_table"], [name="secret_key"], [name="access_token"]');
     discoveryControls.forEach(control => {
       control.addEventListener('input', queueColumnDiscovery);
       control.addEventListener('change', queueColumnDiscovery);
@@ -413,20 +413,12 @@
           output.append(error);
           return;
         }
-        result.documents.forEach((documentPreview, index) => {
-          if (result.documents.length > 1) {
-            const name = document.createElement('div');
-            name.className = 'yaml-document-name';
-            name.textContent = documentPreview.name;
-            output.append(name);
-          }
-          const pre = document.createElement('pre');
-          pre.className = 'yaml-code';
-          const code = document.createElement('code');
-          code.textContent = documentPreview.yaml;
-          pre.append(code);
-          output.append(pre);
-        });
+        const pre = document.createElement('pre');
+        pre.className = 'yaml-code';
+        const code = document.createElement('code');
+        code.textContent = result.yaml;
+        pre.append(code);
+        output.append(pre);
       } catch (_) {
         output.innerHTML = '<p class="yaml-preview-empty">Could not generate the preview.</p>';
       }
