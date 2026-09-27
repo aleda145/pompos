@@ -78,6 +78,9 @@ func (a *App) chatTurn(w http.ResponseWriter, r *http.Request) {
 	}{publicSession(v), message})
 }
 func publicSession(v agent.Session) agent.Session {
+	if v.Loading == nil {
+		v.Ready = false
+	}
 	visible := []agent.Message{}
 	for _, m := range v.Messages {
 		if m.Role != "system" {
@@ -123,6 +126,9 @@ func (a *App) publishChat(w http.ResponseWriter, r *http.Request) {
 		}
 		path := filepath.Join(a.SpecDir, id+".yaml")
 		item := spec.ToProjection(doc, id, path, spec.Digest(data), a.Destination.Path)
+		if err := a.Scheduler.Validate(item.Schedule); err != nil {
+			return err
+		}
 		if _, e = a.Store.Get(r.Context(), id); e == nil {
 			return nil
 		} else if !errors.Is(e, store.ErrNotFound) {

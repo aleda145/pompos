@@ -20,6 +20,7 @@ type Action struct {
 	Message string `json:"message"`
 }
 type Handoff struct {
+	Loading    *Loading `json:"loading,omitempty"`
 	ID         string   `json:"id"`
 	Kind       string   `json:"kind"`
 	Prompt     string   `json:"prompt"`
@@ -27,9 +28,10 @@ type Handoff struct {
 	Actions    []Action `json:"actions"`
 }
 type Input struct {
-	Message   string `json:"message"`
-	ActionID  string `json:"action_id,omitempty"`
-	HandoffID string `json:"handoff_id,omitempty"`
+	Loading   *Loading `json:"loading,omitempty"`
+	Message   string   `json:"message"`
+	ActionID  string   `json:"action_id,omitempty"`
+	HandoffID string   `json:"handoff_id,omitempty"`
 }
 
 func askUser(v *Session, arguments string) (string, error) {

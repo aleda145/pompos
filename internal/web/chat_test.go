@@ -42,6 +42,9 @@ func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T)
 		case 1:
 			call.Function.Name = "test_script"
 		case 2:
+			call.Function.Name = "propose_loading"
+			call.Function.Arguments = `{"cron":"0 6 * * *","strategy":"replace","primary_key":[],"reason":"A daily snapshot keeps the current list up to date."}`
+		case 3:
 			call.Function.Name = "finish"
 		default:
 			m.Content = "Ready to save."
@@ -84,14 +87,35 @@ func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T)
 		t.Fatal("untested publish accepted")
 	}
 	w = request("POST", path, `{"message":"ingest fixture stars"}`, "application/json")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ready":true`) {
+	if w.Code != 200 {
 		t.Fatalf("turn: %d %s", w.Code, w.Body)
+	}
+	var reply struct {
+		Session agent.Session `json:"session"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil || reply.Session.Pending == nil || reply.Session.Pending.Kind != "loading" {
+		t.Fatalf("missing loading proposal: %s", w.Body)
+	}
+	if blocked := request("POST", path+"/publish", "", ""); blocked.Code != 422 {
+		t.Fatal("unconfirmed loading settings published")
+	}
+	accepted, _ := json.Marshal(agent.Input{ActionID: "accept_loading", HandoffID: reply.Session.Pending.ID, Loading: &agent.Loading{Cron: "0 * * * *", Strategy: "merge", PrimaryKey: []string{"id"}}})
+	w = request("POST", path, string(accepted), "application/json")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ready":true`) {
+		t.Fatalf("confirmation: %d %s", w.Code, w.Body)
 	}
 	w = request("POST", path+"/publish", "", "")
 	if w.Code != 303 {
 		t.Fatalf("publish: %d %s", w.Code, w.Body)
 	}
 	detail := w.Header().Get("Location")
+	initial, _, err := spec.Read(filepath.Join(app.SpecDir, strings.TrimPrefix(detail, "/ingestions/")+".yaml"))
+	if err != nil || initial.Schedule == nil || initial.Schedule.Cron != "0 * * * *" || initial.Schedule.Timezone != "UTC" || initial.Materialization.Strategy != "merge" || len(initial.Materialization.PrimaryKey) != 1 || initial.Materialization.PrimaryKey[0] != "id" {
+		t.Fatalf("confirmed loading lost: %#v %v", initial, err)
+	}
+	if schedules.item.Schedule != "0 * * * *" {
+		t.Fatal("schedule not registered on publish")
+	}
 	if len(schedules.enqueued) != 0 {
 		t.Fatal("publish prematurely queued full load")
 	}

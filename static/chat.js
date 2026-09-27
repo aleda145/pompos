@@ -7,7 +7,7 @@
   let lastInput = null;
   let activeCall = null;
   let handoffKey = '';
-  const toolNames = {context: 'Inspect connections', write_script: 'Write Python', test_script: 'Test source', finish: 'Check ingestion', ask_user: 'Request input'};
+  const toolNames = {context: 'Inspect connections', write_script: 'Write Python', test_script: 'Test source', finish: 'Check ingestion', ask_user: 'Request input', propose_loading: 'Suggest schedule & loading'};
 
   function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -89,6 +89,56 @@
     node.type = 'button'; node.addEventListener('click', action);
     return node;
   }
+  function loadingCard(pending) {
+    const options = pending.loading;
+    const container = element('div', 'loading-card');
+    const summary = element('dl', 'loading-summary');
+    for (const [label, text] of [
+      ['Schedule', options.cron ? `${options.cron} · UTC` : 'Manual only'],
+      ['Loading', options.strategy],
+      ['Row keys', options.primary_key?.join(', ') || 'None'],
+    ]) {
+      const row = element('div'); row.append(element('dt', '', label), element('dd', '', text)); summary.append(row);
+    }
+    container.append(summary);
+    const details = element('details', 'loading-adjust');
+    details.append(element('summary', '', 'Adjust schedule or loading'));
+    const form = element('form', 'loading-options');
+    const presetLabel = element('label', '', 'Frequency');
+    const preset = element('select');
+    const presets = [['', 'Manual only'], ['0 * * * *', 'Hourly'], ['0 6 * * *', 'Daily at 06:00 UTC'], ['0 6 * * 1', 'Mondays at 06:00 UTC'], ['custom', 'Custom cron']];
+    for (const [value, label] of presets) { const option = element('option', '', label); option.value = value; preset.append(option); }
+    preset.value = presets.some(([value]) => value === options.cron) ? options.cron : 'custom';
+    presetLabel.append(preset);
+    const cronLabel = element('label', '', 'Cron expression · UTC');
+    const cron = element('input'); cron.value = options.cron; cron.placeholder = 'Blank for manual runs'; cron.maxLength = 120; cron.autocomplete = 'off'; cronLabel.append(cron);
+    preset.addEventListener('change', () => { if (preset.value !== 'custom') cron.value = preset.value; else cron.focus(); });
+    cron.addEventListener('input', () => { preset.value = presets.some(([value]) => value === cron.value) ? cron.value : 'custom'; });
+    const strategyLabel = element('label', '', 'Loading strategy');
+    const strategy = element('select');
+    for (const [value, label] of [['replace', 'Replace — current snapshot'], ['append', 'Append — keep previous rows'], ['merge', 'Merge — update matching keys']]) { const option = element('option', '', label); option.value = value; strategy.append(option); }
+    strategy.value = options.strategy; strategyLabel.append(strategy);
+    const keysLabel = element('label', '', 'Row keys · comma-separated');
+    const keys = element('input'); keys.value = options.primary_key?.join(', ') || ''; keys.placeholder = 'e.g. id'; keys.maxLength = 500; keysLabel.append(keys);
+    const explanation = element('p', 'hint');
+    const updateStrategy = () => {
+      keys.required = strategy.value === 'merge';
+      explanation.textContent = {
+        replace: 'Replaces the destination table each run. Rows removed from the source disappear.',
+        append: 'Keeps existing rows and adds every extracted row. Repeated full extracts can create duplicates.',
+        merge: 'Updates or inserts by stable row keys. Rows missing from the source are not deleted.',
+      }[strategy.value];
+    };
+    strategy.addEventListener('change', updateStrategy); updateStrategy();
+    const submitButton = element('button', '', 'Use adjusted settings'); submitButton.type = 'submit';
+    form.append(presetLabel, cronLabel, strategyLabel, keysLabel, explanation, element('p', 'hint', 'Five cron fields: minute, hour, day, month, weekday. Saving enables the schedule; the first run occurs at its next scheduled time.'), submitButton);
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      submit({action_id: 'accept_loading', handoff_id: pending.id, loading: {cron: cron.value.trim(), strategy: strategy.value, primary_key: keys.value.split(',').map(value => value.trim()).filter(Boolean)}});
+    });
+    details.append(form); container.append(details);
+    return container;
+  }
   function renderHandoff() {
     const target = $('#handoff');
     if (busy || session.published_id || session.ready) { target.hidden = true; return; }
@@ -98,6 +148,7 @@
     handoffKey = key; target.replaceChildren();
     if (pending) {
       target.append(element('p', 'handoff-prompt', pending.prompt));
+      if (pending.kind === 'loading' && pending.loading) target.append(loadingCard(pending));
       if (pending.kind === 'secret') {
         const details = element('details', 'secret-entry');
         details.append(element('summary', '', `Add or update “${pending.secret_name}”`));
@@ -136,9 +187,10 @@
     renderLog(); renderHandoff();
     $('#chat-title').textContent = session.draft?.name || (session.messages?.length ? 'Ingestion session' : 'What do you want to bring in?');
     $('#draft').hidden = !session.draft;
-    $('#draft-target').textContent = session.draft ? `${session.draft.destination} / ${session.draft.table} · ${session.draft.strategy}` : '';
+    $('#draft-target').textContent = session.draft ? `${session.draft.destination} / ${session.draft.table} · ${session.draft.strategy} · ${session.draft.schedule ? `${session.draft.schedule} UTC` : 'manual'}` : '';
     $('#draft-code').textContent = session.draft?.code || '';
     $('#publish').hidden = busy || !session.ready || !!session.published_id;
+    $('#publish-status').textContent = session.loading?.cron ? `Source tested. Saving enables ${session.loading.cron} (UTC) · ${session.loading.strategy}.` : `Source tested. Manual runs · ${session.loading?.strategy || session.draft?.strategy || 'replace'}.`;
     $('#send').disabled = busy || !!session.published_id;
     $('#message').disabled = busy || !!session.published_id;
     $('#published').hidden = !session.published_id;

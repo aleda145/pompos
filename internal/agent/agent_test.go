@@ -68,6 +68,14 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 				t.Error("probe result missing")
 			}
 			name = "finish"
+		case 7:
+			if !strings.Contains(request.Messages[len(request.Messages)-1].Content, "propose_loading") {
+				t.Error("finish accepted unconfirmed loading settings")
+			}
+			name = "propose_loading"
+			args = `{"cron":"0 6 * * *","strategy":"replace","primary_key":[],"reason":"A daily current-state snapshot is sufficient; replace reflects removed stars."}`
+		case 8:
+			name = "finish"
 		default:
 			m.Content = "The source probe passed. Review and save."
 		}
@@ -88,7 +96,14 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if !v.Ready || v.TestedDigest == "" || step != 8 {
+	if v.Ready || v.Pending == nil || v.Pending.Kind != "loading" || v.Loading != nil {
+		t.Fatal("loading settings did not pause for confirmation")
+	}
+	v, e = service.TurnWithEvents(ctx, v.ID, Input{ActionID: "accept_loading", HandoffID: v.Pending.ID}, nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !v.Ready || v.TestedDigest == "" || step != 10 {
 		t.Fatalf("not ready: %#v, steps %d", v, step)
 	}
 	restarted := &Service{Dir: service.Dir, Secrets: db.Secrets(), Destinations: db}
@@ -106,6 +121,9 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 		roundtrip, e := spec.Parse(b)
 		if e != nil {
 			return e
+		}
+		if roundtrip.Schedule == nil || roundtrip.Schedule.Cron != "0 6 * * *" || roundtrip.Schedule.Timezone != "UTC" || roundtrip.Materialization.Strategy != "replace" {
+			t.Fatal("confirmed loading settings lost in YAML")
 		}
 		if roundtrip.Runtime.ScriptDigest != v.TestedDigest {
 			t.Fatal("lost script digest")

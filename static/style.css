@@ -192,3 +192,15 @@ button:disabled { opacity: .5; cursor: wait; }
 [hidden] { display: none !important; }
 @media (prefers-reduced-motion: reduce) { .activity.running .activity-dot { animation: none; } }
 @media (max-width: 560px) { .chat-heading { display: block; } .chat-heading a { display: inline-block; margin-bottom: .75rem; } .log-message { grid-template-columns: 2.5rem minmax(0, 1fr); gap: .5rem; } .activity { margin-left: 3rem; } .chat-handoff { padding-left: 0; } .inline-secret { grid-template-columns: 1fr; } .composer-footer span { display: none; } .composer-footer { justify-content: flex-end; } nav { flex-wrap: wrap; gap: .6rem; } }
+
+.loading-card { margin: .6rem 0; font-size: .82rem; }
+.loading-summary { margin: .4rem 0 .65rem; }
+.loading-summary div { grid-template-columns: 5rem minmax(0, 1fr); gap: .65rem; }
+.loading-summary dd { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.loading-adjust > summary { cursor: pointer; color: #245c3c; }
+.loading-options { display: grid; grid-template-columns: 1fr 1fr; gap: .65rem; margin-top: .75rem; padding: .8rem; background: #edf2ea; border-radius: .5rem; }
+.loading-options label { font-size: .76rem; margin: 0; }
+.loading-options input, .loading-options select { font-size: .82rem; padding: .55rem; margin-top: .3rem; }
+.loading-options .hint { grid-column: 1 / -1; margin: 0; }
+.loading-options button { justify-self: start; font-size: .8rem; padding: .5rem .75rem; grid-column: 1 / -1; }
+@media (max-width: 560px) { .loading-options { grid-template-columns: 1fr; } }

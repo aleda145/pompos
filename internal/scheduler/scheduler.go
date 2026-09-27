@@ -75,14 +75,19 @@ func New(logger *log.Logger, store Store, run RunFunc) (*Manager, error) {
 	return m, nil
 }
 
-func (m *Manager) Validate(expression string) error {
+// ValidateCron uses the same five-field UTC semantics as scheduled runs.
+func ValidateCron(expression string) error { return validateCron(expression, time.Now()) }
+
+func (m *Manager) Validate(expression string) error { return validateCron(expression, m.now()) }
+
+func validateCron(expression string, now time.Time) error {
 	if expression == "" {
 		return nil
 	}
 	if len(strings.Fields(expression)) != 5 {
 		return fmt.Errorf("invalid cron schedule: enter five fields (minute hour day-of-month month day-of-week)")
 	}
-	if _, err := nextRun(expression, m.now().UTC()); err != nil {
+	if _, err := nextRun(expression, now.UTC()); err != nil {
 		return fmt.Errorf("invalid cron schedule: %w", err)
 	}
 	return nil
