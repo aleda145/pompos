@@ -1,14 +1,21 @@
 {{define "content"}}
-<div class="page-heading"><div><p class="eyebrow">Ingest anything</p><h1>What do you want to bring in?</h1></div><a href="/settings/agent">Agent settings</a></div>
-<p class="hint">Describe one source table. The agent will investigate, write Python, and test a few rows with you before a full load.</p>
+<div class="chat-heading"><div><p class="eyebrow">Ingest anything</p><h1 id="chat-title">What do you want to bring in?</h1></div><a href="/settings/agent">Agent settings</a></div>
 <div id="chat" data-id="{{.Session.ID}}">
- <div id="messages" class="chat-messages" aria-live="polite">{{range .Session.Messages}}{{if ne .Role "system"}}{{if .Content}}<article class="chat-message {{.Role}}"><strong>{{if eq .Role "tool"}}Tool result{{else}}{{.Role}}{{end}}</strong><pre>{{.Content}}</pre></article>{{end}}{{end}}{{end}}</div>
+ <div id="chat-empty"><p>Describe a source. We’ll work through it together, test a few rows, and save a runnable ingestion.</p><button type="button" id="example" class="suggestion">Ingest GitHub stargazers →</button></div>
+ <div id="messages" class="chat-log" aria-label="Conversation"></div>
+ <div id="working" class="sr-only" role="status" aria-live="polite"></div>
+ <div id="handoff" class="chat-handoff" hidden></div>
  <div id="chat-error" class="error" role="alert" hidden></div>
- <form id="chat-form" class="panel"><label for="message">Your message</label><textarea id="message" rows="3" maxlength="16000" required placeholder="Ingest GitHub stargazers from https://github.com/aleda145/kavla"></textarea><div class="chat-actions"><button id="send" type="submit">Send</button><span id="working" class="hint" role="status"></span></div></form>
- <p class="hint">For API keys, add a <a href="/secrets" target="_blank" rel="noopener">managed secret</a>, then tell the agent its name. Keep this conversation URL to resume later.</p>
- <details id="draft" {{if not .Session.Draft}}hidden{{end}}><summary>Ingestion draft</summary><p id="draft-target">{{if .Session.Draft}}{{.Session.Draft.Source}} → {{.Session.Draft.Destination}} / {{.Session.Draft.Table}} · {{.Session.Draft.Strategy}}{{end}}</p><pre class="yaml-code"><code id="draft-code">{{if .Session.Draft}}{{.Session.Draft.Code}}{{end}}</code></pre></details>
- <form id="publish" class="panel" method="post" action="/chat/{{.Session.ID}}/publish" {{if not .Session.Ready}}hidden{{end}}><h2>Source test passed</h2><p>Review the Python draft and tool results above. Save this ingestion, then start its full load or set a schedule on the next page.</p><button type="submit">Save ingestion</button></form>
- {{if .Session.PublishedID}}<p><a href="/ingestions/{{.Session.PublishedID}}">Open saved ingestion →</a></p>{{end}}
+ <div id="recovery" class="quick-actions" hidden><button type="button" id="retry-turn" class="suggestion">Try again</button><a href="/settings/agent">Agent settings</a></div>
+ <details id="draft" class="chat-artifact" hidden><summary>Ingestion draft <span id="draft-target"></span></summary><pre class="yaml-code"><code id="draft-code"></code></pre></details>
+ <form id="publish" class="chat-publish" method="post" action="/chat/{{.Session.ID}}/publish" hidden><span>Source test passed. Ready to save.</span><button type="submit">Save ingestion</button></form>
+ <div class="chat-composer">
+  <form id="chat-form"><label for="message" class="sr-only">Message the agent</label><textarea id="message" rows="2" maxlength="16000" required placeholder="Describe what to ingest, or add a detail…"></textarea><div class="composer-footer"><span>Enter to send · Shift+Enter for a new line</span><button id="send" type="submit">Send ↑</button></div></form>
+  <p class="composer-hint">Keys belong in <a href="/secrets" target="_blank" rel="noopener">Secrets</a>, not chat. This conversation is saved automatically.</p>
+ </div>
+ <p id="published" hidden><a>Open saved ingestion →</a></p>
 </div>
+<script id="chat-state" type="application/json">{{.Session}}</script>
+<script src="/static/chat-stream.js" defer></script>
 <script src="/static/chat.js" defer></script>
 {{end}}

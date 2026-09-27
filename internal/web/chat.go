@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"pompos/internal/agent"
 	"pompos/internal/spec"
@@ -30,7 +31,7 @@ func (a *App) chatPage(w http.ResponseWriter, r *http.Request) {
 	a.render(w, 200, "chat", struct {
 		Title   string
 		Session agent.Session
-	}{"New ingestion", v})
+	}{"New ingestion", publicSession(v)})
 }
 func (a *App) chatTurn(w http.ResponseWriter, r *http.Request) {
 	if a.Agent == nil {
@@ -38,34 +39,77 @@ func (a *App) chatTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 20000)
-	var input struct {
-		Message string `json:"message"`
-	}
+	var input agent.Input
 	if e := json.NewDecoder(r.Body).Decode(&input); e != nil {
 		http.Error(w, "Invalid message", 400)
 		return
 	}
-	v, e := a.Agent.Turn(r.Context(), r.PathValue("id"), input.Message)
-	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
+	if strings.Contains(r.Header.Get("Accept"), "application/x-ndjson") {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("X-Accel-Buffering", "no")
+		encoder := json.NewEncoder(w)
+		send := func(value any) {
+			if encoder.Encode(value) == nil {
+				_ = http.NewResponseController(w).Flush()
+			}
+		}
+		v, e := a.Agent.TurnWithEvents(r.Context(), r.PathValue("id"), input, func(event agent.Event) { send(event) })
+		message := ""
+		if e != nil {
+			message = e.Error()
+		}
+		send(struct {
+			Type    string        `json:"type"`
+			Session agent.Session `json:"session"`
+			Error   string        `json:"error,omitempty"`
+		}{"done", publicSession(v), message})
+		return
+	}
+	v, e := a.Agent.TurnWithEvents(r.Context(), r.PathValue("id"), input, nil)
+	w.Header().Set("Content-Type", "application/json")
 	message := ""
 	if e != nil {
 		message = e.Error()
 	}
-	// System prompts and raw tool arguments are not needed by the conversation UI.
+	_ = json.NewEncoder(w).Encode(struct {
+		Session agent.Session `json:"session"`
+		Error   string        `json:"error,omitempty"`
+	}{publicSession(v), message})
+}
+func publicSession(v agent.Session) agent.Session {
 	visible := []agent.Message{}
 	for _, m := range v.Messages {
 		if m.Role != "system" {
-			m.Calls = nil
 			visible = append(visible, m)
 		}
 	}
 	v.Messages = visible
-	_ = json.NewEncoder(w).Encode(struct {
-		Session agent.Session `json:"session"`
-		Error   string        `json:"error,omitempty"`
-	}{v, message})
+	return v
 }
+func (a *App) chatSecret(w http.ResponseWriter, r *http.Request) {
+	if a.Agent == nil {
+		http.Error(w, "Agent is not configured", 503)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 20000)
+	var input struct {
+		Name      string `json:"name"`
+		HandoffID string `json:"handoff_id"`
+		Value     string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "Invalid secret", 400)
+		return
+	}
+	if err := a.Agent.SaveRequestedSecret(r.Context(), r.PathValue("id"), input.HandoffID, input.Name, input.Value); err != nil {
+		http.Error(w, err.Error(), 422)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (a *App) publishChat(w http.ResponseWriter, r *http.Request) {
 	if a.Agent == nil {
 		http.Error(w, "Agent is not configured", 503)

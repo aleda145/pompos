@@ -107,6 +107,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /chat/{id}", a.chatPage)
 	mux.HandleFunc("POST /chat/{id}", a.chatTurn)
 	mux.HandleFunc("POST /chat/{id}/publish", a.publishChat)
+	mux.HandleFunc("POST /chat/{id}/secret", a.chatSecret)
 	mux.HandleFunc("GET /settings/agent", a.agentSettings)
 	mux.HandleFunc("POST /settings/agent", a.agentSettings)
 	mux.HandleFunc("POST /ingestions", a.createIngestion)
@@ -1046,6 +1047,8 @@ type responseStatusWriter struct {
 	http.ResponseWriter
 	status int
 }
+
+func (w *responseStatusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *responseStatusWriter) WriteHeader(status int) {
 	if w.status != 0 {

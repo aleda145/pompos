@@ -17,7 +17,7 @@ Choose **Add ingestion** and try:
 
 > Ingest individual GitHub stargazers from https://github.com/aleda145/kavla
 
-The agent lists available destinations and secret names, asks for missing information, writes an extractor, and executes a small source probe. Python errors and samples feed back into the model so it can repair its code. If credentials are needed, add them on the Secrets page and reply with their name. Do not paste keys into chat.
+The agent lists available destinations and source secret names, asks for missing information, writes an extractor, and executes a small source probe. A compact activity log streams each step as it happens. Expand Thinking or a tool row to inspect its progress update, request, or result. Python errors and samples feed back into the model so it can repair its code. Common questions appear as action buttons. Credential requests provide an inline managed-secret form, **I've added a key, try again**, and **Tell me more**. Save a key and retry directly, or update the named secret on the Secrets page and click retry. Choices and pending credential requests survive a reload; free-text chat remains available for anything else. The model-provider key is excluded from source credentials. Do not paste keys into chat.
 
 Each turn allows up to 12 model/tool rounds and four minutes. A source probe has a 45-second timeout and consumes at most five yielded rows. The generated extractor receives `limit=5` so it can also bound network requests. These are application limits, not an operating-system sandbox. A successful, nonempty probe of the current code is required before the agent can mark it ready. This verifies extraction, not whether the full dataset will load successfully.
 
@@ -59,6 +59,7 @@ This is a trusted, self-hosted operator tool. Generated Python executes with Pom
 make build
 make test
 make vet
+node --test static/chat-stream.test.cjs
 # Real dlt/DuckDB integration test (after make setup):
 POMPOS_TEST_PYTHON="$PWD/.venv/bin/python" go test ./internal/runner/python -v
 make docker-build
