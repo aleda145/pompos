@@ -1,10 +1,11 @@
-engine: ingestr
-engineVersion: 1.1.8
-orchestrator: direct
+engine: python
+script: data/ingestions/customers.py
+scriptDigest: sha256:f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d
+secretRefs:
+  - source-key
 sourceUri: https://example.com/customers.csv
-sourceTable: data#csv
+sourceTable: customers
 destinationType: duckdb
-destinationUri: duckdb://data/pompos.duckdb
+destinationPath: data/pompos.duckdb
 destinationObject: customers
 strategy: replace
-schemaNaming: direct

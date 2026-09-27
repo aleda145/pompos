@@ -16,8 +16,7 @@ USER pompos
 WORKDIR /app
 ENV POMPOS_DATA_DIR=/data \
     POMPOS_DESTINATION_PATH=/data/pompos.duckdb \
-    POMPOS_METADATA_PATH=/data/pompos.sqlite \
-    POMPOS_INGESTR_BINARY=/usr/local/bin/ingestr
+    POMPOS_METADATA_PATH=/data/pompos.sqlite
 EXPOSE 8080
 VOLUME ["/data"]
 ENTRYPOINT ["pompos"]

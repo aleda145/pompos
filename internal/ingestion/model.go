@@ -36,24 +36,14 @@ type Run struct {
 }
 
 type Source struct {
-	Type        string
-	URL         string
-	Owner       string
-	Repository  string
-	AccessToken string
-	SecretKey   string
-	Table       string
+	Type  string
+	URL   string
+	Table string
 }
 
-func (s Source) DisplayLocation() string {
-	if s.Type == "github" {
-		return "github.com/" + s.Owner + "/" + s.Repository
-	}
-	return s.URL
-}
+func (s Source) DisplayLocation() string { return s.URL }
 
 type Destination struct {
-	Ref   string
 	Type  string
 	Path  string
 	Table string
@@ -68,7 +58,6 @@ type Runtime struct {
 }
 
 type Materialization struct {
-	Strategy       string
-	PrimaryKey     []string
-	IncrementalKey string
+	Strategy   string
+	PrimaryKey []string
 }

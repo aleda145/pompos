@@ -60,7 +60,7 @@ func TestDLTLoadKeepsNestedRowsInOneTable(t *testing.T) {
 		t.Fatal("probe wrote to destination")
 	}
 	for i := 0; i < 2; i++ {
-		if _, e := r.Execute(context.Background(), plan, false); e != nil {
+		if e := r.Run(context.Background(), plan); e != nil {
 			t.Fatal(e)
 		}
 	}

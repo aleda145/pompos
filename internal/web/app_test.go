@@ -1,9 +1,7 @@
 package web
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -12,99 +10,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"pompos/internal/ingestion"
+	"pompos/internal/spec"
+	"pompos/internal/store"
 	"strings"
 	"testing"
 	"time"
-
-	destinationconfig "pompos/internal/destination"
-	"pompos/internal/ingestion"
-	"pompos/internal/policy"
-	"pompos/internal/spec"
-	"pompos/internal/store"
 )
-
-func TestCreateIngestionEnqueuesAndRendersPendingDetail(t *testing.T) {
-	ctx := context.Background()
-	dataDir := t.TempDir()
-	destination := filepath.Join(dataDir, "pompos.duckdb")
-	metadata, err := store.Open(ctx, filepath.Join(dataDir, "pompos.sqlite"), destination)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer metadata.Close()
-
-	schedules := &scheduleManagerStub{
-		persist: func(item ingestion.Ingestion) error { return nil },
-		enqueue: func(ctx context.Context, id string) error { return metadata.EnqueueRun(ctx, id, time.Now()) },
-	}
-	var logs bytes.Buffer
-	app, err := New(App{
-		Store:     metadata,
-		Policy:    policy.DefaultEngine{DestinationPath: destination},
-		Secrets:   metadata.Secrets(),
-		Scheduler: schedules,
-		Validator: validatorFunc(func(context.Context, ingestion.Source) error { return nil }),
-		Destination: ingestion.Destination{
-			Type: "duckdb", Path: destination,
-		},
-		SpecDir: filepath.Join(dataDir, "ingestions"),
-		Logger:  log.New(&logs, "", 0),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	configuredDestination := filepath.Join(dataDir, "warehouse.duckdb")
-	if err := metadata.PutDestination(ctx, destinationconfig.NewDuckDB("warehouse", configuredDestination)); err != nil {
-		t.Fatal(err)
-	}
-	form := url.Values{"csv_url": {"https://example.com/customers.csv"}, "table_name": {"customers"}, "schedule": {"0 6 * * *"},
-		"runtime_engine": {"ingestr"}, "runtime_orchestrator": {"direct"}, "destination_ref": {"warehouse"}}
-	request := httptest.NewRequest(http.MethodPost, "/ingestions", strings.NewReader(form.Encode()))
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response := httptest.NewRecorder()
-	app.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusSeeOther {
-		t.Fatalf("POST status = %d, body = %s", response.Code, response.Body.String())
-	}
-	if len(schedules.enqueued) != 1 {
-		t.Fatalf("enqueued = %#v", schedules.enqueued)
-	}
-
-	item, err := metadata.Get(ctx, schedules.enqueued[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if item.Status != ingestion.StatusPending || item.LastRun != nil || item.Schedule != "" {
-		t.Fatalf("stored ingestion = %#v", item)
-	}
-	document, specYAML, err := spec.Read(item.SpecPath)
-	if err != nil || document.Schedule == nil || document.Schedule.Cron != "0 6 * * *" || document.Runtime.Engine != "ingestr" || document.Runtime.Orchestrator != "direct" || document.Destination.Type != "duckdb" || document.Destination.Path != configuredDestination || document.Destination.ConnectionRef != "" {
-		t.Fatalf("document = %#v, error = %v", document, err)
-	}
-	if _, err := os.Stat(filepath.Join(dataDir, "ingestions", item.ID+".yaml")); err != nil {
-		t.Fatal(err)
-	}
-	for _, message := range []string{"request started", "metadata persisted", "spec written", "request completed"} {
-		if !strings.Contains(logs.String(), message) {
-			t.Errorf("logs do not contain %q:\n%s", message, logs.String())
-		}
-	}
-
-	detailRequest := httptest.NewRequest(http.MethodGet, response.Header().Get("Location"), nil)
-	detailResponse := httptest.NewRecorder()
-	app.Handler().ServeHTTP(detailResponse, detailRequest)
-	detailBody := detailResponse.Body.String()
-	if detailResponse.Code != http.StatusOK || !strings.Contains(detailBody, "pending") || !strings.Contains(detailBody, "Run queued") || !strings.Contains(detailBody, string(specYAML)) {
-		t.Fatalf("GET detail status = %d, body = %s", detailResponse.Code, detailResponse.Body.String())
-	}
-	if strings.Contains(detailBody, "Effective execution plan") || strings.Contains(detailBody, "Source of truth") {
-		t.Fatalf("detail includes removed plan messaging: %s", detailBody)
-	}
-	if strings.Contains(detailBody, "yaml-disclosure") || strings.Index(detailBody, `class="yaml-section"`) < strings.Index(detailBody, `class="metadata"`) {
-		t.Fatalf("YAML is not visible at the bottom of the detail card: %s", detailBody)
-	}
-}
 
 func TestUpdateSchedulePersistsAndRegisters(t *testing.T) {
 	ctx := context.Background()
@@ -117,7 +29,8 @@ func TestUpdateSchedulePersistsAndRegisters(t *testing.T) {
 	defer metadata.Close()
 	item := ingestion.Ingestion{
 		ID: "scheduled", Name: "customers", Status: ingestion.StatusSucceeded,
-		Source:      ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
+		Source:      ingestion.Source{Type: "python", URL: "https://example.com/customers.csv", Table: "customers"},
+		Runtime:     ingestion.Runtime{Engine: "python", Script: "customers.py", ScriptDigest: spec.Digest([]byte("fixture"))},
 		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "customers"},
 	}
 	path, err := spec.Write(filepath.Join(dataDir, "ingestions"), item)
@@ -134,11 +47,9 @@ func TestUpdateSchedulePersistsAndRegisters(t *testing.T) {
 	}
 	schedules := &scheduleManagerStub{}
 	app, err := New(App{
-		Store: metadata, Policy: policy.DefaultEngine{DestinationPath: destination},
+		Store:   metadata,
 		Secrets: metadata.Secrets(), Scheduler: schedules,
-		Validator:   validatorFunc(func(context.Context, ingestion.Source) error { return nil }),
-		Destination: ingestion.Destination{Type: "duckdb", Path: destination},
-		SpecDir:     filepath.Join(dataDir, "ingestions"), Logger: log.New(io.Discard, "", 0),
+		SpecDir: filepath.Join(dataDir, "ingestions"), Logger: log.New(io.Discard, "", 0),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -161,117 +72,6 @@ func TestUpdateSchedulePersistsAndRegisters(t *testing.T) {
 	}
 }
 
-func TestCreationYAMLPreviewUsesCanonicalSerializer(t *testing.T) {
-	ctx := context.Background()
-	dataDir := t.TempDir()
-	destination := filepath.Join(dataDir, "pompos.duckdb")
-	metadata, err := store.Open(ctx, filepath.Join(dataDir, "pompos.sqlite"), destination)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer metadata.Close()
-	configuredDestination := filepath.Join(dataDir, "preview.duckdb")
-	if err := metadata.PutDestination(ctx, destinationconfig.NewDuckDB("preview", configuredDestination)); err != nil {
-		t.Fatal(err)
-	}
-	app, err := New(App{
-		Store: metadata, Secrets: metadata.Secrets(), Validator: validatorFunc(func(context.Context, ingestion.Source) error { return nil }),
-		Destination: ingestion.Destination{Type: "duckdb", Path: destination}, SpecDir: filepath.Join(dataDir, "ingestions"), Logger: log.New(io.Discard, "", 0),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	form := url.Values{"source_type": {"csv"}, "csv_url": {"https://example.com/customers.csv"}, "table_name": {"customers"}, "schedule": {"0 6 * * *"},
-		"runtime_engine": {"ingestr"}, "runtime_orchestrator": {"direct"}, "destination_ref": {"preview"},
-		"strategy": {"merge"}, "primary_key": {"account_id, id"}, "incremental_key": {"updated_at"}}
-	request := httptest.NewRequest(http.MethodPost, "/ingestions/preview", strings.NewReader(form.Encode()))
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response := httptest.NewRecorder()
-	app.Handler().ServeHTTP(response, request)
-	var preview yamlPreviewResponse
-	if err := json.Unmarshal(response.Body.Bytes(), &preview); err != nil {
-		t.Fatal(err)
-	}
-	if response.Code != http.StatusOK || preview.Error != "" || preview.YAML == "" {
-		t.Fatalf("status = %d, preview = %#v", response.Code, preview)
-	}
-	want, err := spec.Marshal(spec.FromLegacy(ingestion.Ingestion{
-		Name: "customers", Schedule: "0 6 * * *", Source: ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
-		Destination:     ingestion.Destination{Ref: "preview", Type: "duckdb", Path: configuredDestination, Table: "customers"},
-		Materialization: ingestion.Materialization{Strategy: "merge", PrimaryKey: []string{"account_id", "id"}, IncrementalKey: "updated_at"},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if preview.YAML != string(want) {
-		t.Fatalf("preview =\n%s\nwant:\n%s", preview.YAML, want)
-	}
-
-}
-
-func TestColumnPreviewUsesSamplesAndSavedGitHubSecret(t *testing.T) {
-	ctx := context.Background()
-	dataDir := t.TempDir()
-	destination := filepath.Join(dataDir, "pompos.duckdb")
-	metadata, err := store.Open(ctx, filepath.Join(dataDir, "pompos.sqlite"), destination)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer metadata.Close()
-	if err := metadata.Secrets().Put(ctx, "github-production", []byte("saved-token")); err != nil {
-		t.Fatal(err)
-	}
-	var inspected []ingestion.Source
-	app, err := New(App{
-		Store: metadata, Secrets: metadata.Secrets(), Validator: validatorFunc(func(context.Context, ingestion.Source) error { return nil }),
-		Inspector: inspectorFunc(func(_ context.Context, source ingestion.Source) ([]string, error) {
-			inspected = append(inspected, source)
-			switch source.Table {
-			case "issues":
-				return []string{"id", "title", "updated_at"}, nil
-			default:
-				return []string{"id", "name"}, nil
-			}
-		}),
-		Destination: ingestion.Destination{Type: "duckdb", Path: destination}, SpecDir: filepath.Join(dataDir, "ingestions"), Logger: log.New(io.Discard, "", 0),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	csvResponse := httptest.NewRecorder()
-	csvForm := url.Values{"source_type": {"csv"}, "csv_url": {"https://example.com/customers.csv"}}
-	csvRequest := httptest.NewRequest(http.MethodPost, "/sources/columns", strings.NewReader(csvForm.Encode()))
-	csvRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	app.Handler().ServeHTTP(csvResponse, csvRequest)
-	var csvPreview columnPreviewResponse
-	if err := json.Unmarshal(csvResponse.Body.Bytes(), &csvPreview); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(csvPreview.Columns, ",") != "id,name" || csvPreview.Error != "" {
-		t.Fatalf("CSV preview = %#v", csvPreview)
-	}
-
-	githubResponse := httptest.NewRecorder()
-	githubForm := url.Values{"source_type": {"github"}, "repository": {"openai/codex"}, "secret_key": {"github-production"}, "source_table": {"issues"}}
-	githubRequest := httptest.NewRequest(http.MethodPost, "/sources/columns", strings.NewReader(githubForm.Encode()))
-	githubRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	app.Handler().ServeHTTP(githubResponse, githubRequest)
-	var githubPreview columnPreviewResponse
-	if err := json.Unmarshal(githubResponse.Body.Bytes(), &githubPreview); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(githubPreview.Columns, ",") != "id,title,updated_at" || githubPreview.Scope != "Issues" || githubPreview.Error != "" {
-		t.Fatalf("GitHub preview = %#v", githubPreview)
-	}
-	if len(inspected) != 2 || inspected[1].AccessToken != "saved-token" {
-		t.Fatalf("inspected sources = %#v", inspected)
-	}
-	if strings.Contains(githubResponse.Body.String(), "saved-token") {
-		t.Fatalf("column response exposed secret: %s", githubResponse.Body.String())
-	}
-}
-
 func TestDestinationsPageSavesSQLiteDestination(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
@@ -283,9 +83,7 @@ func TestDestinationsPageSavesSQLiteDestination(t *testing.T) {
 	defer metadata.Close()
 	app, err := New(App{
 		Store: metadata, Secrets: metadata.Secrets(), Destinations: metadata,
-		Validator:   validatorFunc(func(context.Context, ingestion.Source) error { return nil }),
-		Destination: ingestion.Destination{Ref: "local-duckdb", Type: "duckdb", Path: defaultPath},
-		SpecDir:     filepath.Join(dataDir, "ingestions"), Logger: log.New(io.Discard, "", 0),
+		SpecDir: filepath.Join(dataDir, "ingestions"), Logger: log.New(io.Discard, "", 0),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -321,7 +119,8 @@ func TestRunAgainOnlyEnqueuesDurableWork(t *testing.T) {
 
 	item := ingestion.Ingestion{
 		ID: "rerun", Name: "customers", Status: ingestion.StatusSucceeded,
-		Source:      ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
+		Source:      ingestion.Source{Type: "python", URL: "https://example.com/customers.csv", Table: "customers"},
+		Runtime:     ingestion.Runtime{Engine: "python", Script: "customers.py", ScriptDigest: spec.Digest([]byte("fixture"))},
 		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "customers"},
 	}
 	path, err := spec.Write(filepath.Join(dataDir, "ingestions"), item)
@@ -340,13 +139,11 @@ func TestRunAgainOnlyEnqueuesDurableWork(t *testing.T) {
 		return metadata.EnqueueRun(ctx, id, time.Now())
 	}}
 	app, err := New(App{
-		Store:   metadata,
-		Policy:  policy.DefaultEngine{DestinationPath: destination},
+		Store: metadata,
+
 		Secrets: metadata.Secrets(), Scheduler: schedules,
-		Validator:   validatorFunc(func(context.Context, ingestion.Source) error { return nil }),
-		Destination: ingestion.Destination{Type: "duckdb", Path: destination},
-		SpecDir:     filepath.Join(dataDir, "ingestions"),
-		Logger:      log.New(io.Discard, "", 0),
+		SpecDir: filepath.Join(dataDir, "ingestions"),
+		Logger:  log.New(io.Discard, "", 0),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -369,156 +166,6 @@ func TestRunAgainOnlyEnqueuesDurableWork(t *testing.T) {
 	}
 }
 
-func TestCreateGitHubIngestionForSelectedTable(t *testing.T) {
-	ctx := context.Background()
-	dataDir := t.TempDir()
-	destination := filepath.Join(dataDir, "pompos.duckdb")
-	metadata, err := store.Open(ctx, filepath.Join(dataDir, "pompos.sqlite"), destination)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer metadata.Close()
-
-	schedules := &scheduleManagerStub{enqueue: func(ctx context.Context, id string) error {
-		return metadata.EnqueueRun(ctx, id, time.Now())
-	}}
-	app, err := New(App{
-		Store:   metadata,
-		Policy:  policy.DefaultEngine{DestinationPath: destination},
-		Secrets: metadata.Secrets(), Scheduler: schedules,
-		Validator:   validatorFunc(func(context.Context, ingestion.Source) error { return nil }),
-		Destination: ingestion.Destination{Type: "duckdb", Path: destination},
-		SpecDir:     filepath.Join(dataDir, "ingestions"),
-		Logger:      log.New(io.Discard, "", 0),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	form := url.Values{
-		"source_type": {"github"}, "repository": {"https://github.com/OpenAI/codex"},
-		"new_secret_name": {"github-codex"}, "access_token": {"github_pat_secret"}, "source_table": {"issues"},
-	}
-	request := httptest.NewRequest(http.MethodPost, "/ingestions", strings.NewReader(form.Encode()))
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response := httptest.NewRecorder()
-	app.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusSeeOther {
-		t.Fatalf("POST status = %d, body = %s", response.Code, response.Body.String())
-	}
-	if len(schedules.enqueued) != 1 {
-		t.Fatalf("queued runs = %d, want 1", len(schedules.enqueued))
-	}
-	first, err := metadata.Get(ctx, schedules.enqueued[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, err = app.hydrate(first)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Destination.Table != "openai_codex_issues" {
-		t.Fatalf("destination table = %q", first.Destination.Table)
-	}
-	stored := first
-	if stored.Source.AccessToken != "" || stored.Source.SecretKey != "github-codex" || stored.Source.Table != "issues" {
-		t.Fatalf("stored source = %#v", stored.Source)
-	}
-	savedToken, err := metadata.Secrets().Get(ctx, stored.Source.SecretKey)
-	if err != nil || string(savedToken) != "github_pat_secret" {
-		t.Fatalf("saved token = %q, error = %v", savedToken, err)
-	}
-	specContent, err := os.ReadFile(filepath.Join(dataDir, "ingestions", first.ID+".yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(specContent), "github_pat_secret") {
-		t.Fatal("GitHub token was written to the ingestion spec")
-	}
-
-	multiple := url.Values{
-		"source_type": {"github"}, "repository": {"openai/codex"}, "secret_key": {"github-codex"},
-		"source_table": {"issues", "stargazers"},
-	}
-	multipleRequest := httptest.NewRequest(http.MethodPost, "/ingestions", strings.NewReader(multiple.Encode()))
-	multipleRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	multipleResponse := httptest.NewRecorder()
-	app.Handler().ServeHTTP(multipleResponse, multipleRequest)
-	if multipleResponse.Code != http.StatusUnprocessableEntity || !strings.Contains(multipleResponse.Body.String(), "choose exactly one GitHub table") {
-		t.Fatalf("multiple-table status = %d, body = %s", multipleResponse.Code, multipleResponse.Body.String())
-	}
-	if len(schedules.enqueued) != 1 {
-		t.Fatalf("multiple-table request queued work: %#v", schedules.enqueued)
-	}
-}
-
-func TestCreateGitHubIngestionUsesSelectedSecret(t *testing.T) {
-	ctx := context.Background()
-	dataDir := t.TempDir()
-	destination := filepath.Join(dataDir, "pompos.duckdb")
-	metadata, err := store.Open(ctx, filepath.Join(dataDir, "pompos.sqlite"), destination)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer metadata.Close()
-	if err := metadata.Secrets().Put(ctx, "github-codex", []byte("saved-token")); err != nil {
-		t.Fatal(err)
-	}
-
-	schedules := &scheduleManagerStub{enqueue: func(ctx context.Context, id string) error {
-		return metadata.EnqueueRun(ctx, id, time.Now())
-	}}
-	app, err := New(App{
-		Store: metadata, Policy: policy.DefaultEngine{DestinationPath: destination},
-		Secrets: metadata.Secrets(), Scheduler: schedules, Validator: validatorFunc(func(_ context.Context, source ingestion.Source) error {
-			if source.AccessToken != "saved-token" {
-				t.Fatalf("validator token = %q", source.AccessToken)
-			}
-			return nil
-		}),
-		Destination: ingestion.Destination{Type: "duckdb", Path: destination},
-		SpecDir:     filepath.Join(dataDir, "ingestions"), Logger: log.New(io.Discard, "", 0),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	form := url.Values{"source_type": {"github"}, "repository": {"openai/codex"}, "secret_key": {"github-codex"}, "source_table": {"issues"}}
-	request := httptest.NewRequest(http.MethodPost, "/ingestions", strings.NewReader(form.Encode()))
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response := httptest.NewRecorder()
-	app.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusSeeOther || len(schedules.enqueued) != 1 {
-		t.Fatalf("status = %d, queued = %#v, body = %s", response.Code, schedules.enqueued, response.Body.String())
-	}
-}
-
-func TestCreateGitHubIngestionRequiresExplicitCredentialChoice(t *testing.T) {
-	ctx := context.Background()
-	dataDir := t.TempDir()
-	destination := filepath.Join(dataDir, "pompos.duckdb")
-	metadata, err := store.Open(ctx, filepath.Join(dataDir, "pompos.sqlite"), destination)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer metadata.Close()
-	app, err := New(App{
-		Store: metadata, Policy: policy.DefaultEngine{DestinationPath: destination},
-		Secrets: metadata.Secrets(), Validator: validatorFunc(func(context.Context, ingestion.Source) error { return nil }),
-		Destination: ingestion.Destination{Type: "duckdb", Path: destination},
-		SpecDir:     filepath.Join(dataDir, "ingestions"), Logger: log.New(io.Discard, "", 0),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	form := url.Values{"source_type": {"github"}, "repository": {"openai/codex"}, "source_table": {"issues"}}
-	request := httptest.NewRequest(http.MethodPost, "/ingestions", strings.NewReader(form.Encode()))
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response := httptest.NewRecorder()
-	app.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), "Select a saved secret") {
-		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
-	}
-}
-
 func TestSecretsPageAddsAndListsNamesWithoutValues(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
@@ -529,10 +176,9 @@ func TestSecretsPageAddsAndListsNamesWithoutValues(t *testing.T) {
 	}
 	defer metadata.Close()
 	app, err := New(App{
-		Store: metadata, Policy: policy.DefaultEngine{DestinationPath: destination},
-		Secrets: metadata.Secrets(), Validator: validatorFunc(func(context.Context, ingestion.Source) error { return nil }),
-		Destination: ingestion.Destination{Type: "duckdb", Path: destination},
-		SpecDir:     filepath.Join(dataDir, "ingestions"), Logger: log.New(io.Discard, "", 0),
+		Store:   metadata,
+		Secrets: metadata.Secrets(),
+		SpecDir: filepath.Join(dataDir, "ingestions"), Logger: log.New(io.Discard, "", 0),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -547,7 +193,8 @@ func TestSecretsPageAddsAndListsNamesWithoutValues(t *testing.T) {
 	}
 	secretItem := ingestion.Ingestion{
 		ID: "uses-secret", Name: "Codex issues", Status: ingestion.StatusSucceeded,
-		Source:      ingestion.Source{Type: "github", Owner: "openai", Repository: "codex", SecretKey: "github-production", Table: "issues"},
+		Source:      ingestion.Source{Type: "python", URL: "https://github.com/openai/codex", Table: "issues"},
+		Runtime:     ingestion.Runtime{Engine: "python", Script: "issues.py", ScriptDigest: spec.Digest([]byte("fixture")), SecretRefs: []string{"github-production"}},
 		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "codex_issues"},
 	}
 	secretPath, err := spec.Write(filepath.Join(dataDir, "ingestions"), secretItem)
@@ -566,7 +213,7 @@ func TestSecretsPageAddsAndListsNamesWithoutValues(t *testing.T) {
 	app.Handler().ServeHTTP(listResponse, httptest.NewRequest(http.MethodGet, "/secrets", nil))
 	body := listResponse.Body.String()
 	if listResponse.Code != http.StatusOK || !strings.Contains(body, "github-production") || strings.Contains(body, "never-render-this") ||
-		!strings.Contains(body, "source-logo-github") || !strings.Contains(body, "Codex issues") || !strings.Contains(body, "future runs") {
+		!strings.Contains(body, "Codex issues") || !strings.Contains(body, "future runs") {
 		t.Fatalf("GET status = %d, body = %s", listResponse.Code, body)
 	}
 	deleteForm := url.Values{"key": {"github-production"}}
@@ -581,18 +228,6 @@ func TestSecretsPageAddsAndListsNamesWithoutValues(t *testing.T) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("secrets after delete = %#v, %v", entries, err)
 	}
-}
-
-type validatorFunc func(context.Context, ingestion.Source) error
-
-func (f validatorFunc) Validate(ctx context.Context, source ingestion.Source) error {
-	return f(ctx, source)
-}
-
-type inspectorFunc func(context.Context, ingestion.Source) ([]string, error)
-
-func (f inspectorFunc) Columns(ctx context.Context, source ingestion.Source) ([]string, error) {
-	return f(ctx, source)
 }
 
 type scheduleManagerStub struct {
@@ -623,3 +258,28 @@ func (s *scheduleManagerStub) Enqueue(ctx context.Context, id string) error {
 	return nil
 }
 func (s *scheduleManagerStub) NextRun(string) *time.Time { return nil }
+
+func TestRemovedSourceCreationEndpointsAreUnavailable(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	metadata, err := store.Open(ctx, filepath.Join(dir, "metadata.sqlite"), filepath.Join(dir, "out.duckdb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer metadata.Close()
+	app, err := New(App{Store: metadata, Secrets: metadata.Secrets(), SpecDir: filepath.Join(dir, "ingestions"), Logger: log.New(io.Discard, "", 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/ingestions", "/ingestions/preview", "/sources/columns"} {
+		response := httptest.NewRecorder()
+		app.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, strings.NewReader("source_type=csv")))
+		if response.Code != http.StatusNotFound && response.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("removed route %s returned %d", path, response.Code)
+		}
+	}
+	items, err := metadata.List(ctx)
+	if err != nil || len(items) != 0 {
+		t.Fatal("removed endpoints created an ingestion")
+	}
+}

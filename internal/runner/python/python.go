@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"pompos/internal/compiler"
-	"pompos/internal/runner"
 	"pompos/internal/secrets"
 	"pompos/internal/spec"
 )
@@ -22,15 +21,11 @@ import (
 type Runner struct {
 	Binary  string
 	Secrets secrets.Store
-	Legacy  runner.Runner
 }
 
-func (r Runner) Run(ctx context.Context, id string, plan compiler.ExecutionPlan, credential string) error {
+func (r Runner) Run(ctx context.Context, plan compiler.ExecutionPlan) error {
 	if plan.Engine != "python" {
-		if r.Legacy == nil {
-			return fmt.Errorf("unsupported runtime engine %q", plan.Engine)
-		}
-		return r.Legacy.Run(ctx, id, plan, credential)
+		return fmt.Errorf("unsupported runtime engine %q", plan.Engine)
 	}
 	_, err := r.Execute(ctx, plan, false)
 	return err

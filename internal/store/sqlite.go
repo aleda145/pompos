@@ -47,10 +47,8 @@ func (s *SQLite) initialize(ctx context.Context) error {
 	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return fmt.Errorf("read metadata schema version: %w", err)
 	}
-	if version != schemaVersion {
-		if _, err := s.db.ExecContext(ctx, `DROP TABLE IF EXISTS ingestion_runs; DROP TABLE IF EXISTS scheduled_runs; DROP TABLE IF EXISTS ingestions; DROP TABLE IF EXISTS secrets; DROP TABLE IF EXISTS destinations;`); err != nil {
-			return fmt.Errorf("reset incompatible metadata schema: %w", err)
-		}
+	if version != 0 && version != schemaVersion {
+		return fmt.Errorf("unsupported metadata schema version %d (expected %d)", version, schemaVersion)
 	}
 	const schema = `
 PRAGMA journal_mode = WAL;
@@ -380,8 +378,6 @@ func (s *SQLite) scan(row scanner) (ingestion.Ingestion, error) {
 	if err != nil {
 		return ingestion.Ingestion{}, err
 	}
-	item.Destination.Type = "duckdb"
-	item.Destination.Path = s.destinationPath
 	if lastRun.Valid {
 		parsed, err := time.Parse(time.RFC3339Nano, lastRun.String)
 		if err != nil {

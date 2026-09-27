@@ -1,6 +1,6 @@
 # Pompos
 
-Describe what you want to ingest, develop it with an agent, and let Go handle execution and scheduling. New ingestions use Python and dlt. Existing ingestr YAMLs continue to run.
+Describe what you want to ingest, develop it with an agent, and let Go handle execution and scheduling. Every ingestion uses Python and dlt.
 
 One source table = one ingestion YAML = one Python file = one destination data table. Nested values stay in JSON columns; dlt also maintains its own internal metadata tables. Configured destinations currently support DuckDB.
 

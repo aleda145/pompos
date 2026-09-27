@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"pompos/internal/agent"
-	"pompos/internal/ingestion"
 	runnerpython "pompos/internal/runner/python"
 	"pompos/internal/spec"
 	"pompos/internal/store"
@@ -61,7 +60,7 @@ func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T)
 		t.Fatal(e)
 	}
 	schedules := &scheduleManagerStub{enqueue: func(ctx context.Context, id string) error { return db.EnqueueRun(ctx, id, time.Now()) }}
-	app, e := New(App{Agent: service, Store: db, Secrets: db.Secrets(), Scheduler: schedules, Validator: validatorFunc(func(context.Context, ingestion.Source) error { return nil }), Destination: ingestion.Destination{Type: "duckdb", Path: destination}, SpecDir: filepath.Join(dir, "ingestions"), Logger: log.New(io.Discard, "", 0)})
+	app, e := New(App{Agent: service, Store: db, Secrets: db.Secrets(), Scheduler: schedules, SpecDir: filepath.Join(dir, "ingestions"), Logger: log.New(io.Discard, "", 0)})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -188,7 +187,7 @@ func TestChatFlushesStepsBeforeModelCompletesAndOffersSecretActions(t *testing.T
 	if err = service.SaveSettings(agent.Settings{Endpoint: "http://model.test/v1", Model: "test"}); err != nil {
 		t.Fatal(err)
 	}
-	app, err := New(App{Agent: service, Store: db, Secrets: db.Secrets(), Validator: validatorFunc(func(context.Context, ingestion.Source) error { return nil }), SpecDir: filepath.Join(dir, "ingestions"), Logger: log.New(io.Discard, "", 0)})
+	app, err := New(App{Agent: service, Store: db, Secrets: db.Secrets(), SpecDir: filepath.Join(dir, "ingestions"), Logger: log.New(io.Discard, "", 0)})
 	if err != nil {
 		t.Fatal(err)
 	}

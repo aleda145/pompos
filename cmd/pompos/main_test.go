@@ -3,71 +3,110 @@ package main
 import (
 	"bytes"
 	"context"
-	"io"
-	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"pompos/internal/spec"
 	"pompos/internal/store"
 )
 
-func TestRunCommandRunsSelectedSpecAndReportsSuccess(t *testing.T) {
-	t.Setenv("POMPOS_INGESTR_BINARY", "true")
-	t.Setenv("POMPOS_DESTINATION_PATH", filepath.Join(t.TempDir(), "pompos.duckdb"))
-	path := filepath.Join("..", "..", "internal", "spec", "testdata", "customers.yaml")
-	var stdout, stderr bytes.Buffer
-	if err := runCommandIO([]string{"run", path}, &stdout, &stderr); err != nil {
-		t.Fatal(err)
+func commandFixture(t *testing.T, code string) string {
+	t.Helper()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 unavailable")
 	}
-	if !strings.Contains(stdout.String(), "Running customers\n") || !strings.Contains(stdout.String(), "Succeeded customers in ") {
-		t.Fatalf("stdout = %q", stdout.String())
-	}
-}
-
-func TestRunCommandReportsSelectedSpecFailure(t *testing.T) {
-	t.Setenv("POMPOS_INGESTR_BINARY", "false")
-	t.Setenv("POMPOS_DESTINATION_PATH", filepath.Join(t.TempDir(), "pompos.duckdb"))
-	path := filepath.Join("..", "..", "internal", "spec", "testdata", "customers.yaml")
-	var stdout, stderr bytes.Buffer
-	err := runCommandIO([]string{"run", path}, &stdout, &stderr)
-	if err == nil || !strings.Contains(err.Error(), `run "customers" failed`) {
-		t.Fatalf("run error = %v", err)
-	}
-	if strings.Contains(stdout.String(), "Succeeded") {
-		t.Fatalf("stdout = %q", stdout.String())
-	}
-}
-
-func TestRebuildSpecProjectionsFromFiles(t *testing.T) {
-	ctx := context.Background()
-	dataDir := t.TempDir()
-	specDir := filepath.Join(dataDir, "ingestions")
-	if err := os.MkdirAll(specDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	input, err := os.ReadFile(filepath.Join("..", "..", "internal", "spec", "testdata", "customers.yaml"))
+	dir := t.TempDir()
+	t.Setenv("POMPOS_DATA_DIR", dir)
+	t.Setenv("POMPOS_METADATA_PATH", filepath.Join(dir, "metadata.sqlite"))
+	t.Setenv("POMPOS_DESTINATION_PATH", filepath.Join(dir, "out.duckdb"))
+	t.Setenv("POMPOS_PYTHON_BINARY", python)
+	document, _, err := spec.Read("../../internal/spec/testdata/customers.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(specDir, "customers.yaml"), input, 0o644); err != nil {
+	document.Runtime.Script = filepath.Join(dir, "customers.py")
+	document.Runtime.ScriptDigest = spec.Digest([]byte(code))
+	if err = os.WriteFile(document.Runtime.Script, []byte(code), 0600); err != nil {
 		t.Fatal(err)
 	}
-	destination := filepath.Join(dataDir, "pompos.duckdb")
-	metadata, err := store.Open(ctx, filepath.Join(dataDir, "pompos.sqlite"), destination)
+	metadata, err := store.Open(context.Background(), filepath.Join(dir, "metadata.sqlite"), filepath.Join(dir, "out.duckdb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = metadata.Secrets().Put(context.Background(), "source-key", []byte("private-fixture-key")); err != nil {
+		t.Fatal(err)
+	}
+	metadata.Close()
+	data, err := spec.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "customers.yaml")
+	if err = os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+func TestRunCommandRunsPythonSpecAndReportsSuccess(t *testing.T) {
+	path := commandFixture(t, `import json, os
+assert json.loads(os.environ["POMPOS_CONFIG"])["table"] == "customers"
+assert json.loads(os.environ["POMPOS_SECRETS"])["source-key"] == "private-fixture-key"
+`)
+	var stdout bytes.Buffer
+	if err := runCommandIO([]string{"run", path}, &stdout); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "Running customers\n") || !strings.Contains(stdout.String(), "Succeeded customers in ") {
+		t.Fatalf("stdout: %s", &stdout)
+	}
+}
+func TestRunCommandReportsPythonFailure(t *testing.T) {
+	path := commandFixture(t, "raise RuntimeError('fixture failed')\n")
+	var stdout bytes.Buffer
+	err := runCommandIO([]string{"run", path}, &stdout)
+	if err == nil || !strings.Contains(err.Error(), `run "customers" failed`) || !strings.Contains(err.Error(), "fixture failed") {
+		t.Fatalf("error: %v", err)
+	}
+	if strings.Contains(stdout.String(), "Succeeded") {
+		t.Fatal("failed run reported success")
+	}
+}
+func TestRebuildSpecProjectionsFromFiles(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	specDir := filepath.Join(dir, "ingestions")
+	os.MkdirAll(specDir, 0755)
+	input, err := os.ReadFile("../../internal/spec/testdata/customers.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(specDir, "customers.yaml")
+	if err = os.WriteFile(path, input, 0600); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := store.Open(ctx, filepath.Join(dir, "metadata.sqlite"), filepath.Join(dir, "out.duckdb"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer metadata.Close()
-	if err := rebuildSpecProjections(ctx, metadata, specDir, destination, log.New(io.Discard, "", 0)); err != nil {
+	if err = rebuildSpecProjections(ctx, metadata, specDir); err != nil {
 		t.Fatal(err)
 	}
 	item, err := metadata.Get(ctx, "customers")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if item.ID != "customers" || item.Name != "" || item.Source.URL != "" || item.Destination.Table != "" || item.SpecDigest == "" || item.SpecPath == "" {
-		t.Fatalf("projection = %#v", item)
+	if item.SpecPath != path || item.SpecDigest != spec.Digest(input) {
+		t.Fatalf("projection: %#v", item)
+	}
+	if err = os.WriteFile(path, []byte(strings.Replace(string(input), spec.APIVersion, "pompos.dev/v1", 1)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = rebuildSpecProjections(ctx, metadata, specDir); err == nil {
+		t.Fatal("unsupported spec was silently accepted or skipped")
 	}
 }

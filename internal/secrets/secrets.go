@@ -19,12 +19,3 @@ type Store interface {
 	List(ctx context.Context) ([]Entry, error)
 	Delete(ctx context.Context, key string) error
 }
-
-type NoopStore struct{}
-
-func (NoopStore) Put(context.Context, string, []byte) error { return nil }
-func (NoopStore) Get(context.Context, string) ([]byte, error) {
-	return nil, ErrNotFound
-}
-func (NoopStore) List(context.Context) ([]Entry, error) { return nil, nil }
-func (NoopStore) Delete(context.Context, string) error  { return nil }

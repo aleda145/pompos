@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -50,7 +51,7 @@ func TestSQLiteLifecycle(t *testing.T) {
 	defer metadata.Close()
 	item := ingestion.Ingestion{
 		ID: "abc", Name: "customers", Status: ingestion.StatusPending,
-		Source:      ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
+		Source:      ingestion.Source{Type: "python", URL: "https://example.com/customers.csv"},
 		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "customers"},
 	}
 	if err := metadata.Create(ctx, item); err != nil {
@@ -87,7 +88,7 @@ func TestRunCanBeReclaimedAfterWorkerCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer metadata.Close()
-	item := ingestion.Ingestion{ID: "scheduled", Name: "scheduled", Status: ingestion.StatusPending, Schedule: "* * * * *", Source: ingestion.Source{Type: "csv"}}
+	item := ingestion.Ingestion{ID: "scheduled", Name: "scheduled", Status: ingestion.StatusPending, Schedule: "* * * * *", Source: ingestion.Source{Type: "python"}}
 	if err := metadata.Create(ctx, item); err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +128,7 @@ func TestManualRunIsPersistedBeforeClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer metadata.Close()
-	item := ingestion.Ingestion{ID: "manual", Name: "manual", Status: ingestion.StatusSucceeded, Source: ingestion.Source{Type: "csv"}, SpecPath: "/data/specs/manual.yaml", SpecDigest: "sha256:abc"}
+	item := ingestion.Ingestion{ID: "manual", Name: "manual", Status: ingestion.StatusSucceeded, Source: ingestion.Source{Type: "python"}, SpecPath: "/data/specs/manual.yaml", SpecDigest: "sha256:abc"}
 	if err := metadata.Create(ctx, item); err != nil {
 		t.Fatal(err)
 	}
@@ -202,5 +203,35 @@ func TestSQLiteDestinationsLifecycle(t *testing.T) {
 	configs, err := metadata.ListDestinations(ctx)
 	if err != nil || len(configs) != 2 || configs[0].Name != "local-duckdb" || configs[1].Name != "warehouse" {
 		t.Fatalf("destinations = %#v, %v", configs, err)
+	}
+}
+
+func TestUnsupportedSchemaIsRejectedWithoutDeletingData(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "metadata.sqlite")
+	metadata, err := Open(ctx, path, "unused")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = metadata.Secrets().Put(ctx, "keep-me", []byte("untouched")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = metadata.db.Exec("PRAGMA user_version = 5"); err != nil {
+		t.Fatal(err)
+	}
+	metadata.Close()
+	if reopened, err := Open(ctx, path, "unused"); err == nil {
+		reopened.Close()
+		t.Fatal("unsupported schema accepted")
+	}
+	// Inspect directly, without invoking initialization.
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var value string
+	if err = db.QueryRow("SELECT value FROM secrets WHERE key = 'keep-me'").Scan(&value); err != nil || value != "untouched" {
+		t.Fatalf("existing data was changed: %q %v", value, err)
 	}
 }

@@ -2,7 +2,6 @@ BINARY ?= bin/pompos
 UV ?= uv
 VENV ?= .venv
 LOCAL_PYTHON := $(abspath $(VENV)/bin/python)
-LOCAL_INGESTR := $(abspath $(VENV)/bin/ingestr)
 
 .PHONY: setup build run test vet docker-build docker-up docker-down
 
@@ -18,7 +17,7 @@ build:
 	go build -o $(BINARY) ./cmd/pompos
 
 run: setup
-	POMPOS_PYTHON_BINARY="$(LOCAL_PYTHON)" POMPOS_INGESTR_BINARY="$(LOCAL_INGESTR)" go run ./cmd/pompos
+	POMPOS_PYTHON_BINARY="$(LOCAL_PYTHON)" go run ./cmd/pompos
 
 test:
 	go test ./...

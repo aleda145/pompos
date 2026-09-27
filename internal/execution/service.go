@@ -10,7 +10,6 @@ import (
 	"pompos/internal/compiler"
 	"pompos/internal/ingestion"
 	"pompos/internal/runner"
-	"pompos/internal/secrets"
 	"pompos/internal/spec"
 )
 
@@ -22,16 +21,14 @@ type Store interface {
 
 // Service executes ingestions independently of any transport such as HTTP.
 type Service struct {
-	Store     Store
-	Blueprint compiler.Blueprint
-	Runner    runner.Runner
-	Secrets   secrets.Store
-	Logger    *log.Logger
-	gate      chan struct{}
+	Store  Store
+	Runner runner.Runner
+	Logger *log.Logger
+	gate   chan struct{}
 }
 
 func New(service Service) (*Service, error) {
-	if service.Store == nil || service.Runner == nil || service.Secrets == nil {
+	if service.Store == nil || service.Runner == nil {
 		return nil, errors.New("execution service dependencies must not be nil")
 	}
 	if service.Logger == nil {
@@ -77,27 +74,16 @@ func (s *Service) execute(ctx context.Context, item ingestion.Ingestion) error {
 		err := fmt.Errorf("spec digest changed: queued %s, found %s", item.SpecDigest, digest)
 		return s.finish(item.ID, ingestion.StatusFailed, err.Error())
 	}
-	plan, err := compiler.Compile(document, s.Blueprint)
+	plan, err := compiler.Compile(document)
 	if err != nil {
 		return s.finish(item.ID, ingestion.StatusFailed, err.Error())
-	}
-	credentialValue := ""
-	if plan.CredentialRef != "" {
-		value, err := s.Secrets.Get(ctx, plan.CredentialRef)
-		if errors.Is(err, secrets.ErrNotFound) {
-			return s.finish(item.ID, ingestion.StatusFailed, "referenced credential no longer exists")
-		}
-		if err != nil {
-			return s.finish(item.ID, ingestion.StatusFailed, fmt.Sprintf("load credential: %v", err))
-		}
-		credentialValue = string(value)
 	}
 	s.Logger.Printf("marking ingestion running ingestion_id=%s destination_table=%s", item.ID, plan.DestinationObject)
 	if err := s.Store.MarkRunning(ctx, item.ID, time.Now()); err != nil {
 		s.Logger.Printf("failed to mark ingestion running ingestion_id=%s error=%q", item.ID, err)
 		return err
 	}
-	if err := s.Runner.Run(ctx, item.ID, plan, credentialValue); err != nil {
+	if err := s.Runner.Run(ctx, plan); err != nil {
 		s.Logger.Printf("ingestion failed ingestion_id=%s duration=%s error=%q", item.ID, time.Since(started).Round(time.Millisecond), err)
 		return s.finish(item.ID, ingestion.StatusFailed, err.Error())
 	}

@@ -7,5 +7,5 @@ import (
 )
 
 type Runner interface {
-	Run(context.Context, string, compiler.ExecutionPlan, string) error
+	Run(context.Context, compiler.ExecutionPlan) error
 }

@@ -26,10 +26,11 @@ func TestRunPersistsRunnerFailure(t *testing.T) {
 	defer metadata.Close()
 	item := ingestion.Ingestion{
 		ID: "customers", Name: "customers", Status: ingestion.StatusPending,
-		Source:      ingestion.Source{Type: "csv", URL: "https://example.com/customers.csv"},
+		Source:      ingestion.Source{Type: "python", URL: "https://example.com/customers.csv", Table: "customers"},
 		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "customers"},
 	}
-	document := spec.FromLegacy(item)
+	item.Runtime = ingestion.Runtime{Engine: "python", Script: "customers.py", ScriptDigest: spec.Digest([]byte("fixture"))}
+	document := spec.FromIngestion(item)
 	data, err := spec.Marshal(document)
 	if err != nil {
 		t.Fatal(err)
@@ -43,27 +44,27 @@ func TestRunPersistsRunnerFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	service, err := New(Service{
-		Store: metadata, Blueprint: compiler.LocalDuckDB(destination),
-		Runner: runnerFunc(func(context.Context, string, compiler.ExecutionPlan, string) error {
-			return errors.New("ingestr exploded")
+		Store: metadata,
+		Runner: runnerFunc(func(context.Context, compiler.ExecutionPlan) error {
+			return errors.New("Python failed")
 		}),
-		Secrets: metadata.Secrets(), Logger: log.New(io.Discard, "", 0),
+		Logger: log.New(io.Discard, "", 0),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	queued := ingestion.Run{IngestionID: item.ID, SpecPath: item.SpecPath, SpecDigest: item.SpecDigest}
-	if err := service.Run(ctx, queued); err == nil || err.Error() != "ingestion failed: ingestr exploded" {
+	if err := service.Run(ctx, queued); err == nil || err.Error() != "ingestion failed: Python failed" {
 		t.Fatalf("run error = %v", err)
 	}
 	stored, err := metadata.Get(ctx, item.ID)
-	if err != nil || stored.Status != ingestion.StatusFailed || stored.LastError != "ingestr exploded" {
+	if err != nil || stored.Status != ingestion.StatusFailed || stored.LastError != "Python failed" {
 		t.Fatalf("stored = %#v, error = %v", stored, err)
 	}
 }
 
-type runnerFunc func(context.Context, string, compiler.ExecutionPlan, string) error
+type runnerFunc func(context.Context, compiler.ExecutionPlan) error
 
-func (f runnerFunc) Run(ctx context.Context, id string, plan compiler.ExecutionPlan, credential string) error {
-	return f(ctx, id, plan, credential)
+func (f runnerFunc) Run(ctx context.Context, plan compiler.ExecutionPlan) error {
+	return f(ctx, plan)
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -20,14 +19,10 @@ import (
 	"pompos/internal/compiler"
 	"pompos/internal/config"
 	"pompos/internal/execution"
-	"pompos/internal/ingestion"
-	"pompos/internal/runner"
-	runneringestr "pompos/internal/runner/ingestr"
 	runnerpython "pompos/internal/runner/python"
 	"pompos/internal/scheduler"
 	"pompos/internal/spec"
 	"pompos/internal/store"
-	"pompos/internal/validation"
 	"pompos/internal/web"
 )
 
@@ -56,16 +51,15 @@ func runServer() {
 		logger.Fatal(err)
 	}
 	defer metadata.Close()
-	if err := rebuildSpecProjections(context.Background(), metadata, filepath.Join(cfg.DataDir, "ingestions"), cfg.Destination.Path, logger); err != nil {
+	if err := rebuildSpecProjections(context.Background(), metadata, filepath.Join(cfg.DataDir, "ingestions")); err != nil {
 		logger.Fatal(err)
 	}
 
-	ingestionRunner := runnerpython.Runner{Binary: cfg.PythonBinary, Secrets: metadata.Secrets(), Legacy: runneringestr.Runner{Binary: cfg.Runner.Binary, Logger: logger}}
+	ingestionRunner := runnerpython.Runner{Binary: cfg.PythonBinary, Secrets: metadata.Secrets()}
 	secretStore := metadata.Secrets()
-	blueprint := compiler.LocalDuckDB(cfg.Destination.Path)
 	executor, err := execution.New(execution.Service{
-		Store: metadata, Blueprint: blueprint, Runner: ingestionRunner,
-		Secrets: secretStore, Logger: logger,
+		Store: metadata, Runner: ingestionRunner,
+		Logger: logger,
 	})
 	if err != nil {
 		logger.Fatal(err)
@@ -75,13 +69,9 @@ func runServer() {
 		logger.Fatal(err)
 	}
 	app, err := web.New(web.App{
-		Store:     metadata,
-		Secrets:   secretStore,
-		Scheduler: scheduleManager,
-		Validator: validation.HTTPSourceValidator{Client: &http.Client{
-			Timeout: cfg.RequestTimeout,
-		}},
-		Destination:  ingestion.Destination{Ref: "local-duckdb", Type: cfg.Destination.Type, Path: cfg.Destination.Path},
+		Store:        metadata,
+		Secrets:      secretStore,
+		Scheduler:    scheduleManager,
 		Destinations: metadata,
 		SpecDir:      filepath.Join(cfg.DataDir, "ingestions"),
 		Agent:        &agent.Service{Dir: filepath.Join(cfg.DataDir, "agent"), Secrets: secretStore, Destinations: metadata, Python: ingestionRunner},
@@ -124,7 +114,7 @@ func runServer() {
 	}
 }
 
-func rebuildSpecProjections(ctx context.Context, metadata *store.SQLite, directory, destinationPath string, logger *log.Logger) error {
+func rebuildSpecProjections(ctx context.Context, metadata *store.SQLite, directory string) error {
 	entries, err := os.ReadDir(directory)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -139,14 +129,10 @@ func rebuildSpecProjections(ctx context.Context, metadata *store.SQLite, directo
 		path := filepath.Join(directory, entry.Name())
 		document, data, err := spec.Read(path)
 		if err != nil {
-			if bytes.Contains(data, []byte("apiVersion: pompos.dev/v1\n")) {
-				logger.Printf("legacy ingestion spec ignored path=%s; recreate it as pompos.dev/v1alpha1", path)
-				continue
-			}
 			return fmt.Errorf("load desired ingestion %s: %w", path, err)
 		}
 		id := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
-		if err := metadata.UpsertProjection(ctx, spec.ToProjection(document, id, path, spec.Digest(data), destinationPath)); err != nil {
+		if err := metadata.UpsertProjection(ctx, spec.ToProjection(document, id, path, spec.Digest(data))); err != nil {
 			return err
 		}
 	}
@@ -154,10 +140,10 @@ func rebuildSpecProjections(ctx context.Context, metadata *store.SQLite, directo
 }
 
 func runCommand(args []string) error {
-	return runCommandIO(args, os.Stdout, os.Stderr)
+	return runCommandIO(args, os.Stdout)
 }
 
-func runCommandIO(args []string, stdout, stderr io.Writer) error {
+func runCommandIO(args []string, stdout io.Writer) error {
 	if len(args) != 2 {
 		return errors.New("usage: pompos <validate|plan|run> ingestion.yaml")
 	}
@@ -170,7 +156,7 @@ func runCommandIO(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	cfg := config.Load()
-	plan, err := compiler.Compile(document, compiler.LocalDuckDB(cfg.Destination.Path))
+	plan, err := compiler.Compile(document)
 	if err != nil {
 		return err
 	}
@@ -185,31 +171,17 @@ func runCommandIO(args []string, stdout, stderr io.Writer) error {
 		_, err = stdout.Write(data)
 		return err
 	case "run":
-		logger := log.New(stderr, "pompos: ", log.LstdFlags)
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		credentialValue := ""
-		var selectedRunner runner.Runner = runneringestr.Runner{Binary: cfg.Runner.Binary, Logger: logger}
-		if plan.CredentialRef != "" || plan.Engine == "python" {
-			metadata, err := store.Open(ctx, cfg.MetadataPath, cfg.Destination.Path)
-			if err != nil {
-				return err
-			}
-			defer metadata.Close()
-			if plan.Engine == "python" {
-				selectedRunner = runnerpython.Runner{Binary: cfg.PythonBinary, Secrets: metadata.Secrets()}
-			}
-			if plan.CredentialRef != "" {
-				value, err := metadata.Secrets().Get(ctx, plan.CredentialRef)
-				if err != nil {
-					return fmt.Errorf("load credential %q: %w", plan.CredentialRef, err)
-				}
-				credentialValue = string(value)
-			}
+		metadata, err := store.Open(ctx, cfg.MetadataPath, cfg.Destination.Path)
+		if err != nil {
+			return err
 		}
+		defer metadata.Close()
+		python := runnerpython.Runner{Binary: cfg.PythonBinary, Secrets: metadata.Secrets()}
 		started := time.Now()
 		fmt.Fprintf(stdout, "Running %s\n", document.Metadata.Name)
-		if err := selectedRunner.Run(ctx, document.Metadata.Name, plan, credentialValue); err != nil {
+		if err := python.Run(ctx, plan); err != nil {
 			if ctx.Err() != nil {
 				return fmt.Errorf("run %q interrupted: %w", document.Metadata.Name, ctx.Err())
 			}

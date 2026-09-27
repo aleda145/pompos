@@ -125,7 +125,7 @@ func (a *App) publishChat(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		path := filepath.Join(a.SpecDir, id+".yaml")
-		item := spec.ToProjection(doc, id, path, spec.Digest(data), a.Destination.Path)
+		item := spec.ToProjection(doc, id, path, spec.Digest(data))
 		if err := a.Scheduler.Validate(item.Schedule); err != nil {
 			return err
 		}

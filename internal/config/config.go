@@ -4,27 +4,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 type Config struct {
-	PythonBinary   string
-	Address        string
-	DataDir        string
-	MetadataPath   string
-	Destination    Destination
-	Runner         Runner
-	RequestTimeout time.Duration
+	PythonBinary string
+	Address      string
+	DataDir      string
+	MetadataPath string
+	Destination  Destination
 }
 
 type Destination struct {
 	Type string
 	Path string
-}
-
-type Runner struct {
-	Type   string
-	Binary string
 }
 
 func Load() Config {
@@ -39,11 +31,6 @@ func Load() Config {
 			Type: "duckdb",
 			Path: destinationPath,
 		},
-		Runner: Runner{
-			Type:   "ingestr",
-			Binary: env("POMPOS_INGESTR_BINARY", "ingestr"),
-		},
-		RequestTimeout: 10 * time.Second,
 	}
 }
 

@@ -11,11 +11,11 @@ func TestCanonicalGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	document, err := Parse(input)
+	doc, err := Parse(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := Marshal(document)
+	got, err := Marshal(doc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,80 +24,60 @@ func TestCanonicalGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(got) != string(want) {
-		t.Fatalf("canonical spec =\n%s\nwant:\n%s", got, want)
+		t.Fatalf("canonical spec:\n%s\nwant:\n%s", got, want)
 	}
 }
-
-func TestUnknownFieldFails(t *testing.T) {
-	input, _ := os.ReadFile("testdata/customers.yaml")
-	input = []byte(strings.Replace(string(input), "  format: csv", "  format: csv\n  surprise: true", 1))
-	if _, err := Parse(input); err == nil || !strings.Contains(err.Error(), "field surprise not found") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestCredentialIsReferenceOnly(t *testing.T) {
-	input := []byte(`apiVersion: pompos.dev/v1alpha1
-kind: Ingestion
-metadata: {name: issues}
-source: {type: github, owner: openai, repository: codex, table: issues, credentialRef: github-prod}
-destination: {type: duckdb, path: data/pompos.duckdb, object: issues}
-`)
-	document, err := Parse(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := Marshal(document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "credentialRef: github-prod") {
-		t.Fatalf("spec = %s", data)
-	}
-}
-
-func TestLegacyRuntimeAliasesNormalize(t *testing.T) {
+func TestSpecRejectsRemovedFieldsAndUnsupportedRuntimes(t *testing.T) {
 	input, err := os.ReadFile("testdata/customers.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	input = []byte(strings.Replace(string(input), "  orchestrator: direct", "  target: direct", 1))
-	input = []byte(strings.Replace(string(input), "  engine: ingestr", "  implementation: ingestr", 1))
-	document, err := Parse(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if document.Runtime.Engine != "ingestr" || document.Runtime.Orchestrator != "direct" || document.Runtime.Implementation != "" || document.Runtime.Target != "" {
-		t.Fatalf("runtime = %#v", document.Runtime)
-	}
-	canonical, err := Marshal(document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(canonical), "target:") || strings.Contains(string(canonical), "implementation:") || !strings.Contains(string(canonical), "engine: ingestr") || !strings.Contains(string(canonical), "orchestrator: direct") {
-		t.Fatalf("canonical runtime =\n%s", canonical)
+	for _, change := range [][2]string{
+		{"  engine: python", "  engine: external-cli"},
+		{"  engine: python", "  implementation: python"},
+		{"  orchestrator: direct", "  target: direct"},
+		{"  path: data/pompos.duckdb", "  connectionRef: local-duckdb"},
+		{"  type: python", "  type: csv"},
+		{"  type: python", "  type: github"},
+		{"  table: customers", "  format: csv"},
+		{"  strategy: replace", "  strategy: replace\n  incrementalKey: id"},
+	} {
+		t.Run(change[1], func(t *testing.T) {
+			if _, err := Parse([]byte(strings.Replace(string(input), change[0], change[1], 1))); err == nil {
+				t.Fatal("removed field or runtime accepted")
+			}
+		})
 	}
 }
-
-func TestMaterializationStrategyRequirements(t *testing.T) {
-	input, err := os.ReadFile("testdata/customers.yaml")
+func TestMaterializationAndRuntimeRequirements(t *testing.T) {
+	doc, _, err := Read("testdata/customers.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	document, err := Parse(input)
+	for _, m := range []Materialization{{Strategy: "merge"}, {Strategy: "delete+insert"}, {Strategy: "scd2"}, {Strategy: "merge", PrimaryKey: []string{"id", "id"}}} {
+		doc.Materialization = m
+		if err := doc.Validate(); err == nil {
+			t.Fatalf("invalid materialization accepted: %#v", m)
+		}
+	}
+	doc.Materialization = Materialization{Strategy: "merge", PrimaryKey: []string{"id"}}
+	if err := doc.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	doc.Runtime.ScriptDigest = "sha256:invalid"
+	if err := doc.Validate(); err == nil {
+		t.Fatal("invalid script digest accepted")
+	}
+}
+func TestProjectionPreservesPythonSettings(t *testing.T) {
+	doc, _, err := Read("testdata/customers.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	document.Materialization = Materialization{Strategy: "merge"}
-	if err := document.Validate(); err == nil || !strings.Contains(err.Error(), "requires at least one primary key") {
-		t.Fatalf("merge validation error = %v", err)
-	}
-	document.Materialization = Materialization{Strategy: "delete+insert"}
-	if err := document.Validate(); err == nil || !strings.Contains(err.Error(), "requires an incremental key") {
-		t.Fatalf("delete+insert validation error = %v", err)
-	}
-	document.Materialization = Materialization{Strategy: "scd2", PrimaryKey: []string{"id"}, IncrementalKey: "updated_at"}
-	if err := document.Validate(); err != nil {
-		t.Fatalf("valid SCD2 materialization: %v", err)
+	doc.Schedule = &Schedule{Cron: "0 6 * * *", Timezone: "UTC"}
+	item := ToProjection(doc, "customers", "customers.yaml", "digest")
+	roundtrip := FromIngestion(item)
+	if roundtrip.Runtime.ScriptDigest != doc.Runtime.ScriptDigest || roundtrip.Runtime.SecretRefs[0] != "source-key" || roundtrip.Destination.Path != doc.Destination.Path || roundtrip.Schedule.Cron != doc.Schedule.Cron {
+		t.Fatalf("settings lost: %#v", roundtrip)
 	}
 }
