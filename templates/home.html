@@ -7,7 +7,7 @@
 <div class="cards">
   {{range .Ingestions}}
   <a class="card" href="/ingestions/{{.ID}}">
-    <div class="card-title">{{if eq .Source.Type "github"}}GitHub{{else}}Remote CSV{{end}} → DuckDB</div>
+    <div class="card-title">{{if eq .Source.Type "github"}}GitHub{{else if eq .Source.Type "python"}}Python · dlt{{else}}Remote CSV{{end}} → DuckDB</div>
     <strong>{{.Name}}</strong>
     <span class="url">{{.Source.DisplayLocation}}</span>
     <dl>
@@ -22,7 +22,7 @@
 {{else}}
 <div class="empty">
   <p>No ingestions yet.</p>
-  <p>Load a public CSV into the platform DuckDB to get started.</p>
+  <p>Describe what you want to ingest. Develop and test it with the agent, then let Pompos run it.</p>
 </div>
 {{end}}
 {{end}}

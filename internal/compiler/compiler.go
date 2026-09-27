@@ -23,6 +23,10 @@ func DuckDB(ref, path string) Blueprint {
 }
 
 type ExecutionPlan struct {
+	Script            string   `yaml:"script,omitempty"`
+	ScriptDigest      string   `yaml:"scriptDigest,omitempty"`
+	SecretRefs        []string `yaml:"secretRefs,omitempty"`
+	DestinationPath   string   `yaml:"destinationPath,omitempty"`
 	Engine            string   `yaml:"engine"`
 	EngineVersion     string   `yaml:"engineVersion"`
 	Orchestrator      string   `yaml:"orchestrator"`
@@ -53,7 +57,7 @@ func Compile(document spec.Ingestion, blueprint Blueprint) (ExecutionPlan, error
 	if orchestrator := document.Runtime.EffectiveOrchestrator(); orchestrator != "" && orchestrator != blueprint.Orchestrator {
 		return ExecutionPlan{}, fmt.Errorf("policy.runtime-orchestrator: orchestrator %q is not enabled", orchestrator)
 	}
-	if engine := document.Runtime.EffectiveEngine(); engine != "" && engine != blueprint.Engine {
+	if engine := document.Runtime.EffectiveEngine(); engine != "" && engine != blueprint.Engine && engine != "python" {
 		return ExecutionPlan{}, fmt.Errorf("policy.runtime-engine: engine %q is not allowed", engine)
 	}
 	plan := ExecutionPlan{Engine: blueprint.Engine, EngineVersion: blueprint.EngineVersion, Orchestrator: blueprint.Orchestrator,
@@ -61,6 +65,12 @@ func Compile(document spec.Ingestion, blueprint Blueprint) (ExecutionPlan, error
 		Strategy: defaultValue(document.Materialization.Strategy, "replace"), PrimaryKey: document.Materialization.PrimaryKey,
 		IncrementalKey: document.Materialization.IncrementalKey, SchemaNaming: blueprint.SchemaNaming}
 	switch document.Source.Type {
+	case "python":
+		plan.Engine = "python"
+		plan.EngineVersion = ""
+		plan.SourceURI, plan.SourceTable = document.Source.URL, document.Source.Table
+		plan.Script, plan.ScriptDigest, plan.SecretRefs = document.Runtime.Script, document.Runtime.ScriptDigest, document.Runtime.SecretRefs
+		plan.DestinationPath = destinationPath
 	case "http-file":
 		plan.SourceURI, plan.SourceTable = document.Source.URL, "data#csv"
 	case "github":

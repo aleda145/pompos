@@ -207,23 +207,6 @@ func TestCreationYAMLPreviewUsesCanonicalSerializer(t *testing.T) {
 		t.Fatalf("preview =\n%s\nwant:\n%s", preview.YAML, want)
 	}
 
-	page := httptest.NewRecorder()
-	app.Handler().ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/ingestions/new?source=csv", nil))
-	if !strings.Contains(page.Body.String(), `<section class="yaml-preview" data-yaml-preview>`) || strings.Contains(page.Body.String(), `<details class="yaml-preview"`) {
-		t.Fatalf("YAML preview is not always visible: %s", page.Body.String())
-	}
-	if !strings.Contains(page.Body.String(), `name="runtime_engine"`) || !strings.Contains(page.Body.String(), `name="runtime_orchestrator"`) {
-		t.Fatalf("runtime selectors are missing: %s", page.Body.String())
-	}
-	if !strings.Contains(page.Body.String(), `name="destination_ref"`) || strings.Contains(page.Body.String(), `name="destination_path"`) {
-		t.Fatalf("destination controls are missing: %s", page.Body.String())
-	}
-	if !strings.Contains(page.Body.String(), `value="merge"`) || !strings.Contains(page.Body.String(), `name="primary_key"`) || !strings.Contains(page.Body.String(), `name="incremental_key"`) {
-		t.Fatalf("loading strategy controls are missing: %s", page.Body.String())
-	}
-	if !strings.Contains(page.Body.String(), `data-column-discovery`) || !strings.Contains(page.Body.String(), `data-primary-suggestions`) || !strings.Contains(page.Body.String(), `data-incremental-suggestions`) {
-		t.Fatalf("column discovery controls are missing: %s", page.Body.String())
-	}
 }
 
 func TestColumnPreviewUsesSamplesAndSavedGitHubSecret(t *testing.T) {
@@ -410,11 +393,6 @@ func TestCreateGitHubIngestionForSelectedTable(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	page := httptest.NewRecorder()
-	app.Handler().ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/ingestions/new?source=github", nil))
-	if page.Code != http.StatusOK || strings.Count(page.Body.String(), `type="radio" name="source_table"`) != len(githubTableOptions) || strings.Contains(page.Body.String(), `name="tables"`) {
-		t.Fatalf("GitHub table choice is not singular: status = %d, body = %s", page.Code, page.Body.String())
 	}
 	form := url.Values{
 		"source_type": {"github"}, "repository": {"https://github.com/OpenAI/codex"},

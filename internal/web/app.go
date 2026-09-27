@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"pompos/internal/agent"
 	"pompos/internal/compiler"
 	"pompos/internal/destination"
 	"pompos/internal/ingestion"
@@ -51,6 +52,7 @@ type DestinationCatalog interface {
 }
 
 type App struct {
+	Agent        *agent.Service
 	Store        MetadataStore
 	Policy       policy.Engine // retained for source compatibility; compilation owns policy decisions
 	Secrets      secrets.Store
@@ -88,7 +90,7 @@ func New(app App) (*App, error) {
 		app.Destinations = catalog
 	}
 	app.templates = make(map[string]*template.Template, 5)
-	for _, page := range []string{"home", "new", "detail", "secrets", "destinations"} {
+	for _, page := range []string{"home", "new", "detail", "secrets", "destinations", "chat", "agent-settings"} {
 		parsed, err := template.New(page).ParseFS(templatefiles.FS, "layout.html", page+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s template: %w", page, err)
@@ -101,7 +103,12 @@ func New(app App) (*App, error) {
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", a.home)
-	mux.HandleFunc("GET /ingestions/new", a.newIngestion)
+	mux.HandleFunc("GET /ingestions/new", a.chatPage)
+	mux.HandleFunc("GET /chat/{id}", a.chatPage)
+	mux.HandleFunc("POST /chat/{id}", a.chatTurn)
+	mux.HandleFunc("POST /chat/{id}/publish", a.publishChat)
+	mux.HandleFunc("GET /settings/agent", a.agentSettings)
+	mux.HandleFunc("POST /settings/agent", a.agentSettings)
 	mux.HandleFunc("POST /ingestions", a.createIngestion)
 	mux.HandleFunc("POST /ingestions/preview", a.previewIngestionYAML)
 	mux.HandleFunc("POST /sources/columns", a.previewSourceColumns)
@@ -206,6 +213,7 @@ type detailPageData struct {
 	ScheduleError string
 	RunQueued     bool
 	YAML          string
+	Python        string
 }
 
 var githubTableOptions = []githubTableOption{
@@ -636,11 +644,21 @@ func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, err)
 		return
 	}
+	pythonCode := ""
+	if item.Runtime.Engine == "python" {
+		code, err := os.ReadFile(item.Runtime.Script)
+		if err != nil {
+			a.serverError(w, err)
+			return
+		}
+		pythonCode = string(code)
+	}
 	a.render(w, http.StatusOK, "detail", detailPageData{
 		Title: item.Name, Ingestion: item, SpecPath: item.SpecPath,
 		NextRun: a.Scheduler.NextRun(item.ID), ScheduleValue: item.Schedule, ScheduleSaved: r.URL.Query().Get("schedule") == "saved",
 		RunQueued: r.URL.Query().Get("run") == "queued",
 		YAML:      string(yamlData),
+		Python:    pythonCode,
 	})
 }
 
@@ -976,7 +994,13 @@ func describeSecrets(entries []secrets.Entry, ingestions []ingestion.Ingestion) 
 		inferredType := ""
 		mixedTypes := false
 		for _, item := range ingestions {
-			if item.Source.SecretKey != entry.Key {
+			usesSecret := item.Source.SecretKey == entry.Key
+			for _, ref := range item.Runtime.SecretRefs {
+				if ref == entry.Key {
+					usesSecret = true
+				}
+			}
+			if !usesSecret {
 				continue
 			}
 			view.Ingestions = append(view.Ingestions, item)

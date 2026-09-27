@@ -16,11 +16,14 @@ import (
 	"syscall"
 	"time"
 
+	"pompos/internal/agent"
 	"pompos/internal/compiler"
 	"pompos/internal/config"
 	"pompos/internal/execution"
 	"pompos/internal/ingestion"
+	"pompos/internal/runner"
 	runneringestr "pompos/internal/runner/ingestr"
+	runnerpython "pompos/internal/runner/python"
 	"pompos/internal/scheduler"
 	"pompos/internal/spec"
 	"pompos/internal/store"
@@ -57,7 +60,7 @@ func runServer() {
 		logger.Fatal(err)
 	}
 
-	ingestionRunner := runneringestr.Runner{Binary: cfg.Runner.Binary, Logger: logger}
+	ingestionRunner := runnerpython.Runner{Binary: cfg.PythonBinary, Secrets: metadata.Secrets(), Legacy: runneringestr.Runner{Binary: cfg.Runner.Binary, Logger: logger}}
 	secretStore := metadata.Secrets()
 	blueprint := compiler.LocalDuckDB(cfg.Destination.Path)
 	executor, err := execution.New(execution.Service{
@@ -81,6 +84,7 @@ func runServer() {
 		Destination:  ingestion.Destination{Ref: "local-duckdb", Type: cfg.Destination.Type, Path: cfg.Destination.Path},
 		Destinations: metadata,
 		SpecDir:      filepath.Join(cfg.DataDir, "ingestions"),
+		Agent:        &agent.Service{Dir: filepath.Join(cfg.DataDir, "agent"), Secrets: secretStore, Destinations: metadata, Python: ingestionRunner},
 		Logger:       logger,
 	})
 	if err != nil {
@@ -185,21 +189,27 @@ func runCommandIO(args []string, stdout, stderr io.Writer) error {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		credentialValue := ""
-		if plan.CredentialRef != "" {
+		var selectedRunner runner.Runner = runneringestr.Runner{Binary: cfg.Runner.Binary, Logger: logger}
+		if plan.CredentialRef != "" || plan.Engine == "python" {
 			metadata, err := store.Open(ctx, cfg.MetadataPath, cfg.Destination.Path)
 			if err != nil {
 				return err
 			}
 			defer metadata.Close()
-			value, err := metadata.Secrets().Get(ctx, plan.CredentialRef)
-			if err != nil {
-				return fmt.Errorf("load credential %q: %w", plan.CredentialRef, err)
+			if plan.Engine == "python" {
+				selectedRunner = runnerpython.Runner{Binary: cfg.PythonBinary, Secrets: metadata.Secrets()}
 			}
-			credentialValue = string(value)
+			if plan.CredentialRef != "" {
+				value, err := metadata.Secrets().Get(ctx, plan.CredentialRef)
+				if err != nil {
+					return fmt.Errorf("load credential %q: %w", plan.CredentialRef, err)
+				}
+				credentialValue = string(value)
+			}
 		}
 		started := time.Now()
 		fmt.Fprintf(stdout, "Running %s\n", document.Metadata.Name)
-		if err := (runneringestr.Runner{Binary: cfg.Runner.Binary, Logger: logger}).Run(ctx, document.Metadata.Name, plan, credentialValue); err != nil {
+		if err := selectedRunner.Run(ctx, document.Metadata.Name, plan, credentialValue); err != nil {
 			if ctx.Err() != nil {
 				return fmt.Errorf("run %q interrupted: %w", document.Metadata.Name, ctx.Err())
 			}

@@ -6,9 +6,8 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/pompos ./cmd/pompos
 
 FROM python:3.12-slim-bookworm
-ARG INGESTR_VERSION=1.1.8
-ARG DUCKDB_VERSION=1.5.3
-RUN pip install --no-cache-dir "ingestr==${INGESTR_VERSION}" "duckdb==${DUCKDB_VERSION}" \
+COPY requirements-local.txt /tmp/requirements-local.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-local.txt \
     && useradd --create-home --uid 10001 pompos \
     && mkdir -p /data/ingestions \
     && chown -R pompos:pompos /data

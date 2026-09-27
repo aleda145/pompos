@@ -2,7 +2,7 @@
 <a class="back" href="/">← Ingestions</a>
 <div class="page-heading">
   <h1>{{.Ingestion.Name}}</h1>
-  <form method="post" action="/ingestions/{{.Ingestion.ID}}/run"><button type="submit">Run again</button></form>
+  <form method="post" action="/ingestions/{{.Ingestion.ID}}/run"><button type="submit">Run ingestion</button></form>
 </div>
 {{if .RunQueued}}<div class="notice notice-success" role="status">Run queued. It will continue if you leave this page.</div>{{end}}
 
@@ -28,6 +28,7 @@
   </section>
   {{if .Ingestion.LastError}}<section><h2>Latest error</h2><pre class="error">{{.Ingestion.LastError}}</pre></section>{{end}}
   <section class="metadata"><h2>Metadata</h2><dl><div><dt>Ingestion ID</dt><dd><code>{{.Ingestion.ID}}</code></dd></div><div><dt>Spec path</dt><dd><code>{{.SpecPath}}</code></dd></div></dl></section>
-  <section class="yaml-section"><h2>YAML</h2><pre class="yaml-code"><code>{{.YAML}}</code></pre></section>
+  {{if .Python}}<section class="yaml-section"><h2>Python</h2><p class="hint">Saved at <code>{{.Ingestion.Runtime.Script}}</code>. This exact script was source-tested before saving.</p><pre class="yaml-code"><code>{{.Python}}</code></pre></section>{{end}}
+ <section class="yaml-section"><h2>YAML</h2><pre class="yaml-code"><code>{{.YAML}}</code></pre></section>
 </div>
 {{end}}

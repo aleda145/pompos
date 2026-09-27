@@ -59,10 +59,13 @@ type Materialization struct {
 	IncrementalKey string   `yaml:"incrementalKey,omitempty"`
 }
 type Runtime struct {
-	Engine         string `yaml:"engine,omitempty"`
-	Orchestrator   string `yaml:"orchestrator,omitempty"`
-	Implementation string `yaml:"implementation,omitempty"` // accepted as a v1alpha1 compatibility alias
-	Target         string `yaml:"target,omitempty"`         // accepted as a v1alpha1 compatibility alias
+	Script         string   `yaml:"script,omitempty"`
+	ScriptDigest   string   `yaml:"scriptDigest,omitempty"`
+	SecretRefs     []string `yaml:"secretRefs,omitempty"`
+	Engine         string   `yaml:"engine,omitempty"`
+	Orchestrator   string   `yaml:"orchestrator,omitempty"`
+	Implementation string   `yaml:"implementation,omitempty"` // accepted as a v1alpha1 compatibility alias
+	Target         string   `yaml:"target,omitempty"`         // accepted as a v1alpha1 compatibility alias
 }
 type Schedule struct {
 	Cron     string `yaml:"cron"`
@@ -136,6 +139,13 @@ func (s Ingestion) Validate() error {
 		return errors.New("spec.metadata.name: is required")
 	}
 	switch s.Source.Type {
+	case "python":
+		if runtime.Engine != "python" || runtime.Script == "" || !strings.HasSuffix(runtime.Script, ".py") || runtime.ScriptDigest == "" {
+			return errors.New("python source requires a python runtime, script path, and script digest")
+		}
+		if s.Source.Table == "" {
+			return errors.New("python source requires one source table")
+		}
 	case "http-file":
 		parsed, err := url.ParseRequestURI(s.Source.URL)
 		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
@@ -153,6 +163,12 @@ func (s Ingestion) Validate() error {
 		}
 	default:
 		return fmt.Errorf("spec.source.type: unsupported source type %q", s.Source.Type)
+	}
+	if runtime.Engine == "python" && s.Source.Type != "python" {
+		return errors.New("python runtime requires a python source")
+	}
+	if runtime.Engine == "python" && s.Materialization.Strategy != "" && s.Materialization.Strategy != "replace" && s.Materialization.Strategy != "append" && s.Materialization.Strategy != "merge" {
+		return errors.New("python supports replace, append, or merge")
 	}
 	if s.Destination.Type == "" && s.Destination.Path == "" {
 		if s.Destination.ConnectionRef == "" {
@@ -175,7 +191,7 @@ func (s Ingestion) Validate() error {
 	if err := s.Materialization.Validate(); err != nil {
 		return err
 	}
-	if runtime.Engine != "" && runtime.Engine != "ingestr" {
+	if runtime.Engine != "" && runtime.Engine != "ingestr" && runtime.Engine != "python" {
 		return fmt.Errorf("spec.runtime.engine: unsupported engine %q", runtime.Engine)
 	}
 	orchestrator := runtime.Orchestrator
@@ -257,6 +273,9 @@ func FromLegacy(item ingestion.Ingestion) Ingestion {
 	if item.Source.Type == "github" {
 		source = Source{Type: "github", Owner: item.Source.Owner, Repository: item.Source.Repository, Table: item.Source.Table, CredentialRef: item.Source.SecretKey}
 	}
+	if item.Source.Type == "python" {
+		source = Source{Type: "python", URL: item.Source.URL, Table: item.Source.Table}
+	}
 	engine, orchestrator := item.Runtime.Engine, item.Runtime.Orchestrator
 	if engine == "" {
 		engine = "ingestr"
@@ -271,7 +290,7 @@ func FromLegacy(item ingestion.Ingestion) Ingestion {
 	document := Ingestion{APIVersion: APIVersion, Kind: Kind, Metadata: Metadata{Name: item.Name}, Source: source,
 		Destination:     Destination{Type: item.Destination.Type, Path: item.Destination.Path, Object: item.Destination.Table},
 		Materialization: Materialization{Strategy: strategy, PrimaryKey: item.Materialization.PrimaryKey, IncrementalKey: item.Materialization.IncrementalKey},
-		Runtime:         Runtime{Engine: engine, Orchestrator: orchestrator}}
+		Runtime:         Runtime{Engine: engine, Orchestrator: orchestrator, Script: item.Runtime.Script, ScriptDigest: item.Runtime.ScriptDigest, SecretRefs: item.Runtime.SecretRefs}}
 	if item.Schedule != "" {
 		document.Schedule = &Schedule{Cron: item.Schedule, Timezone: "UTC"}
 	}
@@ -283,6 +302,9 @@ func ToProjection(document Ingestion, id, path, digest, destinationPath string) 
 	if document.Source.Type == "github" {
 		source = ingestion.Source{Type: "github", Owner: document.Source.Owner, Repository: document.Source.Repository, Table: document.Source.Table, SecretKey: document.Source.CredentialRef}
 	}
+	if document.Source.Type == "python" {
+		source = ingestion.Source{Type: "python", URL: document.Source.URL, Table: document.Source.Table}
+	}
 	engine, orchestrator := document.Runtime.EffectiveEngine(), document.Runtime.EffectiveOrchestrator()
 	if engine == "" {
 		engine = "ingestr"
@@ -293,7 +315,7 @@ func ToProjection(document Ingestion, id, path, digest, destinationPath string) 
 	item := ingestion.Ingestion{ID: id, Name: document.Metadata.Name, Status: ingestion.StatusPending, Source: source,
 		Destination:     ingestion.Destination{Ref: document.Destination.ConnectionRef, Type: document.Destination.Type, Path: document.Destination.Path, Table: document.Destination.Object},
 		Materialization: ingestion.Materialization{Strategy: defaultStrategy(document.Materialization.Strategy), PrimaryKey: document.Materialization.PrimaryKey, IncrementalKey: document.Materialization.IncrementalKey},
-		Runtime:         ingestion.Runtime{Engine: engine, Orchestrator: orchestrator}, SpecPath: path, SpecDigest: digest}
+		Runtime:         ingestion.Runtime{Engine: engine, Orchestrator: orchestrator, Script: document.Runtime.Script, ScriptDigest: document.Runtime.ScriptDigest, SecretRefs: document.Runtime.SecretRefs}, SpecPath: path, SpecDigest: digest}
 	if item.Destination.Type == "" {
 		item.Destination.Type, item.Destination.Path = "duckdb", destinationPath
 	}

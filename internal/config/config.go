@@ -8,6 +8,7 @@ import (
 )
 
 type Config struct {
+	PythonBinary   string
 	Address        string
 	DataDir        string
 	MetadataPath   string
@@ -30,6 +31,7 @@ func Load() Config {
 	dataDir := env("POMPOS_DATA_DIR", "./data")
 	destinationPath := env("POMPOS_DESTINATION_PATH", joinDataPath(dataDir, "pompos.duckdb"))
 	return Config{
+		PythonBinary: env("POMPOS_PYTHON_BINARY", "python3"),
 		Address:      env("POMPOS_ADDRESS", ":8080"),
 		DataDir:      dataDir,
 		MetadataPath: env("POMPOS_METADATA_PATH", joinDataPath(dataDir, "pompos.sqlite")),

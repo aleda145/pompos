@@ -60,6 +60,9 @@ type Destination struct {
 }
 
 type Runtime struct {
+	Script       string
+	ScriptDigest string
+	SecretRefs   []string
 	Engine       string
 	Orchestrator string
 }
