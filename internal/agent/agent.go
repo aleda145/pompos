@@ -43,6 +43,7 @@ type Service struct {
 	mu             sync.Mutex
 }
 type Settings struct {
+	ExaSkipped   bool   `json:"exa_skipped"`
 	ExaAPIKeyRef string `json:"exa_api_key_ref"`
 	Endpoint     string `json:"endpoint"`
 	Model        string `json:"model"`
@@ -135,6 +136,15 @@ func (s *Service) settings() (Settings, error) {
 func (s *Service) SaveSettings(v Settings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	v.Endpoint = strings.TrimRight(strings.TrimSpace(v.Endpoint), "/")
+	v.Model = strings.TrimSpace(v.Model)
+	if err := v.Validate(); err != nil {
+		return err
+	}
+	return writeJSON(filepath.Join(s.Dir, "settings.json"), v)
+}
+
+func (v Settings) Validate() error {
 	u, e := url.Parse(v.Endpoint)
 	if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("endpoint must be an HTTP(S) base URL without credentials or query parameters")
@@ -142,9 +152,9 @@ func (s *Service) SaveSettings(v Settings) error {
 	if strings.TrimSpace(v.Model) == "" {
 		return errors.New("model is required")
 	}
-	v.Endpoint = strings.TrimRight(v.Endpoint, "/")
-	return writeJSON(filepath.Join(s.Dir, "settings.json"), v)
+	return nil
 }
+
 func (s *Service) Load(id string) (Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

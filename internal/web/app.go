@@ -74,7 +74,7 @@ func New(app App) (*App, error) {
 		app.Destinations = catalog
 	}
 	app.templates = make(map[string]*template.Template, 5)
-	for _, page := range []string{"home", "detail", "secrets", "destinations", "chat", "agent-settings"} {
+	for _, page := range []string{"home", "detail", "secrets", "destinations", "chat", "agent-settings", "setup"} {
 		parsed, err := template.New(page).ParseFS(templatefiles.FS, "layout.html", page+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s template: %w", page, err)
@@ -87,6 +87,9 @@ func New(app App) (*App, error) {
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", a.home)
+	mux.HandleFunc("GET /setup", a.setupPage)
+	mux.HandleFunc("POST /setup/agent", a.setupAgent)
+	mux.HandleFunc("POST /setup/search", a.setupSearch)
 	mux.HandleFunc("GET /ingestions/new", a.chatPage)
 	mux.HandleFunc("GET /chat/{id}", a.chatPage)
 	mux.HandleFunc("POST /chat/{id}", a.chatTurn)
@@ -104,7 +107,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /destinations", a.saveDestination)
 	assets, _ := fs.Sub(staticfiles.FS, ".")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(assets))))
-	return a.logRequests(a.recover(mux))
+	return a.logRequests(a.recover(a.requireSetup(mux)))
 }
 
 func (a *App) home(w http.ResponseWriter, r *http.Request) {

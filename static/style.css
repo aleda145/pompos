@@ -157,3 +157,13 @@ button:disabled { opacity: .5; cursor: wait; }
 .loading-options .hint { grid-column: 1 / -1; margin: 0; }
 .loading-options button { justify-self: start; font-size: .8rem; padding: .5rem .75rem; grid-column: 1 / -1; }
 @media (max-width: 560px) { .loading-options { grid-template-columns: 1fr; } }
+
+.setup-flow { max-width: 640px; margin: 2rem auto; }
+.setup-steps { display: flex; gap: 1.5rem; padding: 0; margin: 1rem 0 2rem; list-style: none; color: #617066; }
+.setup-steps li { border-bottom: 2px solid #dce3de; padding-bottom: .6rem; flex: 1; }
+.setup-steps li[aria-current="step"] { color: #245c3c; border-color: #245c3c; font-weight: 600; }
+.setup-steps span { display: block; font-size: .8rem; font-weight: 400; margin-top: .25rem; }
+.setup-checkbox { display: flex; align-items: center; gap: .6rem; margin: 1rem 0; }
+.setup-checkbox input { width: auto; }
+.setup-actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
+.setup-actions .secondary { background: transparent; color: #245c3c; border: 1px solid #b9c2bc; }

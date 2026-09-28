@@ -63,7 +63,7 @@ func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T)
 	if binary := os.Getenv("POMPOS_TEST_PYTHON"); binary != "" {
 		service.Python = runnerpython.Runner{Binary: binary, Secrets: db.Secrets()}
 	}
-	if e = service.SaveSettings(agent.Settings{Endpoint: model.URL, Model: "test"}); e != nil {
+	if e = service.SaveSettings(agent.Settings{Endpoint: model.URL, Model: "test", ExaSkipped: true}); e != nil {
 		t.Fatal(e)
 	}
 	schedules := &scheduleManagerStub{enqueue: func(ctx context.Context, id string) error { return db.EnqueueRun(ctx, id, time.Now()) }}
@@ -202,7 +202,7 @@ func TestChatFlushesStepsBeforeModelCompletesAndOffersSecretActions(t *testing.T
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(response)), Header: make(http.Header)}, nil
 	})}
-	if err = service.SaveSettings(agent.Settings{Endpoint: "http://model.test/v1", Model: "test"}); err != nil {
+	if err = service.SaveSettings(agent.Settings{Endpoint: "http://model.test/v1", Model: "test", ExaSkipped: true}); err != nil {
 		t.Fatal(err)
 	}
 	app, err := New(App{Agent: service, Store: db, Secrets: db.Secrets(), SpecDir: filepath.Join(dir, "ingestions"), Logger: log.New(io.Discard, "", 0)})
