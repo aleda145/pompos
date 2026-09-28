@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {readChatEvents} = require('./chat-stream.js');
+const {readChatEvents, rowEstimateText} = require('./chat-stream.js');
 const encoder = new TextEncoder();
 
 test('steps arrive before completion, even across split Unicode and lines', async () => {
@@ -36,4 +36,13 @@ test('a rejected event cancels the stream and releases the reader', async () => 
   await assert.rejects(readChatEvents(body, event => { throw new Error(event.error); }), /Model offline/);
   assert.equal(cancelled, true);
   assert.equal(body.locked, false);
+});
+
+
+test('row estimates distinguish unknown, zero, approximate and observed exact counts', () => {
+  assert.equal(rowEstimateText(), 'Unknown');
+  assert.equal(rowEstimateText({rows: null, kind: 'unknown'}), 'Unknown');
+  assert.equal(rowEstimateText({rows: 0, kind: 'exact'}), '0 rows at observation time');
+  assert.equal(rowEstimateText({rows: 12345, kind: 'approximate'}), 'About 12,345 rows');
+  assert.equal(rowEstimateText({rows: 12345, kind: 'exact'}), '12,345 rows at observation time');
 });

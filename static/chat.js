@@ -7,7 +7,7 @@
   let lastInput = null;
   let activeCall = null;
   let handoffKey = '';
-  const toolNames = {context: 'Inspect connections', write_script: 'Write Python', test_script: 'Test source', finish: 'Check ingestion', ask_user: 'Request input', propose_loading: 'Suggest schedule & loading'};
+  const toolNames = {context: 'Inspect connections', write_script: 'Write Python', test_script: 'Test source', finish: 'Check ingestion', ask_user: 'Request input', propose_loading: 'Suggest schedule & loading', propose_validation: 'Request validation', validate_ingestion: 'Validate sample load'};
 
   function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -65,7 +65,7 @@
         try { args = JSON.parse(call.function.arguments); } catch { args = {}; }
         if (name === 'write_script' && args.table) title += ` · ${args.table}`;
         if (name === 'ask_user' && args.kind === 'secret') title = `Request key · ${args.secret_name || 'source credential'}`;
-        if (name === 'test_script' && result && !failed) {
+        if ((name === 'test_script' || name === 'validate_ingestion') && result && !failed) {
           const match = result.content.match(/"sample_count"\s*:\s*(\d+)/);
           if (match) title += ` · ${match[1]} sample rows`;
         }
@@ -139,6 +139,26 @@
     details.append(form); container.append(details);
     return container;
   }
+  function validationCard(pending) {
+    const container = element('div', 'loading-card');
+    const summary = element('dl', 'loading-summary');
+    const estimate = session.estimate;
+    const limit = pending.validation.limit;
+    const expected = estimate?.rows != null ? Math.min(limit, estimate.rows) : null;
+    for (const [label, text] of [
+      ['Validation sample', `Up to ${limit.toLocaleString('en-US')} rows${expected != null ? ` · expected ${estimate.kind === 'approximate' ? 'about ' : ''}${expected.toLocaleString('en-US')}` : ''}`],
+      ['Production extraction', rowEstimateText(estimate)],
+      ['Loading check', `${session.loading?.strategy} · load the same sample twice`],
+      ['Test destination', 'Temporary DuckDB database, removed after validation'],
+    ]) {
+      const row = element('div'); row.append(element('dt', '', label), element('dd', '', text)); summary.append(row);
+    }
+    container.append(summary, element('p', 'hint', estimate?.basis || 'No reliable source count is available; validation can still proceed.'));
+    if (estimate?.observed_at) container.append(element('p', 'hint', `Count observed ${estimate.observed_at}. Production estimates describe extracted rows, not new rows inserted, and may change before a run.`));
+    container.append(element('p', 'hint', 'Checks sample loading, row keys and repeat-load counts. The source may return whole API pages. This does not verify the full dataset or access to the production destination. Ask for a different sample size if needed.'));
+    if (session.loading?.strategy === 'append') container.append(element('p', 'hint', 'Append intentionally keeps both copies in this test; repeated full extractions can duplicate production rows.'));
+    return container;
+  }
   function renderHandoff() {
     const target = $('#handoff');
     if (busy || session.published_id || session.ready) { target.hidden = true; return; }
@@ -149,6 +169,7 @@
     if (pending) {
       target.append(element('p', 'handoff-prompt', pending.prompt));
       if (pending.kind === 'loading' && pending.loading) target.append(loadingCard(pending));
+      if (pending.kind === 'validation' && pending.validation) target.append(validationCard(pending));
       if (pending.kind === 'secret') {
         const details = element('details', 'secret-entry');
         details.append(element('summary', '', `Add or update “${pending.secret_name}”`));
@@ -189,8 +210,15 @@
     $('#draft').hidden = !session.draft;
     $('#draft-target').textContent = session.draft ? `${session.draft.destination} / ${session.draft.table} · ${session.draft.strategy} · ${session.draft.schedule ? `${session.draft.schedule} UTC` : 'manual'}` : '';
     $('#draft-code').textContent = session.draft?.code || '';
+    $('#row-estimate').hidden = !session.draft;
+    $('#row-estimate').textContent = `Production extraction: ${rowEstimateText(session.estimate)}${session.estimate?.basis ? ` · ${session.estimate.basis}` : ''}${session.estimate?.observed_at ? ` · observed ${session.estimate.observed_at}` : ''}. Future runs may differ.`;
+    $('#validation-result').hidden = !session.validation;
+    if (session.validation) {
+      const result = session.validation.result;
+      $('#validation-result').textContent = `Validation passed: ${result.sample_count} source rows; ${result.first_load_rows} rows after the first load, ${result.second_load_rows} after replaying the sample. Temporary database removed.`;
+    }
     $('#publish').hidden = busy || !session.ready || !!session.published_id;
-    $('#publish-status').textContent = session.loading?.cron ? `Source tested. Saving enables ${session.loading.cron} (UTC) · ${session.loading.strategy}.` : `Source tested. Manual runs · ${session.loading?.strategy || session.draft?.strategy || 'replace'}.`;
+    $('#publish-status').textContent = session.loading?.cron ? `Validation passed. Saving enables ${session.loading.cron} (UTC) · ${session.loading.strategy}.` : `Validation passed. Manual runs · ${session.loading?.strategy || session.draft?.strategy || 'replace'}.`;
     $('#send').disabled = busy || !!session.published_id;
     $('#message').disabled = busy || !!session.published_id;
     $('#published').hidden = !session.published_id;

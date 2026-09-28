@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"pompos/internal/compiler"
+	"pompos/internal/ingestion"
 	"pompos/internal/secrets"
 	"pompos/internal/spec"
 )
@@ -31,6 +32,67 @@ func (r Runner) Run(ctx context.Context, plan compiler.ExecutionPlan) error {
 	return err
 }
 func (r Runner) Execute(ctx context.Context, plan compiler.ExecutionPlan, probe bool) (string, error) {
+	return r.execute(ctx, plan, probe, 0)
+}
+
+// Validate loads a bounded sample twice into a disposable database, using the production loader.
+func (r Runner) Validate(ctx context.Context, plan compiler.ExecutionPlan, limit int) (ValidationResult, string, error) {
+	var result ValidationResult
+	if limit < 1 || limit > 1000 {
+		return result, "", fmt.Errorf("validation limit must be between 1 and 1000")
+	}
+	directory, err := os.MkdirTemp("", "pompos-validation-*")
+	if err != nil {
+		return result, "", err
+	}
+	defer os.RemoveAll(directory)
+	data, err := os.ReadFile(plan.Script)
+	if err != nil {
+		return result, "", err
+	}
+	plan.Script = filepath.Join(directory, "validate.py")
+	if err = os.WriteFile(plan.Script, data, 0600); err != nil {
+		return result, "", err
+	}
+	plan.DestinationPath = filepath.Join(directory, "sample.duckdb")
+	output, err := r.execute(ctx, plan, false, limit)
+	if err != nil {
+		return result, output, err
+	}
+	if err = ReadResult(output, "POMPOS_VALIDATION_RESULT=", &result); err != nil {
+		return result, output, err
+	}
+	expected := result.SampleCount
+	if plan.Strategy == "append" {
+		expected *= 2
+	}
+	if result.SampleCount < 1 || result.SampleCount > limit || result.FirstLoadRows != result.SampleCount || result.SecondLoadRows != expected {
+		return result, output, fmt.Errorf("validation returned inconsistent load counts")
+	}
+	return result, output, nil
+}
+
+type ValidationResult struct {
+	SampleCount    int `json:"sample_count"`
+	FirstLoadRows  int `json:"first_load_rows"`
+	SecondLoadRows int `json:"second_load_rows"`
+}
+type ProbeResult struct {
+	Rows     []map[string]any       `json:"rows"`
+	Count    int                    `json:"sample_count"`
+	Estimate *ingestion.RowEstimate `json:"estimate,omitempty"`
+}
+
+func ReadResult(output, marker string, result any) error {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, marker) {
+			return json.Unmarshal([]byte(strings.TrimPrefix(line, marker)), result)
+		}
+	}
+	return fmt.Errorf("Python exited without a %s result", strings.TrimSuffix(marker, "="))
+}
+
+func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe bool, validationLimit int) (string, error) {
 	data, err := os.ReadFile(plan.Script)
 	if err != nil {
 		return "", err
@@ -47,8 +109,11 @@ func (r Runner) Execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 		values[ref] = string(value)
 	}
 	payload, _ := json.Marshal(values)
-	config, _ := json.Marshal(map[string]any{"destination": plan.DestinationPath, "table": plan.DestinationObject, "strategy": plan.Strategy, "primary_key": plan.PrimaryKey})
+	config, _ := json.Marshal(map[string]any{"destination": plan.DestinationPath, "table": plan.DestinationObject, "strategy": plan.Strategy, "primary_key": plan.PrimaryKey, "validation_limit": validationLimit})
 	timeout := 30 * time.Minute
+	if validationLimit > 0 {
+		timeout = 90 * time.Second
+	}
 	if probe {
 		timeout = 45 * time.Second
 	}
@@ -81,15 +146,10 @@ func (r Runner) Execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 	result := output.String()
 	probeValid := !probe
 	if probe {
-		const marker = "POMPOS_PROBE_RESULT="
-		if index := strings.LastIndex(result, marker); index >= 0 {
-			var sample struct {
-				Rows  []map[string]any `json:"rows"`
-				Count int              `json:"sample_count"`
-			}
-			probeValid = json.Unmarshal([]byte(strings.TrimSpace(result[index+len(marker):])), &sample) == nil && sample.Count > 0 && sample.Count <= 5 && len(sample.Rows) == sample.Count
-		}
+		var sample ProbeResult
+		probeValid = ReadResult(result, "POMPOS_PROBE_RESULT=", &sample) == nil && sample.Count > 0 && sample.Count <= 5 && len(sample.Rows) == sample.Count
 	}
+
 	for _, value := range values {
 		if value != "" {
 			result = strings.ReplaceAll(result, value, "[REDACTED]")
@@ -143,8 +203,11 @@ if __name__ == "__main__":
             raise ValueError("Missing managed secret: " + name)
         return _secrets[name]
     _probe = os.environ.get("POMPOS_PROBE") == "1"
+    _config = json.loads(os.environ.get("POMPOS_CONFIG", "{}"))
+    _validation_limit = _config.get("validation_limit", 0)
+    _limit = 5 if _probe else (_validation_limit or None)
     def _rows():
-        for row in fetch(secret, 5 if _probe else None):
+        for row in fetch(secret, _limit):
             if not isinstance(row, dict):
                 raise TypeError("fetch must yield dictionaries")
             yield row
@@ -152,18 +215,63 @@ if __name__ == "__main__":
         _sample = list(itertools.islice(_rows(), 5))
         if not _sample:
             raise ValueError("Probe returned no rows; verify the source and filters before saving")
-        print("POMPOS_PROBE_RESULT=" + json.dumps({"rows": _sample, "sample_count": len(_sample)}, default=str))
+        _estimate = {"rows": None, "kind": "unknown", "basis": "The source did not provide a cheap count."}
+        if callable(globals().get("estimate")):
+            try:
+                _candidate = estimate(secret)
+                if (isinstance(_candidate, dict)
+                    and _candidate.get("kind") in ("exact", "approximate", "unknown")
+                    and isinstance(_candidate.get("basis"), str)
+                    and 0 < len(_candidate["basis"]) <= 1000
+                    and ((_candidate["kind"] == "unknown" and _candidate.get("rows") is None)
+                         or (_candidate["kind"] != "unknown" and type(_candidate.get("rows")) is int and _candidate["rows"] >= 0))):
+                    _estimate = _candidate
+            except Exception:
+                _estimate["basis"] = "The optional source count request failed; no full scan was attempted."
+        print("POMPOS_PROBE_RESULT=" + json.dumps({"rows": _sample, "sample_count": len(_sample), "estimate": _estimate}, default=str))
     else:
         import dlt
-        _config = json.loads(os.environ["POMPOS_CONFIG"])
         _path = str(Path(_config["destination"]).resolve())
         Path(_path).parent.mkdir(parents=True, exist_ok=True)
         _pipeline = dlt.pipeline(pipeline_name="pompos_" + Path(__file__).stem,
             pipelines_dir=str(Path(__file__).parent / ".dlt"),
             destination=dlt.destinations.duckdb(credentials=_path), dataset_name="main")
-        _resource = dlt.resource(_rows(), name=_config["table"], table_name=_config["table"],
-            max_table_nesting=0, write_disposition=_config["strategy"],
-            primary_key=_config.get("primary_key") or None)
-        print(_pipeline.run(_resource))
+        def _load(rows):
+            _resource = dlt.resource(rows, name=_config["table"], table_name=_config["table"],
+                max_table_nesting=0, write_disposition=_config["strategy"],
+                primary_key=_config.get("primary_key") or None)
+            _info = _pipeline.run(_resource)
+            _info.raise_on_failed_jobs()
+            return _info
+        if _validation_limit:
+            _sample = list(itertools.islice(_rows(), _validation_limit))
+            if not _sample:
+                raise ValueError("Validation returned no rows")
+            _keys = _config.get("primary_key") or []
+            if _keys:
+                _seen = set()
+                for _row in _sample:
+                    if any(_row.get(key) is None for key in _keys):
+                        raise ValueError("A row key is missing or null in the validation sample")
+                    _key = json.dumps([_row[key] for key in _keys], sort_keys=True, default=str)
+                    if _key in _seen:
+                        raise ValueError("Duplicate row keys in the validation sample")
+                    _seen.add(_key)
+            # Load the same source sample twice; fetch is called only once.
+            import copy, duckdb
+            def _count():
+                with duckdb.connect(_path, read_only=True) as _db:
+                    _table = _pipeline.default_schema.naming.normalize_table_identifier(_config["table"])
+                    return _db.execute('SELECT count(*) FROM main."' + _table.replace('"', '""') + '"').fetchone()[0]
+            _load(copy.deepcopy(_sample))
+            _first = _count()
+            _load(copy.deepcopy(_sample))
+            _second = _count()
+            _expected = len(_sample) * (2 if _config["strategy"] == "append" else 1)
+            if _first != len(_sample) or _second != _expected:
+                raise ValueError("Unexpected row counts after loading the sample twice")
+            print("POMPOS_VALIDATION_RESULT=" + json.dumps({"sample_count": len(_sample), "first_load_rows": _first, "second_load_rows": _second}))
+        else:
+            print(_load(_rows()))
 `
 }

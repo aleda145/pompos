@@ -20,12 +20,13 @@ type Action struct {
 	Message string `json:"message"`
 }
 type Handoff struct {
-	Loading    *Loading `json:"loading,omitempty"`
-	ID         string   `json:"id"`
-	Kind       string   `json:"kind"`
-	Prompt     string   `json:"prompt"`
-	SecretName string   `json:"secret_name,omitempty"`
-	Actions    []Action `json:"actions"`
+	Validation *ValidationProposal `json:"validation,omitempty"`
+	Loading    *Loading            `json:"loading,omitempty"`
+	ID         string              `json:"id"`
+	Kind       string              `json:"kind"`
+	Prompt     string              `json:"prompt"`
+	SecretName string              `json:"secret_name,omitempty"`
+	Actions    []Action            `json:"actions"`
 }
 type Input struct {
 	Loading   *Loading `json:"loading,omitempty"`

@@ -85,3 +85,102 @@ func TestProbeRequiresActualSample(t *testing.T) {
 		}
 	}
 }
+
+func TestProbeRowEstimates(t *testing.T) {
+	for _, tc := range []struct {
+		name, hook, kind string
+		rows             int64
+	}{
+		{"exact", "def estimate(secret):\n    return {'rows': 42, 'kind': 'exact', 'basis': 'API total_count for this query'}\n", "exact", 42},
+		{"approximate", "def estimate(secret):\n    return {'rows': 90, 'kind': 'approximate', 'basis': 'Last page times page size'}\n", "approximate", 90},
+		{"missing", "", "unknown", 0},
+		{"failed", "def estimate(secret):\n    raise ValueError('private error')\n", "unknown", 0},
+		{"invalid", "def estimate(secret):\n    return {'rows': -1, 'kind': 'exact', 'basis': 'invalid'}\n", "unknown", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "probe.py")
+			data := []byte(Wrap("def fetch(secret, limit):\n    yield {'id': 1}\n" + tc.hook))
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			output, err := (Runner{Binary: "python3"}).Execute(context.Background(), compiler.ExecutionPlan{Script: path, ScriptDigest: spec.Digest(data)}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result ProbeResult
+			if err := ReadResult(output, "POMPOS_PROBE_RESULT=", &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Estimate == nil || result.Estimate.Kind != tc.kind || result.Estimate.Validate() != nil {
+				t.Fatalf("bad estimate: %#v", result.Estimate)
+			}
+			if tc.kind != "unknown" && *result.Estimate.Rows != tc.rows {
+				t.Fatal("wrong count")
+			}
+		})
+	}
+}
+
+func TestDLTValidationLoadsBoundedSampleTwice(t *testing.T) {
+	binary := os.Getenv("POMPOS_TEST_PYTHON")
+	if binary == "" {
+		t.Skip("set POMPOS_TEST_PYTHON for dlt integration test")
+	}
+	for _, strategy := range []string{"replace", "append", "merge"} {
+		t.Run(strategy, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "load.py")
+			// An unbounded generator ensures the runner applies its own consumed-row cap.
+			code := "def fetch(secret, limit):\n    assert limit == 7\n    i = 0\n    while True:\n        yield {'id': i, 'nested': [{'value': i}]}\n        i += 1\n"
+			data := []byte(Wrap(code))
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			destination := filepath.Join(dir, "production.duckdb")
+			// The production destination must remain byte-for-byte unchanged.
+			if err := os.WriteFile(destination, []byte("do not touch"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			plan := compiler.ExecutionPlan{Script: path, ScriptDigest: spec.Digest(data), DestinationPath: destination, DestinationObject: "stars", Strategy: strategy}
+			if strategy == "merge" {
+				plan.PrimaryKey = []string{"id"}
+			}
+			result, output, err := (Runner{Binary: binary}).Validate(context.Background(), plan, 7)
+			if err != nil {
+				t.Fatalf("%v\n%s", err, output)
+			}
+			expected := 7
+			if strategy == "append" {
+				expected = 14
+			}
+			if result.SampleCount != 7 || result.FirstLoadRows != 7 || result.SecondLoadRows != expected {
+				t.Fatalf("bad counts: %#v", result)
+			}
+			saved, _ := os.ReadFile(destination)
+			if string(saved) != "do not touch" {
+				t.Fatal("validation modified production destination")
+			}
+			if _, err := os.Stat(filepath.Join(dir, ".dlt")); !os.IsNotExist(err) {
+				t.Fatal("validation left pipeline state with the draft")
+			}
+		})
+	}
+}
+
+func TestDLTValidationRejectsBadKeys(t *testing.T) {
+	binary := os.Getenv("POMPOS_TEST_PYTHON")
+	if binary == "" {
+		t.Skip("set POMPOS_TEST_PYTHON for dlt integration test")
+	}
+	for _, rows := range []string{"[{'id': 1}, {'id': 1}]", "[{'id': None}]", "[{'other': 1}]"} {
+		path := filepath.Join(t.TempDir(), "load.py")
+		data := []byte(Wrap("def fetch(secret, limit):\n    yield from " + rows + "\n"))
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := (Runner{Binary: binary}).Validate(context.Background(), compiler.ExecutionPlan{Script: path, ScriptDigest: spec.Digest(data), DestinationObject: "stars", Strategy: "merge", PrimaryKey: []string{"id"}}, 10)
+		if err == nil {
+			t.Fatalf("accepted bad keys: %s", rows)
+		}
+	}
+}

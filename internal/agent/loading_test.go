@@ -103,6 +103,12 @@ func TestLoadingEditsAreConfirmedPersistedAndAuthoritative(t *testing.T) {
 	}
 	data, _ = os.ReadFile(s.scriptPath(v.ID))
 	v.TestedDigest = spec.Digest(data)
+	// This unit test focuses on settings persistence; the approval flow is tested separately.
+	_, fingerprint, err := s.validationPlan(ctx, &v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Validation = &Validation{Fingerprint: fingerprint}
 	call.Function.Name = "finish"
 	call.Function.Arguments = "{}"
 	if _, err = s.execute(ctx, &v, call); err != nil {

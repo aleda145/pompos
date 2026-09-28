@@ -24,7 +24,10 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer db.Close()
-	service := &Service{Dir: filepath.Join(dir, "agent"), Secrets: db.Secrets(), Destinations: db, Python: runnerpython.Runner{Binary: "python3", Secrets: db.Secrets()}}
+	service := &Service{Dir: filepath.Join(dir, "agent"), Secrets: db.Secrets(), Destinations: db, Python: &validationRunner{Runner: runnerpython.Runner{Binary: "python3", Secrets: db.Secrets()}}}
+	if binary := os.Getenv("POMPOS_TEST_PYTHON"); binary != "" {
+		service.Python = runnerpython.Runner{Binary: binary, Secrets: db.Secrets()}
+	}
 	good := Draft{Name: "Stars", Source: "fixture", Table: "stars", Destination: "local-duckdb", Strategy: "replace", Code: "def fetch(secret, limit):\n    yield {'id': 1}\n"}
 	bad := good
 	bad.Code = "def fetch(secret, limit):\n    raise ValueError('retry this source')\n    yield {}\n"
@@ -76,6 +79,13 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 			args = `{"cron":"0 6 * * *","strategy":"replace","primary_key":[],"reason":"A daily current-state snapshot is sufficient; replace reflects removed stars."}`
 		case 8:
 			name = "finish"
+		case 9:
+			if !strings.Contains(request.Messages[len(request.Messages)-1].Content, "propose_validation") {
+				t.Error("finish accepted without validation")
+			}
+			name = "propose_validation"
+		case 10:
+			name = "finish"
 		default:
 			m.Content = "The source probe passed. Review and save."
 		}
@@ -103,7 +113,14 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if !v.Ready || v.TestedDigest == "" || step != 10 {
+	if v.Ready || v.Pending == nil || v.Pending.Kind != "validation" {
+		t.Fatal("did not wait for validation approval")
+	}
+	v, e = service.TurnWithEvents(ctx, v.ID, Input{ActionID: "accept_validation", HandoffID: v.Pending.ID}, nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !v.Ready || v.TestedDigest == "" || step != 12 {
 		t.Fatalf("not ready: %#v, steps %d", v, step)
 	}
 	restarted := &Service{Dir: service.Dir, Secrets: db.Secrets(), Destinations: db}

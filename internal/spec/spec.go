@@ -38,9 +38,10 @@ type Metadata struct {
 	Owner string `yaml:"owner,omitempty"`
 }
 type Source struct {
-	Type  string `yaml:"type"`
-	URL   string `yaml:"url"`
-	Table string `yaml:"table"`
+	Estimate *ingestion.RowEstimate `yaml:"estimate,omitempty"`
+	Type     string                 `yaml:"type"`
+	URL      string                 `yaml:"url"`
+	Table    string                 `yaml:"table"`
 }
 type Destination struct {
 	Type   string `yaml:"type"`
@@ -116,6 +117,11 @@ func (s Ingestion) Validate() error {
 	if strings.TrimSpace(s.Metadata.Name) == "" {
 		return errors.New("spec.metadata.name: is required")
 	}
+	if s.Source.Estimate != nil {
+		if err := s.Source.Estimate.Validate(); err != nil {
+			return err
+		}
+	}
 	if s.Source.Type != "python" {
 		return errors.New("spec.source.type: must be python")
 	}
@@ -186,7 +192,7 @@ func Digest(data []byte) string {
 // FromIngestion serializes the file-derived ingestion fields, excluding run state.
 func FromIngestion(item ingestion.Ingestion) Ingestion {
 	document := Ingestion{APIVersion: APIVersion, Kind: Kind, Metadata: Metadata{Name: item.Name},
-		Source:          Source{Type: item.Source.Type, URL: item.Source.URL, Table: item.Source.Table},
+		Source:          Source{Estimate: item.Source.Estimate, Type: item.Source.Type, URL: item.Source.URL, Table: item.Source.Table},
 		Destination:     Destination{Type: item.Destination.Type, Path: item.Destination.Path, Object: item.Destination.Table},
 		Materialization: Materialization{Strategy: defaultStrategy(item.Materialization.Strategy), PrimaryKey: item.Materialization.PrimaryKey},
 		Runtime:         Runtime{Engine: item.Runtime.Engine, Orchestrator: item.Runtime.Orchestrator, Script: item.Runtime.Script, ScriptDigest: item.Runtime.ScriptDigest, SecretRefs: item.Runtime.SecretRefs},
@@ -199,7 +205,7 @@ func FromIngestion(item ingestion.Ingestion) Ingestion {
 
 func ToProjection(document Ingestion, id, path, digest string) ingestion.Ingestion {
 	item := ingestion.Ingestion{ID: id, Name: document.Metadata.Name, Status: ingestion.StatusPending,
-		Source:          ingestion.Source{Type: document.Source.Type, URL: document.Source.URL, Table: document.Source.Table},
+		Source:          ingestion.Source{Estimate: document.Source.Estimate, Type: document.Source.Type, URL: document.Source.URL, Table: document.Source.Table},
 		Destination:     ingestion.Destination{Type: document.Destination.Type, Path: document.Destination.Path, Table: document.Destination.Object},
 		Materialization: ingestion.Materialization{Strategy: defaultStrategy(document.Materialization.Strategy), PrimaryKey: document.Materialization.PrimaryKey},
 		Runtime:         ingestion.Runtime{Engine: document.Runtime.Engine, Orchestrator: document.Runtime.Orchestrator, Script: document.Runtime.Script, ScriptDigest: document.Runtime.ScriptDigest, SecretRefs: document.Runtime.SecretRefs}, SpecPath: path, SpecDigest: digest,

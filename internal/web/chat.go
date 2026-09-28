@@ -78,7 +78,7 @@ func (a *App) chatTurn(w http.ResponseWriter, r *http.Request) {
 	}{publicSession(v), message})
 }
 func publicSession(v agent.Session) agent.Session {
-	if v.Loading == nil {
+	if v.Loading == nil || v.Validation == nil {
 		v.Ready = false
 	}
 	visible := []agent.Message{}

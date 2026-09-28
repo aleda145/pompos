@@ -8,7 +8,9 @@
  <div id="chat-error" class="error" role="alert" hidden></div>
  <div id="recovery" class="quick-actions" hidden><button type="button" id="retry-turn" class="suggestion">Try again</button><a href="/settings/agent">Agent settings</a></div>
  <details id="draft" class="chat-artifact" hidden><summary>Ingestion draft <span id="draft-target"></span></summary><pre class="yaml-code"><code id="draft-code"></code></pre></details>
- <form id="publish" class="chat-publish" method="post" action="/chat/{{.Session.ID}}/publish" hidden><span id="publish-status">Source test passed. Ready to save.</span><button type="submit">Save ingestion</button></form>
+ <p id="row-estimate" class="hint" hidden></p>
+ <p id="validation-result" class="hint" role="status" hidden></p>
+ <form id="publish" class="chat-publish" method="post" action="/chat/{{.Session.ID}}/publish" hidden><span id="publish-status">Validation passed. Ready to save.</span><button type="submit">Save ingestion</button></form>
  <div class="chat-composer">
   <form id="chat-form"><label for="message" class="sr-only">Message the agent</label><textarea id="message" rows="2" maxlength="16000" required placeholder="Describe what to ingest, or add a detail…"></textarea><div class="composer-footer"><span>Enter to send · Shift+Enter for a new line</span><button id="send" type="submit">Send ↑</button></div></form>
   <p class="composer-hint">Keys belong in <a href="/secrets" target="_blank" rel="noopener">Secrets</a>, not chat. This conversation is saved automatically.</p>

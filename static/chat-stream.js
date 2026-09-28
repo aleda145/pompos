@@ -27,4 +27,9 @@ async function readChatEvents(body, onEvent) {
     reader.releaseLock();
   }
 }
-if (typeof module !== 'undefined') module.exports = {readChatEvents};
+function rowEstimateText(estimate) {
+  if (!estimate || estimate.rows == null || estimate.kind === 'unknown') return 'Unknown';
+  const count = Number(estimate.rows).toLocaleString('en-US');
+  return estimate.kind === 'approximate' ? `About ${count} rows` : `${count} rows at observation time`;
+}
+if (typeof module !== 'undefined') module.exports = {readChatEvents, rowEstimateText};

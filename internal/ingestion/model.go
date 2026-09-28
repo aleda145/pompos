@@ -36,9 +36,10 @@ type Run struct {
 }
 
 type Source struct {
-	Type  string
-	URL   string
-	Table string
+	Estimate *RowEstimate
+	Type     string
+	URL      string
+	Table    string
 }
 
 func (s Source) DisplayLocation() string { return s.URL }

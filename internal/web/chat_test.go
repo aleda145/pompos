@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"pompos/internal/agent"
+	"pompos/internal/compiler"
 	runnerpython "pompos/internal/runner/python"
 	"pompos/internal/spec"
 	"pompos/internal/store"
@@ -36,7 +38,7 @@ func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T)
 		switch step {
 		case 0:
 			call.Function.Name = "write_script"
-			b, _ := json.Marshal(agent.Draft{Name: "Stars", Source: "fixture", Table: "stars", Destination: "local-duckdb", Strategy: "replace", Code: "def fetch(secret, limit):\n    yield {'id': 1}\n"})
+			b, _ := json.Marshal(agent.Draft{Name: "Stars", Source: "fixture", Table: "stars", Destination: "local-duckdb", Strategy: "replace", Code: "def fetch(secret, limit):\n    yield {'id': 1}\ndef estimate(secret):\n    return {'rows': 42, 'kind': 'exact', 'basis': 'Fixture source total_count'}\n"})
 			call.Function.Arguments = string(b)
 		case 1:
 			call.Function.Name = "test_script"
@@ -44,6 +46,8 @@ func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T)
 			call.Function.Name = "propose_loading"
 			call.Function.Arguments = `{"cron":"0 6 * * *","strategy":"replace","primary_key":[],"reason":"A daily snapshot keeps the current list up to date."}`
 		case 3:
+			call.Function.Name = "propose_validation"
+		case 4:
 			call.Function.Name = "finish"
 		default:
 			m.Content = "Ready to save."
@@ -55,7 +59,10 @@ func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T)
 		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": m}}})
 	}))
 	defer model.Close()
-	service := &agent.Service{Dir: filepath.Join(dir, "agent"), Secrets: db.Secrets(), Destinations: db, Python: runnerpython.Runner{Binary: "python3", Secrets: db.Secrets()}}
+	service := &agent.Service{Dir: filepath.Join(dir, "agent"), Secrets: db.Secrets(), Destinations: db, Python: chatValidationRunner{Runner: runnerpython.Runner{Binary: "python3", Secrets: db.Secrets()}}}
+	if binary := os.Getenv("POMPOS_TEST_PYTHON"); binary != "" {
+		service.Python = runnerpython.Runner{Binary: binary, Secrets: db.Secrets()}
+	}
 	if e = service.SaveSettings(agent.Settings{Endpoint: model.URL, Model: "test"}); e != nil {
 		t.Fatal(e)
 	}
@@ -100,6 +107,14 @@ func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T)
 	}
 	accepted, _ := json.Marshal(agent.Input{ActionID: "accept_loading", HandoffID: reply.Session.Pending.ID, Loading: &agent.Loading{Cron: "0 * * * *", Strategy: "merge", PrimaryKey: []string{"id"}}})
 	w = request("POST", path, string(accepted), "application/json")
+	if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil || reply.Session.Pending == nil || reply.Session.Pending.Kind != "validation" || reply.Session.Ready {
+		t.Fatalf("missing validation proposal: %s", w.Body)
+	}
+	if blocked := request("POST", path+"/publish", "", ""); blocked.Code != 422 {
+		t.Fatal("unvalidated draft published")
+	}
+	accepted, _ = json.Marshal(agent.Input{ActionID: "accept_validation", HandoffID: reply.Session.Pending.ID})
+	w = request("POST", path, string(accepted), "application/json")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ready":true`) {
 		t.Fatalf("confirmation: %d %s", w.Code, w.Body)
 	}
@@ -112,6 +127,9 @@ func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T)
 	if err != nil || initial.Schedule == nil || initial.Schedule.Cron != "0 * * * *" || initial.Schedule.Timezone != "UTC" || initial.Materialization.Strategy != "merge" || len(initial.Materialization.PrimaryKey) != 1 || initial.Materialization.PrimaryKey[0] != "id" {
 		t.Fatalf("confirmed loading lost: %#v %v", initial, err)
 	}
+	if initial.Source.Estimate == nil || initial.Source.Estimate.Rows == nil || *initial.Source.Estimate.Rows != 42 || initial.Source.Estimate.ObservedAt == "" {
+		t.Fatal("source estimate was not persisted")
+	}
 	if schedules.item.Schedule != "0 * * * *" {
 		t.Fatal("schedule not registered on publish")
 	}
@@ -119,7 +137,7 @@ func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T)
 		t.Fatal("publish prematurely queued full load")
 	}
 	w = request("GET", detail, "", "")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "fetch(secret, limit)") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "fetch(secret, limit)") || !strings.Contains(w.Body.String(), "42 rows at observation time") {
 		t.Fatalf("detail: %d %s", w.Code, w.Body)
 	}
 	w = request("POST", detail+"/schedule", url.Values{"schedule": {"0 6 * * *"}}.Encode(), "application/x-www-form-urlencoded")
@@ -131,7 +149,7 @@ func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T)
 	if e != nil {
 		t.Fatal(e)
 	}
-	if doc.Runtime.Engine != "python" || doc.Runtime.Script == "" || doc.Runtime.ScriptDigest == "" || doc.Schedule.Cron != "0 6 * * *" {
+	if doc.Runtime.Engine != "python" || doc.Runtime.Script == "" || doc.Runtime.ScriptDigest == "" || doc.Schedule.Cron != "0 6 * * *" || doc.Source.Estimate == nil || *doc.Source.Estimate.Rows != 42 {
 		t.Fatalf("lost Python spec fields: %#v", doc)
 	}
 	w = request("POST", detail+"/run", "", "")
@@ -265,4 +283,13 @@ func TestChatFlushesStepsBeforeModelCompletesAndOffersSecretActions(t *testing.T
 	if resumed.Code != 200 || !strings.Contains(resumed.Body.String(), "Continuing with the saved key.") || strings.Contains(resumed.Body.String(), "private-github-value") {
 		t.Fatalf("resume: %d %s", resumed.Code, resumed.Body)
 	}
+}
+
+// Loading itself is covered by the runner's real dlt integration tests.
+type chatValidationRunner struct{ runnerpython.Runner }
+
+func (r chatValidationRunner) Validate(ctx context.Context, plan compiler.ExecutionPlan, limit int) (runnerpython.ValidationResult, string, error) {
+	result := runnerpython.ValidationResult{SampleCount: 1, FirstLoadRows: 1, SecondLoadRows: 1}
+	b, _ := json.Marshal(result)
+	return result, "POMPOS_VALIDATION_RESULT=" + string(b), nil
 }

@@ -53,6 +53,7 @@ func proposeLoading(v *Session, arguments string) (string, error) {
 		return "", errors.New("explain the proposed cadence and loading strategy briefly")
 	}
 	v.Ready = false
+	v.Validation = nil
 	v.Loading = nil // A revised proposal needs a fresh confirmation.
 	v.Pending = &Handoff{ID: fmt.Sprint(len(v.Messages)), Kind: "loading", Prompt: request.Reason, Loading: &request.Loading, Actions: []Action{
 		{ID: "accept_loading", Label: "Use these settings", Message: request.Loading.description()},
