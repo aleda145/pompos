@@ -167,7 +167,7 @@ func (a *App) agentSettings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid settings", 400)
 			return
 		}
-		cfg = agent.Settings{Endpoint: r.FormValue("endpoint"), Model: r.FormValue("model"), APIKeyRef: r.FormValue("api_key_ref")}
+		cfg = agent.Settings{ExaAPIKeyRef: r.FormValue("exa_api_key_ref"), Endpoint: r.FormValue("endpoint"), Model: r.FormValue("model"), APIKeyRef: r.FormValue("api_key_ref")}
 		e = a.Agent.SaveSettings(cfg)
 		if e != nil {
 			message = e.Error()

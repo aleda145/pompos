@@ -7,6 +7,8 @@
  <label for="model">Model</label><input id="model" name="model" required value="{{.Settings.Model}}" placeholder="Your model ID">
  <label for="api_key_ref">API key secret</label><select name="api_key_ref" id="api_key_ref"><option value="">No authentication (local endpoint)</option>{{range .Secrets}}<option value="{{.}}" {{if eq . $.Settings.APIKeyRef}}selected{{end}}>{{.}}</option>{{end}}</select>
  <p class="hint">Add the provider key on the <a href="/secrets">Secrets page</a> first. Settings store only its reference.</p>
+ <label for="exa_api_key_ref">Exa API key secret</label><select name="exa_api_key_ref" id="exa_api_key_ref"><option value="">Search not configured</option>{{range .Secrets}}<option value="{{.}}" {{if eq . $.Settings.ExaAPIKeyRef}}selected{{end}}>{{.}}</option>{{end}}</select>
+ <p class="hint">Add a <a href="https://dashboard.exa.ai/" target="_blank" rel="noopener noreferrer">Exa</a> key in Secrets, then select it here. The agent uses search to find official docs. Reading a supplied documentation URL works without this key.</p>
  <button type="submit">Save settings</button>
 </form>
 <p class="hint">The endpoint receives your conversation, generated code, and source samples. Generated Python runs with Pompos’s operating-system permissions. Use a trusted endpoint and run Pompos in a dedicated environment.</p>

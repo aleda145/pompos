@@ -13,11 +13,15 @@ make run
 
 Open `http://localhost:8080`, add your model provider key under **Secrets**, then configure **Agent settings** with an OpenAI-compatible base URL (for example `https://api.openai.com/v1`), model ID, and the secret name. Local endpoints can omit authentication. The model must support Chat Completions function/tool calling.
 
+For web search, add a [Exa API](https://exa.ai/docs/reference/search) key in **Secrets**, then select it under **Agent settings → Exa API key secret**. Search uses its own managed credential; no browser extension or model-specific search feature is required. Reading a supplied public documentation URL works without a search key.
+
 Choose **Add ingestion** and try:
 
 > Ingest individual GitHub stargazers from https://github.com/aleda145/kavla
 
-The agent lists available destinations and source secret names, asks for missing information, writes an extractor, and executes a small source probe. A compact activity log streams each step as it happens. Expand Thinking or a tool row to inspect its progress update, request, or result. Python errors and samples feed back into the model so it can repair its code. Common questions appear as action buttons. Credential requests provide an inline managed-secret form, **I've added a key, try again**, and **Tell me more**. Save a key and retry directly, or update the named secret on the Secrets page and click retry. Choices and pending credential requests survive a reload; free-text chat remains available for anything else. The model-provider key is excluded from source credentials. Do not paste keys into chat.
+The agent lists available destinations and source secret names, researches current official API docs with `web_search` and `read_webpage`, asks for missing information, writes an extractor, and executes a small source probe. Exa search returns up to five links with content highlights; the agent is instructed to read the actual documentation to verify versions, authentication, fields, pagination and limits before coding. Expand search and documentation activity rows to open source links and inspect the text and retrieval timestamps. Research results persist with the conversation. A compact activity log streams each step as it happens. Expand Thinking or a tool row to inspect its progress update, request, or result. Python errors and samples feed back into the model so it can repair its code. Common questions appear as action buttons. Credential requests provide an inline managed-secret form, **I've added a key, try again**, and **Tell me more**. Save a key and retry directly, or update the named secret on the Secrets page and click retry. Choices and pending credential requests survive a reload; free-text chat remains available for anything else. Model and search provider keys are excluded from source credentials. Do not paste keys into chat.
+
+Documentation reading supports public HTML, text, Markdown, JSON and YAML. It extracts readable text, code blocks and links, with up to 12,000 characters per tool result and a continuation offset for longer pages. Requests have a 20-second timeout and a 2 MiB response limit. The reader does not execute JavaScript, sign into sites, or parse PDFs. A blocked or unreadable page returns an error so the agent can try another official reference or ask for an accessible excerpt. Search snippets are treated as leads, and fetched content as untrusted reference data. Documentation requests carry no managed credentials; private-network destinations and redirects are rejected.
 
 Each turn allows up to 12 model/tool rounds and four minutes. A source probe has a 45-second timeout and consumes at most five yielded rows. The generated extractor receives `limit=5` so it can also bound network requests. These are application limits, not an operating-system sandbox. A successful, nonempty probe of the current code is required before the agent can mark it ready. This verifies extraction; it does not replace the user-approved loading validation below.
 
@@ -59,7 +63,7 @@ The generated file can also run directly with `POMPOS_PROBE=1`, or with `POMPOS_
 
 ## Runtime and trust
 
-This is a trusted, self-hosted operator tool. Generated Python executes with Pompos's operating-system permissions and network access. Probe mode skips the provided dlt loader, but arbitrary generated code is not sandboxed. Use a dedicated environment and trusted model endpoint. The endpoint receives conversation text, generated code, destination descriptions and source samples. Only explicitly referenced secrets are injected into Python; exact secret values are redacted from captured output. The existing secret store uses SQLite, without encryption at rest. Do not expose the unauthenticated application to untrusted users.
+This is a trusted, self-hosted operator tool. Generated Python executes with Pompos's operating-system permissions and network access. Probe mode skips the provided dlt loader, but arbitrary generated code is not sandboxed. Use a dedicated environment and trusted model endpoint. The endpoint receives conversation text, generated code, destination descriptions, source samples, search results and fetched documentation. Search queries are sent to Exa; fetched URLs are requested directly from their hosts. Only explicitly referenced secrets are injected into Python; exact secret values are redacted from captured output. The existing secret store uses SQLite, without encryption at rest. Do not expose the unauthenticated application to untrusted users.
 
 `POMPOS_DATA_DIR` defaults to `./data`, `POMPOS_ADDRESS` to `:8080`, and `POMPOS_PYTHON_BINARY` to `python3`. `make run` selects the project virtual environment. Docker installs the same pinned Python dependencies.
 
@@ -77,6 +81,6 @@ make docker-up
 make docker-down
 ```
 
-Tests cover the iterative repair loop, persistent conversations, user-approved validation before saving, row estimates, secret redaction, script digest checks, chat publication, scheduling, and a real dlt load. Provider behavior is tested with a fake OpenAI-compatible endpoint; a real configured model still needs an end-to-end trial.
+Tests cover the iterative repair loop, persistent conversations, documentation research and source links, provider credential separation, user-approved validation before saving, row estimates, secret redaction, script digest checks, chat publication, scheduling, and a real dlt load. Provider behavior is tested with a fake OpenAI-compatible endpoint; a real configured model still needs an end-to-end trial.
 
 The runtime uses dlt's [resource](https://dlthub.com/docs/general-usage/resource) and [pipeline](https://dlthub.com/docs/general-usage/pipeline) APIs.

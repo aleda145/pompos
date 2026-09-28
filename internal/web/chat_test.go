@@ -293,3 +293,34 @@ func (r chatValidationRunner) Validate(ctx context.Context, plan compiler.Execut
 	b, _ := json.Marshal(result)
 	return result, "POMPOS_VALIDATION_RESULT=" + string(b), nil
 }
+
+func TestExaSettingsPersistSecretReference(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := store.Open(ctx, filepath.Join(dir, "db.sqlite"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err = db.Secrets().Put(ctx, "exa_key", []byte("private-exa-value")); err != nil {
+		t.Fatal(err)
+	}
+	service := &agent.Service{Dir: filepath.Join(dir, "agent"), Secrets: db.Secrets()}
+	app, err := New(App{Agent: service, Store: db, Secrets: db.Secrets(), SpecDir: filepath.Join(dir, "ingestions"), Logger: log.New(io.Discard, "", 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := url.Values{"endpoint": {"https://model.example/v1"}, "model": {"test"}, "exa_api_key_ref": {"exa_key"}}.Encode()
+	request := httptest.NewRequest("POST", "/settings/agent", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, request)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), "Exa API key secret") || !strings.Contains(response.Body.String(), `value="exa_key" selected`) || strings.Contains(response.Body.String(), "private-exa-value") {
+		t.Fatalf("settings: %d %s", response.Code, response.Body)
+	}
+	restarted := &agent.Service{Dir: service.Dir}
+	settings, err := restarted.Settings()
+	if err != nil || settings.ExaAPIKeyRef != "exa_key" {
+		t.Fatalf("Exa reference lost: %#v %v", settings, err)
+	}
+}

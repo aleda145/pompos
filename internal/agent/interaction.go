@@ -101,8 +101,8 @@ func (s *Service) SaveRequestedSecret(ctx context.Context, id, handoffID, name, 
 	if err != nil {
 		return err
 	}
-	if name == cfg.APIKeyRef {
-		return errors.New("choose a source secret name; the model provider key is separate")
+	if cfg.reservedSecret(name) {
+		return errors.New("choose a source secret name; model and search provider keys are separate")
 	}
 	if err = s.Secrets.Put(ctx, name, []byte(value)); err != nil {
 		return err

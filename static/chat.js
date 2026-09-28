@@ -7,7 +7,7 @@
   let lastInput = null;
   let activeCall = null;
   let handoffKey = '';
-  const toolNames = {context: 'Inspect connections', write_script: 'Write Python', test_script: 'Test source', finish: 'Check ingestion', ask_user: 'Request input', propose_loading: 'Suggest schedule & loading', propose_validation: 'Request validation', validate_ingestion: 'Validate sample load'};
+  const toolNames = {web_search: 'Search the web', read_webpage: 'Read documentation', context: 'Inspect connections', write_script: 'Write Python', test_script: 'Test source', finish: 'Check ingestion', ask_user: 'Request input', propose_loading: 'Suggest schedule & loading', propose_validation: 'Request validation', validate_ingestion: 'Validate sample load'};
 
   function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -63,6 +63,8 @@
         let title = toolNames[name] || name;
         let args;
         try { args = JSON.parse(call.function.arguments); } catch { args = {}; }
+        if (name === 'web_search' && args.query) title += ` · ${args.query.slice(0, 100)}`;
+        if (name === 'read_webpage' && args.url) { try { title += ` · ${new URL(args.url).hostname}`; } catch {} }
         if (name === 'write_script' && args.table) title += ` · ${args.table}`;
         if (name === 'ask_user' && args.kind === 'secret') title = `Request key · ${args.secret_name || 'source credential'}`;
         if ((name === 'test_script' || name === 'validate_ingestion') && result && !failed) {
@@ -72,6 +74,21 @@
         const content = element('div', 'tool-detail');
         content.append(element('h3', '', 'Request'), element('pre', '', pretty(call.function.arguments)));
         if (result) content.append(element('h3', '', 'Result'), element('pre', '', pretty(result.content)));
+        if (result && !failed && (name === 'web_search' || name === 'read_webpage')) {
+          try {
+            const research = JSON.parse(result.content);
+            const sources = name === 'web_search' ? research.results : [{title: research.title || 'Open documentation', url: research.url}, ...(research.links || [])];
+            const links = element('ul', 'research-links');
+            for (const source of sources || []) {
+              const url = new URL(source.url);
+              if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) continue;
+              const link = element('a', '', source.title || url.hostname);
+              link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer';
+              const row = element('li'); row.append(link); links.append(row);
+            }
+            content.prepend(links);
+          } catch {}
+        }
         const row = disclosure(`tool-${index}-${callIndex}`, title, status, content);
         fragment.append(row);
       });
