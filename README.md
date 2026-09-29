@@ -38,7 +38,9 @@ Production row estimates use cheap source metadata where available, such as a ma
 
 Review the source, destination, schedule, load strategy, Python draft, and validation results. **Save ingestion** creates the Python and YAML files. A confirmed cron schedule becomes active when you save; its first automatic load runs at the next scheduled time. From the detail page, **Run ingestion** queues an immediate full load, and the schedule can also be changed there. Full loads have a 30-minute timeout. Existing run status, retries and scheduler behavior remain in Go. `replace` is the default strategy; `append` and primary-key-based `merge` are also supported for Python jobs.
 
-Conversations and drafts survive restarts under `data/agent/`. Keep the conversation URL to resume it. Published artifacts live under `data/ingestions/<id>.py` and `<id>.yaml`. YAML stores the Python digest and secret references, never secret values. Schedule changes preserve those fields. If the saved Python changes, execution fails its digest check; develop and test a new ingestion through chat to replace it.
+One chat can create multiple ingestions, one at a time. Saving keeps you in the conversation and adds a link to the saved ingestion. For example, after saving men's high-jump records, ask "do the same for women" to reuse the conversation's research and code. The new ingestion has its own table, Python file, YAML, loading confirmation, and validation; saving it does not change earlier ingestions. Choose **New chat** when you want a separate conversation.
+
+Conversations and drafts survive restarts under `data/agent/`. Keep the conversation URL to resume it. Each saved ingestion has its own ID, independent of the chat; its artifacts live under `data/ingestions/<id>.py` and `<id>.yaml`. YAML stores the Python digest and secret references, never secret values. Schedule changes preserve those fields. If the saved Python changes, execution fails its digest check; develop and test a new ingestion through chat to replace it.
 
 ## Python contract
 

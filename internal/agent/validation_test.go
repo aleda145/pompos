@@ -83,7 +83,7 @@ func TestValidationRequiresUserActionAndCannotBeReplayed(t *testing.T) {
 	if err := s.save(v); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Publish(ctx, v.ID, filepath.Join(t.TempDir(), "saved.py"), func(spec.Ingestion) error { t.Fatal("published without validation"); return nil }); err == nil {
+	if _, err := s.Publish(ctx, v.ID, t.TempDir(), func(string, spec.Ingestion) error { t.Fatal("published without validation"); return nil }); err == nil {
 		t.Fatal("publish accepted")
 	}
 	for _, action := range []string{"explain", "defer_validation"} {
@@ -142,6 +142,46 @@ func TestValidationFailureRequiresFreshApproval(t *testing.T) {
 	}
 	if err = s.requireValidation(context.Background(), &v); err == nil {
 		t.Fatal("failure passed gate")
+	}
+}
+
+func TestPublicationRetryKeepsArtifactID(t *testing.T) {
+	ctx := context.Background()
+	s, _, v := validationFixture(t)
+	v, err := s.TurnWithEvents(ctx, v.ID, Input{ActionID: "accept_validation", HandoffID: v.Pending.ID}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finish := Call{}
+	finish.Function.Name = "finish"
+	if _, err = s.execute(ctx, &v, finish); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.save(v); err != nil {
+		t.Fatal(err)
+	}
+	artifactDir := t.TempDir()
+	var firstID, firstPath string
+	publicationErr := errors.New("scheduler unavailable")
+	if _, err := s.Publish(ctx, v.ID, artifactDir, func(id string, doc spec.Ingestion) error {
+		firstID, firstPath = id, doc.Runtime.Script
+		return publicationErr
+	}); !errors.Is(err, publicationErr) {
+		t.Fatalf("expected publication failure, got %v", err)
+	}
+	restarted := &Service{Dir: s.Dir, Destinations: s.Destinations}
+	savedID, err := restarted.Publish(ctx, v.ID, artifactDir, func(id string, doc spec.Ingestion) error {
+		if id != firstID || doc.Runtime.Script != firstPath {
+			t.Fatal("retry changed the ingestion ID or script path")
+		}
+		return nil
+	})
+	if err != nil || savedID != firstID || savedID == v.ID {
+		t.Fatalf("retry failed: %q %v", savedID, err)
+	}
+	persisted, err := restarted.Load(v.ID)
+	if err != nil || len(persisted.SavedIngestions) != 1 || persisted.SavedIngestions[0].ID != savedID {
+		t.Fatal("retry did not save one publication")
 	}
 }
 

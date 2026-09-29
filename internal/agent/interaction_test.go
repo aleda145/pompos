@@ -248,3 +248,43 @@ func TestTellMeMoreKeepsChoicesAndRejectsOldActions(t *testing.T) {
 		t.Fatal("choices were not saved")
 	}
 }
+
+func TestLegacyPublishedChatCanContinueWithFreshDraftState(t *testing.T) {
+	s := &Service{Dir: t.TempDir()}
+	if err := s.SaveSettings(Settings{Endpoint: "http://model.test", Model: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	legacy := Session{
+		ID: "old_chat", PublishedID: "old_chat", Ready: true, TestedDigest: "previous-digest",
+		Draft:   &Draft{Name: "Men's records", Source: "fixture/men", Table: "men_records", Destination: "local-duckdb", Code: "previous extractor"},
+		Loading: &Loading{Strategy: "replace"}, Validation: &Validation{Fingerprint: "previous-validation"},
+		Messages: []Message{{Role: "system", Content: "old instructions"}, {Role: "user", Content: "Ingest men's records"}},
+	}
+	if err := s.save(legacy); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := s.Load(legacy.ID)
+	if err != nil || len(loaded.SavedIngestions) != 1 || loaded.SavedIngestions[0].ID != legacy.ID {
+		t.Fatalf("old publication was not restored: %#v %v", loaded.SavedIngestions, err)
+	}
+	s.Client = &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		data, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(data), "Saved ingestion") || !strings.Contains(string(data), "men_records") {
+			t.Fatal("model was not told the old ingestion was saved")
+		}
+		response := `{"choices":[{"message":{"tool_calls":[{"id":"ask","type":"function","function":{"name":"ask_user","arguments":"{\"kind\":\"choice\",\"prompt\":\"Which records next?\",\"options\":[{\"label\":\"Women\",\"message\":\"Women's records\"},{\"label\":\"Another event\",\"message\":\"Choose another event\"}]}"}}]}}]}`
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(response)), Header: make(http.Header)}, nil
+	})}
+	v, err := s.Turn(context.Background(), legacy.ID, "Create another ingestion")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Draft != nil || v.Loading != nil || v.Validation != nil || v.Estimate != nil || v.TestedDigest != "" || v.Ready || v.PublishedID != "" || v.DraftID != "" || v.Pending == nil {
+		t.Fatal("saved draft state leaked into the new ingestion")
+	}
+	restarted := &Service{Dir: s.Dir}
+	persisted, err := restarted.Load(legacy.ID)
+	if err != nil || len(persisted.SavedIngestions) != 1 || persisted.SavedIngestions[0].Table != "men_records" || len(persisted.Messages) != len(v.Messages) {
+		t.Fatal("legacy chat migration was not persisted")
+	}
+}

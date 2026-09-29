@@ -133,7 +133,7 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 		t.Fatal("conversation was not persisted")
 	}
 	calls := 0
-	persist := func(doc spec.Ingestion) error {
+	persist := func(id string, doc spec.Ingestion) error {
 		calls++
 		b, e := spec.Marshal(doc)
 		if e != nil {
@@ -151,17 +151,18 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 		}
 		return nil
 	}
-	path := filepath.Join(dir, "ingestions", "session1.py")
-	if _, e = service.Publish(ctx, v.ID, path, persist); e != nil {
+	artifactDir := filepath.Join(dir, "ingestions")
+	savedID, e := service.Publish(ctx, v.ID, artifactDir, persist)
+	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = service.Publish(ctx, v.ID, path, persist); e != nil {
-		t.Fatal(e)
+	if repeatedID, err := service.Publish(ctx, v.ID, artifactDir, persist); err != nil || repeatedID != savedID {
+		t.Fatalf("repeat save: %q %v", repeatedID, err)
 	}
 	if calls != 1 {
 		t.Fatal("duplicate publish")
 	}
-	data, e := os.ReadFile(path)
+	data, e := os.ReadFile(filepath.Join(artifactDir, savedID+".py"))
 	if e != nil || spec.Digest(data) != v.TestedDigest {
 		t.Fatal("published different code")
 	}

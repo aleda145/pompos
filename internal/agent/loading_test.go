@@ -117,7 +117,7 @@ func TestLoadingEditsAreConfirmedPersistedAndAuthoritative(t *testing.T) {
 	if err = s.save(v); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Publish(ctx, v.ID, filepath.Join(dir, "saved.py"), func(doc spec.Ingestion) error {
+	if _, err = s.Publish(ctx, v.ID, filepath.Join(dir, "ingestions"), func(_ string, doc spec.Ingestion) error {
 		if doc.Schedule != nil || doc.Materialization.Strategy != "merge" {
 			t.Fatal("manual or merge choice lost")
 		}

@@ -178,7 +178,7 @@
   }
   function renderHandoff() {
     const target = $('#handoff');
-    if (busy || session.published_id || session.ready) { target.hidden = true; return; }
+    if (busy || session.ready) { target.hidden = true; return; }
     const pending = session.pending;
     const key = JSON.stringify(pending || null) + (session.messages?.length || 0);
     if (key === handoffKey) { target.hidden = !target.hasChildNodes(); return; }
@@ -219,23 +219,31 @@
   }
   function render() {
     renderLog(); renderHandoff();
-    $('#chat-title').textContent = session.draft?.name || (session.messages?.length ? 'Ingestion session' : 'What do you want to bring in?');
-    $('#draft').hidden = !session.draft;
+    $('#chat-title').textContent = session.messages?.length ? 'Ingestion chat' : 'What do you want to bring in?';
+    $('#draft').hidden = !session.draft || !!session.published_id;
     $('#draft-target').textContent = session.draft ? `${session.draft.destination} / ${session.draft.table} · ${session.draft.strategy} · ${session.draft.schedule ? `${session.draft.schedule} UTC` : 'manual'}` : '';
     $('#draft-code').textContent = session.draft?.code || '';
-    $('#row-estimate').hidden = !session.draft;
+    $('#row-estimate').hidden = !session.draft || !!session.published_id;
     $('#row-estimate').textContent = `Production extraction: ${rowEstimateText(session.estimate)}${session.estimate?.basis ? ` · ${session.estimate.basis}` : ''}${session.estimate?.observed_at ? ` · observed ${session.estimate.observed_at}` : ''}. Future runs may differ.`;
-    $('#validation-result').hidden = !session.validation;
+    $('#validation-result').hidden = !session.validation || !!session.published_id;
     if (session.validation) {
       const result = session.validation.result;
       $('#validation-result').textContent = `Validation passed: ${result.sample_count} source rows; ${result.first_load_rows} rows after the first load, ${result.second_load_rows} after replaying the sample. Temporary database removed.`;
     }
     $('#publish').hidden = busy || !session.ready || !!session.published_id;
     $('#publish-status').textContent = session.loading?.cron ? `Validation passed. Saving enables ${session.loading.cron} (UTC) · ${session.loading.strategy}.` : `Validation passed. Manual runs · ${session.loading?.strategy || session.draft?.strategy || 'replace'}.`;
-    $('#send').disabled = busy || !!session.published_id;
-    $('#message').disabled = busy || !!session.published_id;
-    $('#published').hidden = !session.published_id;
-    if (session.published_id) $('#published a').href = `/ingestions/${session.published_id}`;
+    $('#send').disabled = busy;
+    $('#message').disabled = busy;
+    const saved = session.saved_ingestions || [];
+    $('#published').hidden = !saved.length;
+    const links = saved.map(ingestion => {
+      const item = element('li');
+      const link = element('a', '', `${ingestion.name} · ${ingestion.table} →`);
+      link.href = `/ingestions/${ingestion.id}`;
+      item.append(link);
+      return item;
+    });
+    $('#saved-ingestions').replaceChildren(...links);
   }
   function applyEvent(event) {
     if (event.type === 'thinking') { thinking = true; activeCall = null; $('#working').textContent = 'Thinking'; }

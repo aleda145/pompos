@@ -1,5 +1,5 @@
 {{define "content"}}
-<div class="chat-heading"><div><p class="eyebrow">Ingest anything</p><h1 id="chat-title">What do you want to bring in?</h1></div><a href="/settings/agent">Agent settings</a></div>
+<div class="chat-heading"><div><p class="eyebrow">Ingest anything</p><h1 id="chat-title">What do you want to bring in?</h1></div><a href="/ingestions/new">New chat</a><a href="/settings/agent">Agent settings</a></div>
 <div id="chat" data-id="{{.Session.ID}}">
  <div id="chat-empty"><p>Describe a source. We’ll work through it together, test a few rows, and save a runnable ingestion.</p><button type="button" id="example" class="suggestion">Ingest GitHub stargazers →</button></div>
  <div id="messages" class="chat-log" aria-label="Conversation"></div>
@@ -15,7 +15,7 @@
   <form id="chat-form"><label for="message" class="sr-only">Message the agent</label><textarea id="message" rows="2" maxlength="16000" required placeholder="Describe what to ingest, or add a detail…"></textarea><div class="composer-footer"><span>Enter to send · Shift+Enter for a new line</span><button id="send" type="submit">Send ↑</button></div></form>
   <p class="composer-hint">Keys belong in <a href="/secrets" target="_blank" rel="noopener">Secrets</a>, not chat. This conversation is saved automatically.</p>
  </div>
- <p id="published" hidden><a>Open saved ingestion →</a></p>
+ <div id="published" hidden><p>Saved in this chat. Keep chatting to create another ingestion.</p><ul id="saved-ingestions"></ul></div>
 </div>
 <script id="chat-state" type="application/json">{{.Session}}</script>
 <script src="/static/chat-stream.js" defer></script>

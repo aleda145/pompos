@@ -31,7 +31,7 @@ func (a *App) chatPage(w http.ResponseWriter, r *http.Request) {
 	a.render(w, 200, "chat", struct {
 		Title   string
 		Session agent.Session
-	}{"New ingestion", publicSession(v)})
+	}{"Ingestion chat", publicSession(v)})
 }
 func (a *App) chatTurn(w http.ResponseWriter, r *http.Request) {
 	if a.Agent == nil {
@@ -119,20 +119,20 @@ func (a *App) publishChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	saved, e := a.Agent.Publish(r.Context(), id, filepath.Join(a.SpecDir, id+".py"), func(doc spec.Ingestion) error {
+	_, e := a.Agent.Publish(r.Context(), id, a.SpecDir, func(ingestionID string, doc spec.Ingestion) error {
 		data, e := spec.Marshal(doc)
 		if e != nil {
 			return e
 		}
-		path := filepath.Join(a.SpecDir, id+".yaml")
-		item := spec.ToProjection(doc, id, path, spec.Digest(data))
+		path := filepath.Join(a.SpecDir, ingestionID+".yaml")
+		item := spec.ToProjection(doc, ingestionID, path, spec.Digest(data))
 		if err := a.Scheduler.Validate(item.Schedule); err != nil {
 			return err
 		}
-		if _, e = a.Store.Get(r.Context(), id); e == nil {
-			return nil
-		} else if !errors.Is(e, store.ErrNotFound) {
-			return e
+		if existing, err := a.Store.Get(r.Context(), ingestionID); err == nil {
+			return a.Scheduler.Upsert(existing)
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return err
 		}
 		if e = agent.WriteFile(path, data); e != nil {
 			return e
@@ -147,7 +147,7 @@ func (a *App) publishChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, e.Error(), 422)
 		return
 	}
-	http.Redirect(w, r, "/ingestions/"+saved, http.StatusSeeOther)
+	http.Redirect(w, r, "/chat/"+id, http.StatusSeeOther)
 }
 func (a *App) agentSettings(w http.ResponseWriter, r *http.Request) {
 	if a.Agent == nil {

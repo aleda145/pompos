@@ -21,7 +21,7 @@ import (
 	"pompos/internal/store"
 )
 
-func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T) {
+func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	destination := filepath.Join(dir, "out.duckdb")
@@ -35,10 +35,31 @@ func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T)
 		m := agent.Message{Role: "assistant"}
 		call := agent.Call{ID: "call", Type: "function"}
 		call.Function.Arguments = "{}"
-		switch step {
+		switch step % 6 {
 		case 0:
 			call.Function.Name = "write_script"
-			b, _ := json.Marshal(agent.Draft{Name: "Stars", Source: "fixture", Table: "stars", Destination: "local-duckdb", Strategy: "replace", Code: "def fetch(secret, limit):\n    yield {'id': 1}\ndef estimate(secret):\n    return {'rows': 42, 'kind': 'exact', 'basis': 'Fixture source total_count'}\n"})
+			group := "men"
+			if step >= 6 {
+				group = "women"
+				var payload struct {
+					Messages []agent.Message `json:"messages"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Error(err)
+					return
+				}
+				var history strings.Builder
+				for _, message := range payload.Messages {
+					history.WriteString(message.Content)
+					for _, call := range message.Calls {
+						history.WriteString(call.Function.Arguments)
+					}
+				}
+				if !strings.Contains(history.String(), "men_records") || !strings.Contains(history.String(), "Saved ingestion") || !strings.Contains(history.String(), "do the same for women") {
+					t.Error("continuation lost the previous extractor or save status")
+				}
+			}
+			b, _ := json.Marshal(agent.Draft{Name: group + " records", Source: "fixture/" + group, Table: group + "_records", Destination: "local-duckdb", Strategy: "replace", Code: "def fetch(secret, limit):\n    yield {'id': 1, 'group': '" + group + "'}\ndef estimate(secret):\n    return {'rows': 42, 'kind': 'exact', 'basis': 'Fixture source total_count'}\n"})
 			call.Function.Arguments = string(b)
 		case 1:
 			call.Function.Name = "test_script"
@@ -92,7 +113,7 @@ func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T)
 	if w.Code != 422 {
 		t.Fatal("untested publish accepted")
 	}
-	w = request("POST", path, `{"message":"ingest fixture stars"}`, "application/json")
+	w = request("POST", path, `{"message":"ingest men's high jump records"}`, "application/json")
 	if w.Code != 200 {
 		t.Fatalf("turn: %d %s", w.Code, w.Body)
 	}
@@ -119,10 +140,15 @@ func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T)
 		t.Fatalf("confirmation: %d %s", w.Code, w.Body)
 	}
 	w = request("POST", path+"/publish", "", "")
-	if w.Code != 303 {
+	if w.Code != 303 || w.Header().Get("Location") != path {
 		t.Fatalf("publish: %d %s", w.Code, w.Body)
 	}
-	detail := w.Header().Get("Location")
+	chatID := strings.TrimPrefix(path, "/chat/")
+	saved, err := service.Load(chatID)
+	if err != nil || len(saved.SavedIngestions) != 1 || saved.PublishedID == chatID {
+		t.Fatalf("ingestion was not saved separately from its chat: %#v %v", saved.SavedIngestions, err)
+	}
+	detail := "/ingestions/" + saved.PublishedID
 	initial, _, err := spec.Read(filepath.Join(app.SpecDir, strings.TrimPrefix(detail, "/ingestions/")+".yaml"))
 	if err != nil || initial.Schedule == nil || initial.Schedule.Cron != "0 * * * *" || initial.Schedule.Timezone != "UTC" || initial.Materialization.Strategy != "merge" || len(initial.Materialization.PrimaryKey) != 1 || initial.Materialization.PrimaryKey[0] != "id" {
 		t.Fatalf("confirmed loading lost: %#v %v", initial, err)
@@ -159,6 +185,71 @@ func TestChatCreatesPythonIngestionAndPreservesItThroughScheduling(t *testing.T)
 	w = request("GET", "/settings/agent", "", "")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), model.URL) {
 		t.Fatalf("settings: %d %s", w.Code, w.Body)
+	}
+	// Save retries must not create another ingestion.
+	w = request("POST", path+"/publish", "", "")
+	repeated, err := service.Load(chatID)
+	if w.Code != 303 || err != nil || len(repeated.SavedIngestions) != 1 || repeated.PublishedID != saved.PublishedID {
+		t.Fatal("duplicate publication created another ingestion")
+	}
+	firstYAMLPath := filepath.Join(app.SpecDir, saved.PublishedID+".yaml")
+	firstYAML, err := os.ReadFile(firstYAMLPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstScript, err := os.ReadFile(initial.Runtime.Script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A restarted service can continue the same conversation with a new draft.
+	app.Agent = &agent.Service{Dir: service.Dir, Secrets: service.Secrets, Destinations: service.Destinations, Python: service.Python}
+	w = request("POST", path, `{"message":"do the same for women"}`, "application/json")
+	reply.Session = agent.Session{}
+	if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil || reply.Session.Pending == nil || reply.Session.Pending.Kind != "loading" {
+		t.Fatalf("could not continue saved chat: %s", w.Body)
+	}
+	if reply.Session.PublishedID != "" || reply.Session.DraftID != "" || reply.Session.Loading != nil || reply.Session.Validation != nil || reply.Session.Ready || reply.Session.Draft.Table != "women_records" || len(reply.Session.SavedIngestions) != 1 {
+		t.Fatal("new draft reused publication or approvals from the previous ingestion")
+	}
+	if blocked := request("POST", path+"/publish", "", ""); blocked.Code != 422 {
+		t.Fatal("new draft published without fresh approvals")
+	}
+	accepted, _ = json.Marshal(agent.Input{ActionID: "accept_loading", HandoffID: reply.Session.Pending.ID})
+	w = request("POST", path, string(accepted), "application/json")
+	reply.Session = agent.Session{}
+	if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil || reply.Session.Pending == nil || reply.Session.Pending.Kind != "validation" {
+		t.Fatalf("second validation proposal: %s", w.Body)
+	}
+	accepted, _ = json.Marshal(agent.Input{ActionID: "accept_validation", HandoffID: reply.Session.Pending.ID})
+	w = request("POST", path, string(accepted), "application/json")
+	if !strings.Contains(w.Body.String(), `"ready":true`) {
+		t.Fatalf("second validation: %s", w.Body)
+	}
+	w = request("POST", path+"/publish", "", "")
+	if w.Code != 303 || w.Header().Get("Location") != path {
+		t.Fatalf("second publish: %d %s", w.Code, w.Body)
+	}
+	both, err := app.Agent.Load(chatID)
+	if err != nil || len(both.SavedIngestions) != 2 || both.PublishedID == saved.PublishedID || both.PublishedID == chatID {
+		t.Fatalf("expected two independent ingestions: %#v %v", both.SavedIngestions, err)
+	}
+	second, _, err := spec.Read(filepath.Join(app.SpecDir, both.PublishedID+".yaml"))
+	if err != nil || second.Source.Table != "women_records" || second.Destination.Object != "women_records" || second.Runtime.Script == initial.Runtime.Script {
+		t.Fatalf("second ingestion is not independent: %#v %v", second, err)
+	}
+	for _, ingestion := range both.SavedIngestions {
+		if _, err := db.Get(ctx, ingestion.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unchangedYAML, _ := os.ReadFile(firstYAMLPath)
+	unchangedScript, _ := os.ReadFile(initial.Runtime.Script)
+	if string(unchangedYAML) != string(firstYAML) || string(unchangedScript) != string(firstScript) {
+		t.Fatal("second ingestion modified the first ingestion's files or schedule")
+	}
+	w = request("GET", path, "", "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "saved-ingestions") || !strings.Contains(w.Body.String(), both.PublishedID) || !strings.Contains(w.Body.String(), saved.PublishedID) || !strings.Contains(w.Body.String(), "New chat") {
+		t.Fatal("chat reload lost saved ingestions or the new-chat action")
 	}
 }
 
