@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -35,6 +36,15 @@ type Input struct {
 	HandoffID string   `json:"handoff_id,omitempty"`
 }
 
+// Catch enumerated choices accidentally placed only in the prompt. The model
+// must supply their labels and replies; we do not guess them from prose.
+var listedOption = regexp.MustCompile(`(?m)^[ \t]*(?:[-*+][ \t]+)?(?:\*\*|__)?(?:[A-Za-z]|[0-9]{1,2})[.):](?:\*\*|__)?[ \t]+`)
+
+func missingChoiceButtons(prompt string, options int) bool {
+	listed := len(listedOption.FindAllStringIndex(prompt, -1))
+	return listed >= 2 && listed > options
+}
+
 func askUser(v *Session, arguments string) (string, error) {
 	var request struct {
 		Kind       string `json:"kind"`
@@ -59,11 +69,20 @@ func askUser(v *Session, arguments string) (string, error) {
 		}
 		h.Actions = []Action{{ID: "retry_secret", Label: "I've added a key, try again", Message: secretReply(h.SecretName)}, {ID: "explain", Label: "Tell me more", Message: "Explain which source credential is needed, why, and how to get it. Do not ask me to paste it into chat. Offer the secret action again when appropriate."}}
 	case "choice", "question":
+		if request.Options == nil {
+			return "", errors.New("options is required: call ask_user again with kind=choice and 2–4 options containing label and message for any alternatives. Only a genuinely open question may use kind=question with options=[]. Ask one question at a time")
+		}
 		if len(request.Options) > 4 {
 			return "", errors.New("offer at most four options")
 		}
-		if request.Kind == "choice" && len(request.Options) < 2 {
+		if (request.Kind == "choice" || len(request.Options) > 0) && len(request.Options) < 2 {
 			return "", errors.New("offer at least two choices")
+		}
+		if missingChoiceButtons(request.Prompt, len(request.Options)) {
+			return "", errors.New("the prompt lists alternatives that have no buttons. Call ask_user again with kind=choice and an options entry containing label and message for every alternative. Put only one question and brief context in prompt; ask follow-up questions after the user answers")
+		}
+		if len(request.Options) > 0 {
+			h.Kind = "choice"
 		}
 		for i, option := range request.Options {
 			if strings.TrimSpace(option.Label) == "" || len(option.Label) > 80 || strings.TrimSpace(option.Message) == "" || len(option.Message) > 1000 {

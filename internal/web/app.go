@@ -74,7 +74,7 @@ func New(app App) (*App, error) {
 		app.Destinations = catalog
 	}
 	app.templates = make(map[string]*template.Template, 5)
-	for _, page := range []string{"home", "detail", "secrets", "destinations", "chat", "agent-settings", "setup"} {
+	for _, page := range []string{"home", "detail", "secrets", "destinations", "chats", "chat", "agent-settings", "setup"} {
 		parsed, err := template.New(page).ParseFS(templatefiles.FS, "layout.html", page+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s template: %w", page, err)
@@ -91,6 +91,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /setup/agent", a.setupAgent)
 	mux.HandleFunc("POST /setup/search", a.setupSearch)
 	mux.HandleFunc("GET /ingestions/new", a.chatPage)
+	mux.HandleFunc("GET /chat", a.listChats)
 	mux.HandleFunc("GET /chat/{id}", a.chatPage)
 	mux.HandleFunc("POST /chat/{id}", a.chatTurn)
 	mux.HandleFunc("POST /chat/{id}/publish", a.publishChat)

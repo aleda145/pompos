@@ -1,0 +1,22 @@
+{{define "content"}}
+<div class="page-heading">
+  <h1>Chats</h1>
+  <a class="button" href="/ingestions/new">+ New chat</a>
+</div>
+<p class="lead">Pick up a conversation where you left off. Each chat can create multiple ingestions.</p>
+{{if .Chats}}
+<div class="cards">
+  {{range .Chats}}
+  <a class="card" href="/chat/{{.ID}}">
+    <strong class="url">{{.Title}}</strong>
+    <div class="card-title">Updated {{.UpdatedAt.Format "2006-01-02 15:04 UTC"}} · {{.SavedCount}} saved ingestion{{if ne .SavedCount 1}}s{{end}}</div>
+  </a>
+  {{end}}
+</div>
+{{else}}
+<div class="empty">
+  <p>No chats yet.</p>
+  <p>Start a new chat and describe what you want to ingest. Your conversation will appear here after your first message.</p>
+</div>
+{{end}}
+{{end}}

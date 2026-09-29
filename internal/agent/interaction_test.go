@@ -16,6 +16,119 @@ type transportFunc func(*http.Request) (*http.Response, error)
 
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+const athleteProfileQuestion = "For Wikipedia high jumper athlete profiles, which set of athletes do you want?\n\nA. The athletes from the men's high jump progression table we already ingested (~80 names).\nB. The athletes from the women's high jump progression table we ingested (~40 names).\nC. Both A and B combined.\nD. A curated list based on all-time top performance / medals (e.g. top 100 men + top 100 women from a ranking source).\n\nAlso: which fields? I can extract name, nationality, birth date, height, weight, event(s), and personal best(s) from the infobox."
+
+func TestQuestionRequiresExplicitOptionsAndRejectsProseChoices(t *testing.T) {
+	for _, args := range []string{
+		`{"kind":"question","prompt":"Which athletes?"}`,
+		`{"kind":"question","prompt":"Which athletes?","options":null}`,
+		`{"kind":"question","prompt":"Choose:\nA. Men\nB. Women","options":[]}`,
+		`{"kind":"question","prompt":"Choose:\n- **A.** Men\n- **B.** Women","options":[]}`,
+		`{"kind":"question","prompt":"Choose:\n1. Men\n2. Women","options":[]}`,
+		`{"kind":"choice","prompt":"Choose:\nA. Men\nB. Women\nC. Both","options":[{"label":"Men","message":"Men"},{"label":"Women","message":"Women"}]}`,
+	} {
+		v := Session{}
+		if _, err := askUser(&v, args); err == nil || v.Pending != nil {
+			t.Fatalf("invalid question paused for input: %s", args)
+		}
+	}
+	v := Session{}
+	if _, err := askUser(&v, `{"kind":"question","prompt":"Which Wikipedia URL should I use?","options":[]}`); err != nil || v.Pending.Kind != "question" {
+		t.Fatalf("open question rejected: %v", err)
+	}
+	if _, err := askUser(&v, `{"kind":"question","prompt":"Which athletes?","options":[{"label":"Men","message":"Men"},{"label":"Women","message":"Women"}]}`); err != nil || v.Pending.Kind != "choice" || len(v.Pending.Actions) != 3 {
+		t.Fatalf("structured options should produce a choice regardless of kind: %v", err)
+	}
+}
+
+func TestAthleteProfileQuestionIsRepairedBeforePausing(t *testing.T) {
+	options := []Action{
+		{Label: "A. Men's progression athletes", Message: "Use athletes from the men's high jump progression table."},
+		{Label: "B. Women's progression athletes", Message: "Use athletes from the women's high jump progression table."},
+		{Label: "C. Both progression tables", Message: "Use athletes from both the men's and women's progression tables."},
+		{Label: "D. Curated ranking list", Message: "Use a curated list of top 100 men and top 100 women from a ranking source."},
+	}
+	for i, selected := range options {
+		t.Run(selected.Label, func(t *testing.T) {
+			s := &Service{Dir: t.TempDir()}
+			if err := s.SaveSettings(Settings{Endpoint: "http://model.test", Model: "test"}); err != nil {
+				t.Fatal(err)
+			}
+			requests := 0
+			s.Client = &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				var payload struct {
+					Messages []Message `json:"messages"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Fatal(err)
+				}
+				var args []byte
+				switch requests {
+				case 0:
+					args, _ = json.Marshal(map[string]any{"kind": "question", "prompt": athleteProfileQuestion})
+				case 1:
+					last := payload.Messages[len(payload.Messages)-1]
+					if last.Role != "tool" || !strings.HasPrefix(last.Content, "Error:") || !strings.Contains(last.Content, "options") {
+						t.Fatal("missing corrective tool error")
+					}
+					args, _ = json.Marshal(map[string]any{"kind": "choice", "prompt": "Which set of athletes should the Wikipedia profiles cover? We can choose fields next.", "options": options})
+				case 2:
+					if payload.Messages[len(payload.Messages)-1].Content != selected.Message {
+						t.Fatal("button did not send its precise answer")
+					}
+					args = []byte(`{"kind":"question","prompt":"Which profile fields would you like?","options":[]}`)
+				default:
+					t.Fatal("agent failed to pause")
+				}
+				requests++
+				call := Call{ID: "ask", Type: "function"}
+				call.Function.Name, call.Function.Arguments = "ask_user", string(args)
+				body, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"message": Message{Role: "assistant", Calls: []Call{call}}}}})
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
+			})}
+			v, err := s.Turn(context.Background(), "athletes", "Ingest Wikipedia high jumper profiles")
+			if err != nil || requests != 2 || v.Pending == nil || len(v.Pending.Actions) != 5 {
+				t.Fatalf("agent did not repair the question automatically: requests=%d, pending=%#v, err=%v", requests, v.Pending, err)
+			}
+			v, err = s.Load(v.ID)
+			if err != nil || v.Pending == nil || len(v.Pending.Actions) != 5 {
+				t.Fatalf("corrected choices did not persist: %v", err)
+			}
+			if v.Pending.Actions[i].Label != selected.Label {
+				t.Fatal("incorrect button label")
+			}
+			if _, err := s.TurnWithEvents(context.Background(), v.ID, Input{ActionID: v.Pending.Actions[i].ID, HandoffID: v.Pending.ID}, nil); err != nil || requests != 3 {
+				t.Fatalf("button could not resume the conversation: %v", err)
+			}
+		})
+	}
+}
+
+func TestExplainRepairsSavedQuestionWithMissingButtons(t *testing.T) {
+	s := &Service{Dir: t.TempDir()}
+	if err := s.SaveSettings(Settings{Endpoint: "http://model.test", Model: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	v := Session{ID: "broken_question", Messages: []Message{{Role: "system", Content: prompt}, {Role: "assistant", Content: "Choose athletes:\nA. Men\nB. Women"}}, Pending: &Handoff{ID: "2", Kind: "question", Prompt: "Choose athletes:\nA. Men\nB. Women", Actions: []Action{{ID: "explain", Label: "Tell me more", Message: "Explain the choices, then offer them again."}}}}
+	if err := s.save(v); err != nil {
+		t.Fatal(err)
+	}
+	s.Client = &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		var request struct {
+			ToolChoice string `json:"tool_choice"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.ToolChoice != "required" {
+			t.Fatal("malformed saved questions must require a corrected handoff")
+		}
+		response := `{"choices":[{"message":{"tool_calls":[{"id":"ask","type":"function","function":{"name":"ask_user","arguments":"{\"kind\":\"choice\",\"prompt\":\"Which athletes?\",\"options\":[{\"label\":\"A. Men\",\"message\":\"Men\"},{\"label\":\"B. Women\",\"message\":\"Women\"}]}"}}]}}]}`
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(response)), Header: make(http.Header)}, nil
+	})}
+	v, err := s.TurnWithEvents(context.Background(), v.ID, Input{ActionID: "explain", HandoffID: v.Pending.ID}, nil)
+	if err != nil || v.Pending == nil || v.Pending.Kind != "choice" || len(v.Pending.Actions) != 3 {
+		t.Fatalf("saved question was not repaired: %#v %v", v.Pending, err)
+	}
+}
+
 func TestHighJumpChoicesPersistAndSubmitPreciseReplies(t *testing.T) {
 	options := []struct{ label, reply string }{
 		{"A. Source fields only", "Use height, athlete name, country, venue and date only."},
@@ -59,7 +172,7 @@ func TestHighJumpChoicesPersistAndSubmitPreciseReplies(t *testing.T) {
 					if request.Messages[len(request.Messages)-1].Content != selected.reply {
 						t.Fatal("detail selection did not send its precise reply")
 					}
-					call.Function.Arguments = `{"kind":"question","prompt":"What should this ingestion be called?"}`
+					call.Function.Arguments = `{"kind":"question","prompt":"What should this ingestion be called?","options":[]}`
 				default:
 					t.Fatal("agent continued past a question")
 				}

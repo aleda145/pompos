@@ -257,6 +257,53 @@ type chatTransport func(*http.Request) (*http.Response, error)
 
 func (f chatTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+func TestChatNavigationListsAndReopensSavedConversation(t *testing.T) {
+	dir := t.TempDir()
+	db, err := store.Open(context.Background(), filepath.Join(dir, "metadata.sqlite"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	service := &agent.Service{Dir: filepath.Join(dir, "agent")}
+	if err := service.SaveSettings(agent.Settings{Endpoint: "http://model.test", Model: "test", ExaSkipped: true}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := New(App{Agent: service, Store: db, Secrets: db.Secrets(), Logger: log.New(io.Discard, "", 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		app.Handler().ServeHTTP(response, httptest.NewRequest("GET", path, nil))
+		return response
+	}
+	empty := get("/chat")
+	if empty.Code != 200 || !strings.Contains(empty.Body.String(), "No chats yet.") || !strings.Contains(empty.Body.String(), `href="/ingestions/new"`) {
+		t.Fatalf("empty list: %d %s", empty.Code, empty.Body)
+	}
+	v := agent.Session{ID: "high_jump", Messages: []agent.Message{{Role: "user", Content: "High jump <script>alert(1)</script>"}}, SavedIngestions: []agent.SavedIngestion{{ID: "men", Name: "Men", Table: "men_records"}, {ID: "women", Name: "Women", Table: "women_records"}}}
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.WriteFile(filepath.Join(service.Dir, v.ID+".json"), data); err != nil {
+		t.Fatal(err)
+	}
+	listed := get("/chat")
+	if listed.Code != 200 || !strings.Contains(listed.Body.String(), `href="/chat/high_jump"`) || !strings.Contains(listed.Body.String(), "2 saved ingestions") || !strings.Contains(listed.Body.String(), "High jump &lt;script&gt;") || strings.Contains(listed.Body.String(), "<script>alert(1)</script>") {
+		t.Fatalf("chat list: %d %s", listed.Code, listed.Body)
+	}
+	reopened := get("/chat/high_jump")
+	if reopened.Code != 200 || !strings.Contains(reopened.Body.String(), `data-id="high_jump"`) || !strings.Contains(reopened.Body.String(), "women_records") {
+		t.Fatalf("reopen conversation: %d %s", reopened.Code, reopened.Body)
+	}
+	for _, path := range []string{"/", "/chat", "/chat/high_jump"} {
+		if page := get(path); page.Code != 200 || !strings.Contains(page.Body.String(), `<a href="/chat">Chat</a>`) {
+			t.Fatalf("Chat missing from header on %s", path)
+		}
+	}
+}
+
 func TestChatFlushesStepsBeforeModelCompletesAndOffersSecretActions(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

@@ -13,6 +13,22 @@ import (
 	"pompos/internal/store"
 )
 
+func (a *App) listChats(w http.ResponseWriter, r *http.Request) {
+	if a.Agent == nil {
+		http.Error(w, "Agent is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	sessions, err := a.Agent.ListSessions()
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	a.render(w, http.StatusOK, "chats", struct {
+		Title string
+		Chats []agent.SessionSummary
+	}{"Chats", sessions})
+}
+
 func (a *App) chatPage(w http.ResponseWriter, r *http.Request) {
 	if a.Agent == nil {
 		http.Error(w, "Agent is not configured", 503)
