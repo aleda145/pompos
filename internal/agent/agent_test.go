@@ -37,7 +37,8 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 			t.Errorf("path %s", r.URL.Path)
 		}
 		var request struct {
-			Messages []Message `json:"messages"`
+			Messages   []Message `json:"messages"`
+			ToolChoice string    `json:"tool_choice"`
 		}
 		json.NewDecoder(r.Body).Decode(&request)
 		m := Message{Role: "assistant"}
@@ -87,6 +88,9 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 		case 10:
 			name = "finish"
 		default:
+			if request.ToolChoice != "auto" {
+				t.Error("finished ingestions should allow a prose summary")
+			}
 			m.Content = "The source probe passed. Review and save."
 		}
 		if name != "" {

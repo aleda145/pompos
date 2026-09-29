@@ -15,6 +15,88 @@ import (
 type transportFunc func(*http.Request) (*http.Response, error)
 
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestHighJumpChoicesPersistAndSubmitPreciseReplies(t *testing.T) {
+	options := []struct{ label, reply string }{
+		{"A. Source fields only", "Use height, athlete name, country, venue and date only."},
+		{"B. Add date of birth", "Also fetch date of birth from linked athlete pages when available."},
+		{"C. Full athlete profile", "Discuss a separate World Athletics athlete-profile ingestion."},
+	}
+	for _, selected := range options {
+		t.Run(selected.label, func(t *testing.T) {
+			s := &Service{Dir: t.TempDir()}
+			if err := s.SaveSettings(Settings{Endpoint: "http://model.test", Model: "test"}); err != nil {
+				t.Fatal(err)
+			}
+			requests := 0
+			s.Client = &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				var request struct {
+					ToolChoice string    `json:"tool_choice"`
+					Messages   []Message `json:"messages"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if request.ToolChoice != "required" {
+					t.Fatal("model can end with prose choices instead of clickable options")
+				}
+				call := Call{ID: "ask", Type: "function"}
+				call.Function.Name = "ask_user"
+				switch requests {
+				case 0:
+					call.Function.Arguments = `{"kind":"choice","prompt":"Which high jump table first?","options":[{"label":"Men’s records","message":"Ingest men’s high jump world-record progression."},{"label":"Women’s records","message":"Ingest women’s high jump world-record progression."}]}`
+				case 1:
+					if request.Messages[len(request.Messages)-1].Content != "Ingest men’s high jump world-record progression." {
+						t.Fatal("table selection did not reach the model")
+					}
+					choices := make([]map[string]string, 0, len(options))
+					for _, option := range options {
+						choices = append(choices, map[string]string{"label": option.label, "message": option.reply})
+					}
+					args, _ := json.Marshal(map[string]any{"kind": "choice", "prompt": "How much athlete detail? A uses source fields; B adds linked birth dates; C needs a separate ingestion.", "options": choices})
+					call.Function.Arguments = string(args)
+				case 2:
+					if request.Messages[len(request.Messages)-1].Content != selected.reply {
+						t.Fatal("detail selection did not send its precise reply")
+					}
+					call.Function.Arguments = `{"kind":"question","prompt":"What should this ingestion be called?"}`
+				default:
+					t.Fatal("agent continued past a question")
+				}
+				requests++
+				data, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"message": Message{Role: "assistant", Calls: []Call{call}}}}})
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(data))), Header: make(http.Header)}, nil
+			})}
+			v, err := s.Turn(context.Background(), "high_jump", "Ingest high jump world records")
+			if err != nil || v.Pending == nil || requests != 1 {
+				t.Fatalf("missing table question: %v", err)
+			}
+			v, err = s.TurnWithEvents(context.Background(), v.ID, Input{ActionID: "option_0", HandoffID: v.Pending.ID}, nil)
+			if err != nil || requests != 2 {
+				t.Fatalf("missing detail question: %v", err)
+			}
+			// Loading the persisted session is also what restores buttons after reload.
+			v, err = s.Load(v.ID)
+			if err != nil || v.Pending == nil || len(v.Pending.Actions) != 4 {
+				t.Fatalf("detail choices were not saved: %v", err)
+			}
+			var actionID string
+			for i, option := range options {
+				action := v.Pending.Actions[i]
+				if action.Label != option.label || action.Message != option.reply {
+					t.Fatalf("wrong choice: %#v", action)
+				}
+				if action.Label == selected.label {
+					actionID = action.ID
+				}
+			}
+			if _, err = s.TurnWithEvents(context.Background(), v.ID, Input{ActionID: actionID, HandoffID: v.Pending.ID}, nil); err != nil || requests != 3 {
+				t.Fatalf("could not select %s: %v", selected.label, err)
+			}
+		})
+	}
+}
+
 func TestSecretHandoffStreamsPausesAndResumesWithoutLeakingKey(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -143,6 +225,12 @@ func TestTellMeMoreKeepsChoicesAndRejectsOldActions(t *testing.T) {
 	}
 	oldID := v.Pending.ID
 	s.Client = &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		var request struct {
+			ToolChoice string `json:"tool_choice"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.ToolChoice != "auto" {
+			t.Fatal("explanations should allow prose while keeping the existing choices")
+		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"role":"assistant","content":"Stargazers gives one row per person; a count gives one snapshot row."}}]}`)), Header: make(http.Header)}, nil
 	})}
 	updated, err := s.TurnWithEvents(context.Background(), v.ID, Input{ActionID: "explain", HandoffID: oldID}, nil)

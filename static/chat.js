@@ -214,10 +214,6 @@
       const actions = element('div', 'quick-actions');
       for (const action of pending.actions) actions.append(button(action.label, () => submit({action_id: action.id, handoff_id: pending.id})));
       target.append(actions);
-    } else if (session.messages?.at(-1)?.role === 'assistant') {
-      const actions = element('div', 'quick-actions');
-      actions.append(button('Continue', () => submit({message: 'Continue from the latest results.'})), button('Tell me more', () => submit({message: 'Tell me more about the last response and the next step.'})));
-      target.append(actions);
     }
     target.hidden = !target.hasChildNodes();
   }
