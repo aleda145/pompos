@@ -48,11 +48,14 @@ Remove copy such as “Saved conversations and their ingestions,” “This exac
 
 ## Type
 
-- Sans for UI: Inter / Helvetica / system-ui.
-- Mono for machine values: IBM Plex Mono / Geist Mono / ui-monospace.
-- UI: 12–14px.
+- Sans for UI: IBM Plex Sans / system-ui.
+- Mono for machine values: IBM Plex Mono / ui-monospace.
+- Bundle WOFF2 fonts locally; no external font requests. Use `font-display: swap`.
+- Ordinary UI text and controls: 14px.
+- Regular (400) for content, medium (500) for labels and controls, semibold (600) for headings.
+- Use sentence case for labels and headings; keep the fixed status vocabulary uppercase.
 - Supporting text: 12px, with the same black color as body text.
-- Headings: 16–20px.
+- Page headings: 16–20px. Section headings: 14px.
 - Use mono for identifiers, config, logs, timestamps, counts, durations.
 
 ## Color
