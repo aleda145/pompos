@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to content</a>
   <header>
     <a class="brand" href="/">pompos</a>
     <nav aria-label="Main navigation">
@@ -15,10 +16,11 @@
       <a href="/chat">Chat</a>
       <a href="/destinations">Destinations</a>
       <a href="/secrets">Secrets</a>
- <a href="/settings/agent">Agent settings</a>
+      <a href="/settings/agent">Agent settings</a>
     </nav>
   </header>
-  <main>{{template "content" .}}</main>
+  <main id="main">{{template "content" .}}</main>
 </body>
 </html>
 {{end}}
+{{define "status"}}<span class="status status-{{.}}">{{if eq . "succeeded"}}SUCCESS{{else if eq . "running"}}RUNNING{{else if eq . "failed"}}FAILED{{else if eq . "cancelled"}}CANCELLED{{else if or (eq . "pending") (eq . "")}}IDLE{{else}}{{.}}{{end}}</span>{{end}}

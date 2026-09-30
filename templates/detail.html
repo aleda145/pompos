@@ -1,18 +1,18 @@
 {{define "content"}}
 <a class="back" href="/">← Ingestions</a>
 <div class="page-heading">
-  <h1>{{.Ingestion.Name}}</h1>
-  <form method="post" action="/ingestions/{{.Ingestion.ID}}/run"><button type="submit">Run ingestion</button></form>
+  <div class="heading-state"><h1 class="mono">{{.Ingestion.Name}}</h1>{{template "status" .Ingestion.Status}}</div>
+  <form method="post" action="/ingestions/{{.Ingestion.ID}}/run"><button class="primary" type="submit">Run ingestion</button></form>
 </div>
 {{if .RunQueued}}<div class="notice notice-success" role="status">Run queued. It will continue if you leave this page.</div>{{end}}
 
 <div class="panel details">
-  <section><h2>Source</h2><p class="url">{{.Ingestion.Source.DisplayLocation}}</p></section>
-  <section><h2>Destination</h2><p>DuckDB<br><code>{{.Ingestion.Destination.Path}}</code><br>Table <code>{{.Ingestion.Destination.Table}}</code></p></section>
+  <section class="half-section"><h2>Source</h2><p class="url mono">{{.Ingestion.Source.DisplayLocation}}</p>{{if .Ingestion.Source.Table}}<p>Table <code>{{.Ingestion.Source.Table}}</code></p>{{end}}</section>
+  <section class="half-section"><h2>Destination</h2><p>{{.Ingestion.Destination.Type}}<br><code>{{.Ingestion.Destination.Path}}</code><br>Table <code>{{.Ingestion.Destination.Table}}</code></p></section>
   <section><h2>Production row estimate</h2>{{with .Ingestion.Source.Estimate}}<p>{{.Description}}</p><p class="hint">{{.Basis}}</p><p class="hint">Observed {{.ObservedAt}}. Estimated extraction size, not new rows inserted. Future runs may differ.</p>{{else}}<p>Unknown</p>{{end}}</section>
   <section><h2>Loading</h2><dl><div><dt>Strategy</dt><dd><code>{{.Ingestion.Materialization.Strategy}}</code></dd></div>{{if .Ingestion.Materialization.PrimaryKey}}<div><dt>Primary key</dt><dd><code>{{range $index, $key := .Ingestion.Materialization.PrimaryKey}}{{if $index}}, {{end}}{{$key}}{{end}}</code></dd></div>{{end}}</dl></section>
   <section><h2>Runtime</h2><dl><div><dt>Engine</dt><dd><code>{{.Ingestion.Runtime.Engine}}</code></dd></div><div><dt>Orchestrator</dt><dd><code>{{.Ingestion.Runtime.Orchestrator}}</code></dd></div></dl></section>
-  <section><h2>Status</h2><p><span class="status status-{{.Ingestion.Status}}">{{.Ingestion.Status}}</span></p>{{if .Ingestion.LastRun}}<p class="hint">Last run: {{.Ingestion.LastRun.Format "2006-01-02 15:04:05 UTC"}}</p>{{end}}</section>
+  <section><h2>Last run</h2><p class="mono">{{if .Ingestion.LastRun}}{{.Ingestion.LastRun.Format "2006-01-02 15:04:05 UTC"}}{{else}}Never{{end}}</p></section>
   <section>
     <h2>Schedule</h2>
     {{if .ScheduleSaved}}<div class="notice notice-success" role="status">Schedule saved.</div>{{end}}
@@ -20,11 +20,11 @@
     <form method="post" action="/ingestions/{{.Ingestion.ID}}/schedule" class="schedule-form">
       <label for="schedule">Cron expression</label>
       <div class="schedule-controls">
-        <input id="schedule" name="schedule" value="{{.ScheduleValue}}" placeholder="0 6 * * *" autocomplete="off">
+        <input class="mono" id="schedule" name="schedule" value="{{.ScheduleValue}}" placeholder="0 6 * * *" autocomplete="off">
         <button type="submit">Save schedule</button>
       </div>
       <p class="hint">Five fields, evaluated in UTC. Leave blank to disable.</p>
-      {{if .NextRun}}<p class="hint">Next run: {{.NextRun.Format "2006-01-02 15:04:05 UTC"}}</p>{{end}}
+      {{if .NextRun}}<p class="hint">Next run: <span class="mono">{{.NextRun.Format "2006-01-02 15:04:05 UTC"}}</span></p>{{end}}
     </form>
   </section>
   {{if .Ingestion.LastError}}<section><h2>Latest error</h2><pre class="error">{{.Ingestion.LastError}}</pre></section>{{end}}

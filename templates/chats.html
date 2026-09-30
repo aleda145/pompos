@@ -1,22 +1,22 @@
 {{define "content"}}
 <div class="page-heading">
   <h1>Chats</h1>
-  <a class="button" href="/ingestions/new">+ New chat</a>
+  <a class="button primary" href="/ingestions/new">New chat</a>
 </div>
-<p class="lead">Pick up a conversation where you left off. Each chat can create multiple ingestions.</p>
+<p class="lead">Saved conversations and their ingestions.</p>
 {{if .Chats}}
-<div class="cards">
-  {{range .Chats}}
-  <a class="card" href="/chat/{{.ID}}">
-    <strong class="url">{{.Title}}</strong>
-    <div class="card-title">Updated {{.UpdatedAt.Format "2006-01-02 15:04 UTC"}} · {{.SavedCount}} saved ingestion{{if ne .SavedCount 1}}s{{end}}</div>
-  </a>
-  {{end}}
+<div class="table-scroll" role="region" aria-label="Chats" tabindex="0">
+  <table>
+    <caption class="sr-only">Saved chats</caption>
+    <thead><tr><th scope="col">Conversation</th><th scope="col">Updated · UTC</th><th scope="col">Ingestions</th></tr></thead>
+    <tbody>
+    {{range .Chats}}
+      <tr><th scope="row"><a class="table-name" href="/chat/{{.ID}}">{{.Title}}</a></th><td class="mono nowrap">{{.UpdatedAt.Format "2006-01-02 15:04"}}</td><td class="mono">{{.SavedCount}} saved ingestion{{if ne .SavedCount 1}}s{{end}}</td></tr>
+    {{end}}
+    </tbody>
+  </table>
 </div>
 {{else}}
-<div class="empty">
-  <p>No chats yet.</p>
-  <p>Start a new chat and describe what you want to ingest. Your conversation will appear here after your first message.</p>
-</div>
+<div class="empty"><p>No chats yet.</p><p>Start a chat to configure an ingestion. Chats are saved after the first message.</p></div>
 {{end}}
 {{end}}

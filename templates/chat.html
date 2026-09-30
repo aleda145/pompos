@@ -1,21 +1,21 @@
 {{define "content"}}
-<div class="chat-heading"><div><p class="eyebrow">Ingest anything</p><h1 id="chat-title">What do you want to bring in?</h1></div><a href="/ingestions/new">New chat</a><a href="/settings/agent">Agent settings</a></div>
+<div class="chat-heading"><div><p class="eyebrow">Ingestion configuration</p><h1 id="chat-title">New ingestion</h1></div><a href="/ingestions/new">New chat</a><a href="/settings/agent">Agent settings</a></div>
 <div id="chat" data-id="{{.Session.ID}}">
- <div id="chat-empty"><p>Describe a source. We’ll work through it together, test a few rows, and save a runnable ingestion.</p><button type="button" id="example" class="suggestion">Ingest GitHub stargazers →</button></div>
+ <div id="chat-empty"><p>Enter a source URL or table. The agent generates and tests one ingestion per destination table.</p><button type="button" id="example" class="suggestion">Example: GitHub stargazers</button></div>
  <div id="messages" class="chat-log" aria-label="Conversation"></div>
- <div id="working" class="sr-only" role="status" aria-live="polite"></div>
+ <div id="working" class="chat-state mono" role="status" aria-live="polite">IDLE</div>
  <div id="handoff" class="chat-handoff" hidden></div>
  <div id="chat-error" class="error" role="alert" hidden></div>
- <div id="recovery" class="quick-actions" hidden><button type="button" id="retry-turn" class="suggestion">Try again</button><a href="/settings/agent">Agent settings</a></div>
+ <div id="recovery" class="quick-actions" hidden><button type="button" id="retry-turn" class="suggestion">Retry</button><a href="/settings/agent">Agent settings</a></div>
  <details id="draft" class="chat-artifact" hidden><summary>Ingestion draft <span id="draft-target"></span></summary><pre class="yaml-code"><code id="draft-code"></code></pre></details>
  <p id="row-estimate" class="hint" hidden></p>
  <p id="validation-result" class="hint" role="status" hidden></p>
- <form id="publish" class="chat-publish" method="post" action="/chat/{{.Session.ID}}/publish" hidden><span id="publish-status">Validation passed. Ready to save.</span><button type="submit">Save ingestion</button></form>
+ <form id="publish" class="chat-publish" method="post" action="/chat/{{.Session.ID}}/publish" hidden><span id="publish-status">Validation passed. Ready to save.</span><button class="primary" type="submit">Save ingestion</button></form>
  <div class="chat-composer">
-  <form id="chat-form"><label for="message" class="sr-only">Message the agent</label><textarea id="message" rows="2" maxlength="16000" required placeholder="Describe what to ingest, or add a detail…"></textarea><div class="composer-footer"><span>Enter to send · Shift+Enter for a new line</span><button id="send" type="submit">Send ↑</button></div></form>
+  <form id="chat-form"><label for="message" class="sr-only">Message the agent</label><textarea id="message" rows="2" maxlength="16000" required placeholder="Source URL, table, or configuration change"></textarea><div class="composer-footer"><span>Enter to send · Shift+Enter for a new line</span><button id="send" class="primary" type="submit">Send</button></div></form>
   <p class="composer-hint">Keys belong in <a href="/secrets" target="_blank" rel="noopener">Secrets</a>, not chat. This conversation is saved automatically.</p>
  </div>
- <div id="published" hidden><p>Saved in this chat. Keep chatting to create another ingestion.</p><ul id="saved-ingestions"></ul></div>
+ <div id="published" hidden><p>Saved ingestions</p><ul id="saved-ingestions"></ul></div>
 </div>
 <script id="chat-state" type="application/json">{{.Session}}</script>
 <script src="/static/chat-stream.js" defer></script>

@@ -1,28 +1,27 @@
 {{define "content"}}
 <div class="page-heading">
   <h1>Ingestions</h1>
-  <a class="button" href="/ingestions/new">+ Add ingestion</a>
+  <a class="button primary" href="/ingestions/new">Add ingestion</a>
 </div>
 {{if .Ingestions}}
-<div class="cards">
-  {{range .Ingestions}}
-  <a class="card" href="/ingestions/{{.ID}}">
-    <div class="card-title">Python · dlt → DuckDB</div>
-    <strong>{{.Name}}</strong>
-    <span class="url">{{.Source.DisplayLocation}}</span>
-    <dl>
-      <div><dt>Table</dt><dd>{{.Destination.Table}}</dd></div>
-      <div><dt>Status</dt><dd><span class="status status-{{.Status}}">{{.Status}}</span></dd></div>
-      <div><dt>Last run</dt><dd>{{if .LastRun}}{{.LastRun.Format "2006-01-02 15:04:05 UTC"}}{{else}}Never{{end}}</dd></div>
-      {{if .Schedule}}<div><dt>Schedule</dt><dd><code>{{.Schedule}}</code> UTC</dd></div>{{end}}
-    </dl>
-  </a>
-  {{end}}
+<div class="table-scroll" role="region" aria-label="Ingestions" tabindex="0">
+  <table>
+    <caption class="sr-only">Ingestion sources, destination tables, and run state</caption>
+    <thead><tr><th scope="col">Ingestion / source</th><th scope="col">Destination</th><th scope="col">Status</th><th scope="col">Last run · UTC</th><th scope="col">Schedule · UTC</th></tr></thead>
+    <tbody>
+    {{range .Ingestions}}
+      <tr>
+        <th scope="row"><a class="table-name" href="/ingestions/{{.ID}}">{{.Name}}</a><span class="cell-detail mono">{{.Source.DisplayLocation}}</span></th>
+        <td class="mono">{{.Destination.Table}}<span class="cell-detail">{{.Destination.Path}}</span></td>
+        <td>{{template "status" .Status}}</td>
+        <td class="mono nowrap">{{if .LastRun}}{{.LastRun.Format "2006-01-02 15:04:05"}}{{else}}Never{{end}}</td>
+        <td class="mono nowrap">{{if .Schedule}}{{.Schedule}}{{else}}Manual{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
 </div>
 {{else}}
-<div class="empty">
-  <p>No ingestions yet.</p>
-  <p>Describe what you want to ingest. Develop and test it with the agent, then let Pompos run it.</p>
-</div>
+<div class="empty"><p>No ingestions.</p><p>Add a source to create and test an ingestion.</p></div>
 {{end}}
 {{end}}

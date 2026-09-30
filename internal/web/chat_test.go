@@ -106,7 +106,7 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 	}
 	path := w.Header().Get("Location")
 	w = request("GET", path, "", "")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "What do you want to bring in?") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "New ingestion") {
 		t.Fatalf("chat page: %d %s", w.Code, w.Body)
 	}
 	w = request("POST", path+"/publish", "", "")

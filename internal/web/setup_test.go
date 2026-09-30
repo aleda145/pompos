@@ -53,7 +53,7 @@ func TestSetupRequiresAgentAndRemembersOptionalSearchSkip(t *testing.T) {
 		assertRedirect(t, setupRequest(app, "GET", path, nil), "/setup")
 	}
 	page := setupRequest(app, "GET", "/setup", nil)
-	if page.Code != 200 || !strings.Contains(page.Body.String(), "Connect your agent") || strings.Contains(page.Body.String(), "Skip for now") {
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "Configure agent") || strings.Contains(page.Body.String(), "Skip for now") {
 		t.Fatalf("required agent page: %d %s", page.Code, page.Body)
 	}
 	assertRedirect(t, setupRequest(app, "POST", "/setup/search", url.Values{"action": {"skip"}}), "/setup")
@@ -63,7 +63,7 @@ func TestSetupRequiresAgentAndRemembersOptionalSearchSkip(t *testing.T) {
 	}
 	assertRedirect(t, setupRequest(app, "POST", "/setup/agent", url.Values{"endpoint": {"http://localhost:11434/v1"}, "model": {"local-model"}, "no_auth": {"on"}}), "/setup")
 	page = setupRequest(app, "GET", "/setup", nil)
-	if page.Code != 200 || !strings.Contains(page.Body.String(), "Give your agent web search") || !strings.Contains(page.Body.String(), "Skip for now") {
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "Configure web search") || !strings.Contains(page.Body.String(), "Skip for now") {
 		t.Fatalf("optional search page: %s", page.Body)
 	}
 	assertRedirect(t, setupRequest(app, "POST", "/setup/search", url.Values{"action": {"skip"}}), "/")
@@ -153,11 +153,11 @@ func TestSetupReusesExistingConfigurationAndRepairsMissingKeys(t *testing.T) {
 	}
 	db.Secrets().Delete(ctx, "exa-key")
 	assertRedirect(t, setupRequest(app, "GET", "/", nil), "/setup")
-	if w := setupRequest(app, "GET", "/setup", nil); !strings.Contains(w.Body.String(), "Give your agent web search") {
+	if w := setupRequest(app, "GET", "/setup", nil); !strings.Contains(w.Body.String(), "Configure web search") {
 		t.Fatal("did not offer missing search setup")
 	}
 	db.Secrets().Delete(ctx, "model-key")
-	if w := setupRequest(app, "GET", "/setup", nil); !strings.Contains(w.Body.String(), "Connect your agent") {
+	if w := setupRequest(app, "GET", "/setup", nil); !strings.Contains(w.Body.String(), "Configure agent") {
 		t.Fatal("missing model credential did not require agent setup")
 	}
 	db.Secrets().Put(ctx, "replacement", []byte("new-model-value"))

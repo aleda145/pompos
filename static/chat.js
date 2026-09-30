@@ -23,7 +23,7 @@
     details.dataset.key = key;
     const summary = element('summary');
     summary.append(element('span', 'activity-dot'), element('span', 'activity-title', title));
-    if (status) summary.append(element('span', 'activity-status', {running: 'running', failed: 'failed', complete: 'done', waiting: 'queued'}[status] || ''));
+    if (status) summary.append(element('span', 'activity-status', {running: 'RUNNING', failed: 'FAILED', complete: 'SUCCESS', waiting: 'IDLE'}[status] || ''));
     details.append(summary, content);
     return details;
   }
@@ -219,7 +219,7 @@
   }
   function render() {
     renderLog(); renderHandoff();
-    $('#chat-title').textContent = session.messages?.length ? 'Ingestion chat' : 'What do you want to bring in?';
+    $('#chat-title').textContent = session.messages?.length ? 'Ingestion chat' : 'New ingestion';
     $('#draft').hidden = !session.draft || !!session.published_id;
     $('#draft-target').textContent = session.draft ? `${session.draft.destination} / ${session.draft.table} · ${session.draft.strategy} · ${session.draft.schedule ? `${session.draft.schedule} UTC` : 'manual'}` : '';
     $('#draft-code').textContent = session.draft?.code || '';
@@ -233,6 +233,7 @@
     $('#publish').hidden = busy || !session.ready || !!session.published_id;
     $('#publish-status').textContent = session.loading?.cron ? `Validation passed. Saving enables ${session.loading.cron} (UTC) · ${session.loading.strategy}.` : `Validation passed. Manual runs · ${session.loading?.strategy || session.draft?.strategy || 'replace'}.`;
     $('#send').disabled = busy;
+    $('#send').classList.toggle('primary', !session.ready || !!session.published_id);
     $('#message').disabled = busy;
     const saved = session.saved_ingestions || [];
     $('#published').hidden = !saved.length;
@@ -246,14 +247,14 @@
     $('#saved-ingestions').replaceChildren(...links);
   }
   function applyEvent(event) {
-    if (event.type === 'thinking') { thinking = true; activeCall = null; $('#working').textContent = 'Thinking'; }
+    if (event.type === 'thinking') { thinking = true; activeCall = null; $('#working').textContent = 'RUNNING · Thinking'; }
     if (event.type === 'message') {
       thinking = false;
       session.messages ||= [];
       session.messages.push(event.message);
       if (event.message.role === 'user') $('#message').value = '';
     }
-    if (event.type === 'tool_start') { thinking = false; activeCall = event.call.id; $('#working').textContent = toolNames[event.call.function.name] || event.call.function.name; }
+    if (event.type === 'tool_start') { thinking = false; activeCall = event.call.id; $('#working').textContent = `RUNNING · ${toolNames[event.call.function.name] || event.call.function.name}`; }
     if (event.type === 'done') {
       session = event.session; thinking = false; activeCall = null;
       if (event.error) throw new Error(event.error);
@@ -263,6 +264,7 @@
   async function submit(input) {
     if (busy) return;
     lastInput = input; busy = true; thinking = true;
+    $('#working').textContent = 'RUNNING';
     $('#chat-error').hidden = true; $('#recovery').hidden = true;
     render();
     try {
@@ -273,7 +275,7 @@
       $('#chat-error').textContent = error.message; $('#chat-error').hidden = false;
       $('#recovery').hidden = false;
     } finally {
-      busy = false; thinking = false; $('#working').textContent = 'Your turn'; render();
+      busy = false; thinking = false; $('#working').textContent = $('#chat-error').hidden ? 'IDLE' : 'FAILED'; render();
     }
   }
   $('#chat-form').addEventListener('submit', (event) => {
