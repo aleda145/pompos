@@ -278,7 +278,7 @@ func TestChatNavigationListsAndReopensSavedConversation(t *testing.T) {
 		return response
 	}
 	empty := get("/chat")
-	if empty.Code != 200 || !strings.Contains(empty.Body.String(), "No chats yet.") || !strings.Contains(empty.Body.String(), `href="/ingestions/new"`) {
+	if empty.Code != 200 || !strings.Contains(empty.Body.String(), "No chats.") || !strings.Contains(empty.Body.String(), `href="/ingestions/new"`) {
 		t.Fatalf("empty list: %d %s", empty.Code, empty.Body)
 	}
 	v := agent.Session{ID: "high_jump", Messages: []agent.Message{{Role: "user", Content: "High jump <script>alert(1)</script>"}}, SavedIngestions: []agent.SavedIngestion{{ID: "men", Name: "Men", Table: "men_records"}, {ID: "women", Name: "Women", Table: "women_records"}}}
@@ -290,7 +290,7 @@ func TestChatNavigationListsAndReopensSavedConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	listed := get("/chat")
-	if listed.Code != 200 || !strings.Contains(listed.Body.String(), `href="/chat/high_jump"`) || !strings.Contains(listed.Body.String(), "2 saved ingestions") || !strings.Contains(listed.Body.String(), "High jump &lt;script&gt;") || strings.Contains(listed.Body.String(), "<script>alert(1)</script>") {
+	if listed.Code != 200 || !strings.Contains(listed.Body.String(), `href="/chat/high_jump"`) || !strings.Contains(listed.Body.String(), `<td class="mono">2</td>`) || !strings.Contains(listed.Body.String(), "High jump &lt;script&gt;") || strings.Contains(listed.Body.String(), "<script>alert(1)</script>") {
 		t.Fatalf("chat list: %d %s", listed.Code, listed.Body)
 	}
 	reopened := get("/chat/high_jump")

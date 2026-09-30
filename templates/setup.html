@@ -1,41 +1,34 @@
 {{define "content"}}
 <div class="setup-flow">
- <p class="eyebrow">Pompos setup</p>
  <ol class="setup-steps" aria-label="Setup progress">
   <li {{if eq .Step "agent"}}aria-current="step"{{end}}>1 · Agent <span>Required</span></li>
-  <li {{if eq .Step "search"}}aria-current="step"{{end}}>2 · Web search <span>Recommended</span></li>
+  <li {{if eq .Step "search"}}aria-current="step"{{end}}>2 · Web search <span>Optional</span></li>
  </ol>
  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
  {{if eq .Step "agent"}}
  <h1>Configure agent</h1>
- <p>Configure the model used to research sources, generate Python, and validate ingestions.</p>
  <form method="post" action="/setup/agent" class="panel form-panel">
   <label for="endpoint">OpenAI-compatible base URL</label>
   <input id="endpoint" name="endpoint" type="url" required value="{{.Settings.Endpoint}}" placeholder="https://api.openai.com/v1" autocomplete="url">
-  <label for="model">Model ID</label>
-  <input id="model" name="model" required value="{{.Settings.Model}}" placeholder="Model name from your provider" autocomplete="off">
-  <p class="hint">Use a model that supports Chat Completions with tool calling.</p>
+  <label for="model">Model ID · tool calling required</label>
+  <input id="model" name="model" required value="{{.Settings.Model}}" autocomplete="off">
   <label for="api_key">New API key</label>
-  <input id="api_key" name="api_key" type="password" maxlength="16000" autocomplete="new-password" placeholder="Paste your provider key">
+  <input id="api_key" name="api_key" type="password" maxlength="16000" autocomplete="new-password">
   <label for="api_key_ref">Or use an existing secret</label>
   <select id="api_key_ref" name="api_key_ref"><option value="">None selected</option>{{range .Secrets}}<option value="{{.}}" {{if eq . $.Settings.APIKeyRef}}selected{{end}}>{{.}}</option>{{end}}</select>
-  <label class="setup-checkbox"><input type="checkbox" name="no_auth" {{if .NoAuth}}checked{{end}}> My endpoint does not require authentication</label>
-  <p class="hint">Keys go directly into managed secrets, never into chat. Local endpoints can use no authentication.</p>
+  <label class="setup-checkbox"><input type="checkbox" name="no_auth" {{if .NoAuth}}checked{{end}}> No authentication</label>
   <button class="primary" type="submit">Save agent</button>
  </form>
  {{else}}
  <h1>Configure web search</h1>
- <p>Exa searches official documentation for ingestion sources.</p>
- <p class="notice notice-success">Agent configured. Web search is optional.</p>
  <form method="post" action="/setup/search" class="panel form-panel">
   <label for="api_key">New Exa API key</label>
-  <input id="api_key" name="api_key" type="password" maxlength="16000" autocomplete="new-password" placeholder="Paste your Exa key">
+  <input id="api_key" name="api_key" type="password" maxlength="16000" autocomplete="new-password">
   <label for="exa_api_key_ref">Or use an existing secret</label>
   <select id="exa_api_key_ref" name="exa_api_key_ref"><option value="">None selected</option>{{range .Secrets}}{{if ne . $.Settings.APIKeyRef}}<option value="{{.}}" {{if eq . $.Settings.ExaAPIKeyRef}}selected{{end}}>{{.}}</option>{{end}}{{end}}</select>
-  <p class="hint">Get a key from the <a href="https://dashboard.exa.ai/" target="_blank" rel="noopener noreferrer">Exa dashboard</a>. You can change this later in Agent settings.</p>
+  <a href="https://dashboard.exa.ai/" target="_blank" rel="noopener noreferrer">Get Exa key</a>
   <div class="setup-actions"><button class="primary" type="submit" name="action" value="save">Save search settings</button><button type="submit" name="action" value="skip" class="secondary" formnovalidate>Skip for now</button></div>
  </form>
- <p class="hint">Without search, you can still supply documentation URLs for the agent to read.</p>
  {{end}}
 </div>
 {{end}}

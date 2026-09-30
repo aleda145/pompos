@@ -12,12 +12,27 @@ Appliance influence is visual and interactional only. Avoid retro cosplay.
 
 - Make state obvious.
 - Keep controls few and explicit.
-- Show real system details: tables, paths, YAML, timestamps, row counts, errors.
+- Show relevant system values: tables, paths, YAML, timestamps, row counts, errors. Show each once, where it is useful.
 - Prefer tables and sections over cards.
 - Use color on status indicators, borders, and control backgrounds. Keep UI text black; preserve syntax highlighting in code.
 - Keep interactions immediate.
 - Use terse, literal copy.
 - Treat config and logs as first-class UI.
+
+## Copy
+
+Respect the user's attention. Every visible word must help identify a control, understand current state, make a decision, or resolve an error. Otherwise, remove it.
+
+- Prefer deletion over shortening filler. A heading and controls usually need no introduction.
+- Do not narrate the workflow, explain obvious controls, announce autosaving, or reassure users about internal implementation steps.
+- Put units and constraints in labels: `Cron · UTC`. Use concise placeholders for empty states: `Manual`.
+- Show values directly: `10 / 42 rows`. Avoid sentences describing the same values.
+- Keep confirmations brief: `Schedule saved.` Keep errors specific and actionable.
+- State consequences only where they affect a decision. Do not repeat them as permanent helper text.
+- Keep technical explanations in documentation and implementation details in config or logs.
+- Apply these rules to templates and dynamically generated UI alike. Preserve accessible labels.
+
+Remove copy such as “Saved conversations and their ingestions,” “This exact script was source-tested before saving,” and “Five fields, evaluated in UTC. Leave blank to disable.”
 
 ## Style
 

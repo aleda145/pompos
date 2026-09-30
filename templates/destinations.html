@@ -1,6 +1,6 @@
 {{define "content"}}
 <div class="page-heading">
-  <div><h1>Destinations</h1><p class="lead">Reusable presets for creating ingestion YAML.</p></div>
+  <h1>Destinations</h1>
 </div>
 {{if .Saved}}<div class="notice notice-success" role="status">Destination saved.</div>{{end}}
 {{if .Error}}<div class="error" role="alert">{{.Error}}</div>{{end}}
@@ -9,14 +9,12 @@
   <h2>Add or update destination</h2>
   <label for="destination_name">Name</label>
   <input id="destination_name" name="name" value="{{.Name}}" placeholder="analytics" maxlength="200" required>
-  <p class="hint">A reusable preset. Its type and path are copied into new ingestion YAML.</p>
   <label for="destination_type">Type</label>
   <select id="destination_type" name="type" required>
     <option value="duckdb" {{if eq .Type "duckdb"}}selected{{end}}>DuckDB</option>
   </select>
   <label for="destination_path">DuckDB path</label>
   <input id="destination_path" name="path" value="{{.Path}}" placeholder="data/analytics.duckdb" required>
-  <p class="hint">A filesystem path relative to Pompos, or an absolute path.</p>
   <button class="primary" type="submit">Save destination</button>
 </form>
 
@@ -44,7 +42,7 @@
     </table>
   </div>
   {{else}}
-  <div class="empty">No destinations configured yet.</div>
+  <div class="empty">No destinations.</div>
   {{end}}
 </section>
 {{end}}

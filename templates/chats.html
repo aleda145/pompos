@@ -3,7 +3,6 @@
   <h1>Chats</h1>
   <a class="button primary" href="/ingestions/new">New chat</a>
 </div>
-<p class="lead">Saved conversations and their ingestions.</p>
 {{if .Chats}}
 <div class="table-scroll" role="region" aria-label="Chats" tabindex="0">
   <table>
@@ -11,12 +10,12 @@
     <thead><tr><th scope="col">Conversation</th><th scope="col">Updated · UTC</th><th scope="col">Ingestions</th></tr></thead>
     <tbody>
     {{range .Chats}}
-      <tr><th scope="row"><a class="table-name" href="/chat/{{.ID}}">{{.Title}}</a></th><td class="mono nowrap">{{.UpdatedAt.Format "2006-01-02 15:04"}}</td><td class="mono">{{.SavedCount}} saved ingestion{{if ne .SavedCount 1}}s{{end}}</td></tr>
+      <tr><th scope="row"><a class="table-name" href="/chat/{{.ID}}">{{.Title}}</a></th><td class="mono nowrap">{{.UpdatedAt.Format "2006-01-02 15:04"}}</td><td class="mono">{{.SavedCount}}</td></tr>
     {{end}}
     </tbody>
   </table>
 </div>
 {{else}}
-<div class="empty"><p>No chats yet.</p><p>Start a chat to configure an ingestion. Chats are saved after the first message.</p></div>
+<div class="empty">No chats.</div>
 {{end}}
 {{end}}

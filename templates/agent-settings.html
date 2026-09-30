@@ -1,16 +1,14 @@
 {{define "content"}}
 <div class="page-heading"><h1>Agent settings</h1></div>
-<p>Connect an OpenAI-compatible Chat Completions endpoint with tool calling support.</p>
 {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}{{if .Saved}}<p class="notice notice-success" role="status">Settings saved.</p>{{end}}
 <form method="post" class="panel form-panel">
- <label for="endpoint">Base URL</label><input id="endpoint" name="endpoint" type="url" required value="{{.Settings.Endpoint}}" placeholder="https://api.openai.com/v1">
- <label for="model">Model</label><input id="model" name="model" required value="{{.Settings.Model}}" placeholder="Model ID">
- <label for="api_key_ref">API key secret</label><select name="api_key_ref" id="api_key_ref"><option value="">No authentication (local endpoint)</option>{{range .Secrets}}<option value="{{.}}" {{if eq . $.Settings.APIKeyRef}}selected{{end}}>{{.}}</option>{{end}}</select>
- <p class="hint">Add the provider key on the <a href="/secrets">Secrets page</a> first. Settings store only its reference.</p>
+ <label for="endpoint">OpenAI-compatible base URL</label><input id="endpoint" name="endpoint" type="url" required value="{{.Settings.Endpoint}}" placeholder="https://api.openai.com/v1">
+ <label for="model">Model ID · tool calling required</label><input id="model" name="model" required value="{{.Settings.Model}}">
+ <label for="api_key_ref">API key secret</label><select name="api_key_ref" id="api_key_ref"><option value="">No authentication</option>{{range .Secrets}}<option value="{{.}}" {{if eq . $.Settings.APIKeyRef}}selected{{end}}>{{.}}</option>{{end}}</select>
+ <a href="/secrets">Manage secrets</a>
  <label for="exa_api_key_ref">Exa API key secret</label><select name="exa_api_key_ref" id="exa_api_key_ref"><option value="">Search not configured</option>{{range .Secrets}}<option value="{{.}}" {{if eq . $.Settings.ExaAPIKeyRef}}selected{{end}}>{{.}}</option>{{end}}</select>
- <p class="hint">Add a <a href="https://dashboard.exa.ai/" target="_blank" rel="noopener noreferrer">Exa</a> key in Secrets, then select it here. The agent uses search to find official docs. Reading a supplied documentation URL works without this key.</p>
+ <a href="https://dashboard.exa.ai/" target="_blank" rel="noopener noreferrer">Get Exa key</a>
  <button class="primary" type="submit">Save settings</button>
 </form>
-<p class="hint">The endpoint receives your conversation, generated code, and source samples. Generated Python runs with Pompos’s operating-system permissions. Use a trusted endpoint and run Pompos in a dedicated environment.</p>
 <a href="/ingestions/new">Add ingestion</a>
 {{end}}

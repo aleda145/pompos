@@ -3,7 +3,6 @@
   const root = $('#chat');
   let session = JSON.parse($('#chat-state').textContent);
   let busy = false;
-  let thinking = false;
   let lastInput = null;
   let activeCall = null;
   let handoffKey = '';
@@ -36,7 +35,7 @@
       section.append(element('p', 'hint', result.preview_error));
       return section;
     }
-    section.append(element('p', 'hint', `Showing ${preview.rows.length} rows after the second sample load (up to 10). The temporary database has been removed.`));
+    section.append(element('p', 'hint', `${preview.rows.length} / ${result.second_load_rows} rows · second load`));
     if (preview.rows.length) {
       const scroll = element('div', 'table-scroll');
       scroll.tabIndex = 0;
@@ -59,10 +58,9 @@
       }
       table.append(head, body); scroll.append(table); section.append(scroll);
     } else {
-      section.append(element('p', 'hint', 'The validation table is empty.'));
+      section.append(element('p', 'hint', 'No rows.'));
     }
-    if (preview.has_more) section.append(element('p', 'hint', 'More rows were loaded during validation. To see more, run the saved ingestion, then query your destination database in a client of your choice.'));
-    if (preview.truncated) section.append(element('p', 'hint', 'Long cell values are shortened in this preview.'));
+    if (preview.truncated) section.append(element('p', 'hint', 'Values truncated.'));
     return section;
   }
   function renderLog() {
@@ -144,9 +142,6 @@
         }
       });
     });
-    if (thinking) {
-      fragment.append(disclosure('thinking-current', 'Thinking…', 'running', element('p', 'activity-detail', 'Preparing the next step from your request and the latest tool results.')));
-    }
     log.replaceChildren(fragment);
     log.querySelectorAll('details').forEach(node => { node.open = open.has(node.dataset.key); });
     $('#chat-empty').hidden = messages.length > 0 || busy;
@@ -162,7 +157,7 @@
     const container = element('div', 'loading-card');
     const summary = element('dl', 'loading-summary');
     for (const [label, text] of [
-      ['Schedule', options.cron ? `${options.cron} · UTC` : 'Manual only'],
+      ['Schedule', options.cron ? `${options.cron} · UTC` : 'Manual'],
       ['Loading', options.strategy],
       ['Row keys', options.primary_key?.join(', ') || 'None'],
     ]) {
@@ -174,12 +169,12 @@
     const form = element('form', 'loading-options');
     const presetLabel = element('label', '', 'Frequency');
     const preset = element('select');
-    const presets = [['', 'Manual only'], ['0 * * * *', 'Hourly'], ['0 6 * * *', 'Daily at 06:00 UTC'], ['0 6 * * 1', 'Mondays at 06:00 UTC'], ['custom', 'Custom cron']];
+    const presets = [['', 'Manual'], ['0 * * * *', 'Hourly'], ['0 6 * * *', 'Daily at 06:00 UTC'], ['0 6 * * 1', 'Mondays at 06:00 UTC'], ['custom', 'Custom cron']];
     for (const [value, label] of presets) { const option = element('option', '', label); option.value = value; preset.append(option); }
     preset.value = presets.some(([value]) => value === options.cron) ? options.cron : 'custom';
     presetLabel.append(preset);
-    const cronLabel = element('label', '', 'Cron expression · UTC');
-    const cron = element('input'); cron.value = options.cron; cron.placeholder = 'Blank for manual runs'; cron.maxLength = 120; cron.autocomplete = 'off'; cronLabel.append(cron);
+    const cronLabel = element('label', '', 'Cron · UTC');
+    const cron = element('input'); cron.value = options.cron; cron.placeholder = 'Manual'; cron.maxLength = 120; cron.autocomplete = 'off'; cronLabel.append(cron);
     preset.addEventListener('change', () => { if (preset.value !== 'custom') cron.value = preset.value; else cron.focus(); });
     cron.addEventListener('input', () => { preset.value = presets.some(([value]) => value === cron.value) ? cron.value : 'custom'; });
     const strategyLabel = element('label', '', 'Loading strategy');
@@ -188,18 +183,12 @@
     strategy.value = options.strategy; strategyLabel.append(strategy);
     const keysLabel = element('label', '', 'Row keys · comma-separated');
     const keys = element('input'); keys.value = options.primary_key?.join(', ') || ''; keys.placeholder = 'e.g. id'; keys.maxLength = 500; keysLabel.append(keys);
-    const explanation = element('p', 'hint');
     const updateStrategy = () => {
       keys.required = strategy.value === 'merge';
-      explanation.textContent = {
-        replace: 'Replaces the destination table each run. Rows removed from the source disappear.',
-        append: 'Keeps existing rows and adds every extracted row. Repeated full extracts can create duplicates.',
-        merge: 'Updates or inserts by stable row keys. Rows missing from the source are not deleted.',
-      }[strategy.value];
     };
     strategy.addEventListener('change', updateStrategy); updateStrategy();
     const submitButton = element('button', '', 'Use adjusted settings'); submitButton.type = 'submit';
-    form.append(presetLabel, cronLabel, strategyLabel, keysLabel, explanation, element('p', 'hint', 'Five cron fields: minute, hour, day, month, weekday. Saving enables the schedule; the first run occurs at its next scheduled time.'), submitButton);
+    form.append(presetLabel, cronLabel, strategyLabel, keysLabel, submitButton);
     form.addEventListener('submit', event => {
       event.preventDefault();
       submit({action_id: 'accept_loading', handoff_id: pending.id, loading: {cron: cron.value.trim(), strategy: strategy.value, primary_key: keys.value.split(',').map(value => value.trim()).filter(Boolean)}});
@@ -215,16 +204,14 @@
     const expected = estimate?.rows != null ? Math.min(limit, estimate.rows) : null;
     for (const [label, text] of [
       ['Validation sample', `Up to ${limit.toLocaleString('en-US')} rows${expected != null ? ` · expected ${estimate.kind === 'approximate' ? 'about ' : ''}${expected.toLocaleString('en-US')}` : ''}`],
-      ['Production extraction', rowEstimateText(estimate)],
-      ['Loading check', `${session.loading?.strategy} · load the same sample twice`],
-      ['Test destination', 'Temporary DuckDB database, removed after validation'],
+      ['Extraction estimate', rowEstimateText(estimate)],
+      ['Loading check', `${session.loading?.strategy} · 2 sample loads`],
+      ['Test destination', 'Temporary DuckDB'],
     ]) {
       const row = element('div'); row.append(element('dt', '', label), element('dd', '', text)); summary.append(row);
     }
-    container.append(summary, element('p', 'hint', estimate?.basis || 'No reliable source count is available; validation can still proceed.'));
-    if (estimate?.observed_at) container.append(element('p', 'hint', `Count observed ${estimate.observed_at}. Production estimates describe extracted rows, not new rows inserted, and may change before a run.`));
-    container.append(element('p', 'hint', 'Checks sample loading, row keys and repeat-load counts. The source may return whole API pages. This does not verify the full dataset or access to the production destination. Ask for a different sample size if needed.'));
-    if (session.loading?.strategy === 'append') container.append(element('p', 'hint', 'Append intentionally keeps both copies in this test; repeated full extractions can duplicate production rows.'));
+    container.append(summary);
+    if (session.loading?.strategy === 'append') container.append(element('p', 'hint', 'Append can duplicate rows on repeated runs.'));
     return container;
   }
   function renderHandoff() {
@@ -259,7 +246,7 @@
           } catch (err) { error.textContent = err.message; }
           finally { save.disabled = false; }
         });
-        details.append(form, element('p', 'hint', 'Stored in managed secrets. The key value is never added to this conversation.'));
+        details.append(form);
         target.append(details);
       }
       const actions = element('div', 'quick-actions');
@@ -278,14 +265,14 @@
     delete draftCode.dataset.highlighted;
     if (window.hljs && draftCode.textContent) hljs.highlightElement(draftCode);
     $('#row-estimate').hidden = !session.draft || !!session.published_id;
-    $('#row-estimate').textContent = `Production extraction: ${rowEstimateText(session.estimate)}${session.estimate?.basis ? ` · ${session.estimate.basis}` : ''}${session.estimate?.observed_at ? ` · observed ${session.estimate.observed_at}` : ''}. Future runs may differ.`;
+    $('#row-estimate').textContent = `Extraction estimate: ${rowEstimateText(session.estimate)}`;
     $('#validation-result').hidden = !session.validation || !!session.published_id;
     if (session.validation) {
       const result = session.validation.result;
-      $('#validation-result').textContent = `Validation passed: ${result.sample_count} source rows; ${result.first_load_rows} rows after the first load, ${result.second_load_rows} after replaying the sample. Temporary database removed.`;
+      $('#validation-result').textContent = `Validation passed · ${result.sample_count} source rows · loads: ${result.first_load_rows} → ${result.second_load_rows} rows`;
     }
     $('#publish').hidden = busy || !session.ready || !!session.published_id;
-    $('#publish-status').textContent = session.loading?.cron ? `Validation passed. Saving enables ${session.loading.cron} (UTC) · ${session.loading.strategy}.` : `Validation passed. Manual runs · ${session.loading?.strategy || session.draft?.strategy || 'replace'}.`;
+    $('#publish-status').textContent = session.loading?.cron ? `Schedule on save: ${session.loading.cron} · UTC` : 'Manual';
     $('#send').disabled = busy;
     $('#send').classList.toggle('primary', !session.ready || !!session.published_id);
     $('#message').disabled = busy;
@@ -301,23 +288,22 @@
     $('#saved-ingestions').replaceChildren(...links);
   }
   function applyEvent(event) {
-    if (event.type === 'thinking') { thinking = true; activeCall = null; $('#working').textContent = 'RUNNING · Thinking'; }
+    if (event.type === 'thinking') { activeCall = null; $('#working').textContent = 'RUNNING · Thinking'; }
     if (event.type === 'message') {
-      thinking = false;
       session.messages ||= [];
       session.messages.push(event.message);
       if (event.message.role === 'user') $('#message').value = '';
     }
-    if (event.type === 'tool_start') { thinking = false; activeCall = event.call.id; $('#working').textContent = `RUNNING · ${toolNames[event.call.function.name] || event.call.function.name}`; }
+    if (event.type === 'tool_start') { activeCall = event.call.id; $('#working').textContent = `RUNNING · ${toolNames[event.call.function.name] || event.call.function.name}`; }
     if (event.type === 'done') {
-      session = event.session; thinking = false; activeCall = null;
+      session = event.session; activeCall = null;
       if (event.error) throw new Error(event.error);
     }
     renderLog();
   }
   async function submit(input) {
     if (busy) return;
-    lastInput = input; busy = true; thinking = true;
+    lastInput = input; busy = true;
     $('#working').textContent = 'RUNNING';
     $('#chat-error').hidden = true; $('#recovery').hidden = true;
     render();
@@ -329,7 +315,7 @@
       $('#chat-error').textContent = error.message; $('#chat-error').hidden = false;
       $('#recovery').hidden = false;
     } finally {
-      busy = false; thinking = false; $('#working').textContent = $('#chat-error').hidden ? 'IDLE' : 'FAILED'; render();
+      busy = false; $('#working').textContent = $('#chat-error').hidden ? 'IDLE' : 'FAILED'; render();
     }
   }
   $('#chat-form').addEventListener('submit', (event) => {

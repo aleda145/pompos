@@ -13,7 +13,7 @@ make run
 
 Open `http://localhost:8080`. When configuration is missing, Pompos opens a two-step setup flow:
 
-1. **Agent — required.** Enter an OpenAI-compatible base URL (for example `https://api.openai.com/v1`) and model ID. Paste the provider key directly into setup or select an existing managed secret. For a local endpoint without authentication, explicitly select **My endpoint does not require authentication**. The model must support Chat Completions function/tool calling.
+1. **Agent — required.** Enter an OpenAI-compatible base URL (for example `https://api.openai.com/v1`) and model ID. Paste the provider key directly into setup or select an existing managed secret. For a local endpoint without authentication, explicitly select **No authentication**. The model must support Chat Completions function/tool calling.
 2. **Web search — optional, recommended.** Add an [Exa API](https://exa.ai/docs/reference/search) key, select an existing secret, or choose **Skip for now**. Pompos remembers that choice across restarts. Reading a supplied public documentation URL works without a search key.
 
 Setup stores new keys in managed secrets and saves only their references in agent settings. Existing valid configuration is reused, and incomplete setup resumes at the missing step. If a referenced credential is deleted or empty, setup offers to repair it. Saving setup checks the configuration and local secret availability; it does not make a paid model or search request to verify the credentials. You can change the model or enable Exa later in **Agent settings**; manage key values under **Secrets**.

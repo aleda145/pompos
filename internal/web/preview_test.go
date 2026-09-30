@@ -58,9 +58,9 @@ func TestIngestionPreviewUsesSavedDestinationAndEscapesValues(t *testing.T) {
 		err     error
 		want    string
 	}{
-		{"rows", runnerpython.TablePreview{Columns: []string{"<script>"}, Rows: [][]string{{"<img src=x onerror=alert(1)>"}}, TotalRows: 1}, nil, "showing 1 rows out of 1 rows"},
-		{"more", runnerpython.TablePreview{Columns: []string{"id"}, Rows: [][]string{{"1"}, {"2"}, {"3"}, {"4"}, {"5"}, {"6"}, {"7"}, {"8"}, {"9"}, {"10"}}, TotalRows: 42, HasMore: true}, nil, "showing 10 rows out of 42 rows"},
-		{"empty", runnerpython.TablePreview{Columns: []string{"id"}}, nil, "destination table is empty"},
+		{"rows", runnerpython.TablePreview{Columns: []string{"<script>"}, Rows: [][]string{{"<img src=x onerror=alert(1)>"}}, TotalRows: 1}, nil, "1 / 1 rows"},
+		{"more", runnerpython.TablePreview{Columns: []string{"id"}, Rows: [][]string{{"1"}, {"2"}, {"3"}, {"4"}, {"5"}, {"6"}, {"7"}, {"8"}, {"9"}, {"10"}}, TotalRows: 42, HasMore: true}, nil, "10 / 42 rows"},
+		{"empty", runnerpython.TablePreview{Columns: []string{"id"}}, nil, "No rows."},
 		{"unavailable", runnerpython.TablePreview{}, errors.New("locked"), "database may be busy"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -76,7 +76,7 @@ func TestIngestionPreviewUsesSavedDestinationAndEscapesValues(t *testing.T) {
 			if w.Code != 200 || !strings.Contains(body, tc.want) || strings.Contains(body, "<img src=x") || strings.Contains(body, "<th scope=\"col\"><script>") {
 				t.Fatalf("preview response: %d %s", w.Code, body)
 			}
-			if tc.name == "empty" && !strings.Contains(body, "showing 0 rows out of 0 rows") {
+			if tc.name == "empty" && !strings.Contains(body, "0 / 0 rows") {
 				t.Fatal("empty table count missing")
 			}
 		})
