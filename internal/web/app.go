@@ -153,6 +153,7 @@ type secretsPageData struct {
 	Title   string
 	Error   string
 	Name    string
+	Editing bool
 	Saved   bool
 	Deleted bool
 	Secrets []secretView
@@ -346,7 +347,7 @@ func (a *App) renderDestinations(w http.ResponseWriter, status int, data destina
 }
 
 func (a *App) listSecrets(w http.ResponseWriter, r *http.Request) {
-	a.renderSecrets(w, r, http.StatusOK, secretsPageData{})
+	a.renderSecrets(w, r, http.StatusOK, secretsPageData{Name: r.URL.Query().Get("edit")})
 }
 
 func (a *App) createSecret(w http.ResponseWriter, r *http.Request) {
@@ -416,6 +417,16 @@ func (a *App) renderSecrets(w http.ResponseWriter, r *http.Request, status int, 
 		}
 	}
 	data.Title = "Secrets"
+	for _, entry := range entries {
+		if entry.Key == data.Name {
+			data.Editing = true
+			break
+		}
+	}
+	if r.Method == http.MethodGet && r.URL.Query().Get("edit") != "" && !data.Editing {
+		http.NotFound(w, r)
+		return
+	}
 	data.Secrets = describeSecrets(entries, ingestions)
 	data.Saved = data.Saved || r.URL.Query().Get("saved") == "1"
 	data.Deleted = data.Deleted || r.URL.Query().Get("deleted") == "1"

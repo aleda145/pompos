@@ -1,14 +1,19 @@
 {{define "content"}}
 <div class="page-heading"><h1>Agent settings</h1></div>
 {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}{{if .Saved}}<p class="notice notice-success" role="status">Settings saved.</p>{{end}}
-<form method="post" class="panel form-panel">
+<form method="post" class="settings-form">
+ <section class="panel settings-section" aria-labelledby="agent-heading">
+ <h2 id="agent-heading">Agent</h2>
  <label for="endpoint">OpenAI-compatible base URL</label><input id="endpoint" name="endpoint" type="url" required value="{{.Settings.Endpoint}}" placeholder="https://api.openai.com/v1">
  <label for="model">Model ID · tool calling required</label><input id="model" name="model" required value="{{.Settings.Model}}">
  <label for="api_key_ref">API key secret</label><select name="api_key_ref" id="api_key_ref"><option value="">No authentication</option>{{range .Secrets}}<option value="{{.}}" {{if eq . $.Settings.APIKeyRef}}selected{{end}}>{{.}}</option>{{end}}</select>
- <a href="/secrets">Manage secrets</a>
+ </section>
+ <section class="panel settings-section" aria-labelledby="search-heading">
+ <h2 id="search-heading">Web search</h2>
  <label for="exa_api_key_ref">Exa API key secret</label><select name="exa_api_key_ref" id="exa_api_key_ref"><option value="">Search not configured</option>{{range .Secrets}}<option value="{{.}}" {{if eq . $.Settings.ExaAPIKeyRef}}selected{{end}}>{{.}}</option>{{end}}</select>
  <a href="https://dashboard.exa.ai/" target="_blank" rel="noopener noreferrer">Get Exa key</a>
- <button class="primary" type="submit">Save settings</button>
+ </section>
+ <div class="settings-actions"><button class="primary" type="submit">Save settings</button><a href="/secrets">Manage secrets</a></div>
 </form>
 <a href="/ingestions/new">Add ingestion</a>
 {{end}}

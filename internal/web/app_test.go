@@ -216,6 +216,47 @@ func TestSecretsPageAddsAndListsNamesWithoutValues(t *testing.T) {
 		!strings.Contains(body, "Codex issues") || !strings.Contains(body, "future runs") {
 		t.Fatalf("GET status = %d, body = %s", listResponse.Code, body)
 	}
+	if !strings.Contains(body, `href="/secrets?edit=github-production#secret-form"`) {
+		t.Fatal("missing secret update action")
+	}
+	editResponse := httptest.NewRecorder()
+	app.Handler().ServeHTTP(editResponse, httptest.NewRequest(http.MethodGet, "/secrets?edit=github-production", nil))
+	editBody := editResponse.Body.String()
+	if editResponse.Code != http.StatusOK || !strings.Contains(editBody, `value="github-production"`) ||
+		strings.Contains(editBody, "readonly") || !strings.Contains(editBody, "New value") ||
+		!strings.Contains(editBody, "autofocus") || strings.Contains(editBody, "never-render-this") {
+		t.Fatalf("edit status = %d, body = %s", editResponse.Code, editBody)
+	}
+	for _, value := range []string{"", "replacement-private-value"} {
+		updateForm := url.Values{"name": {"github-production"}, "value": {value}}
+		updateRequest := httptest.NewRequest(http.MethodPost, "/secrets", strings.NewReader(updateForm.Encode()))
+		updateRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		updateResponse := httptest.NewRecorder()
+		app.Handler().ServeHTTP(updateResponse, updateRequest)
+		wantStatus, wantValue := http.StatusSeeOther, value
+		if value == "" {
+			wantStatus, wantValue = http.StatusUnprocessableEntity, "never-render-this"
+			if strings.Contains(updateResponse.Body.String(), "readonly") || !strings.Contains(updateResponse.Body.String(), `value="github-production"`) || !strings.Contains(updateResponse.Body.String(), "New value") {
+				t.Fatal("validation error lost the selected secret")
+			}
+		}
+		stored, err := metadata.Secrets().Get(ctx, "github-production")
+		if updateResponse.Code != wantStatus || err != nil || string(stored) != wantValue {
+			t.Fatalf("update status = %d, error = %v", updateResponse.Code, err)
+		}
+		if strings.Contains(updateResponse.Body.String(), "never-render-this") || strings.Contains(updateResponse.Body.String(), "replacement-private-value") {
+			t.Fatal("secret value leaked in update response")
+		}
+	}
+	updatedEntries, err := metadata.Secrets().List(ctx)
+	if err != nil || len(updatedEntries) != 1 || updatedEntries[0].Key != "github-production" {
+		t.Fatal("updating a secret changed its identity or created another secret")
+	}
+	missingResponse := httptest.NewRecorder()
+	app.Handler().ServeHTTP(missingResponse, httptest.NewRequest(http.MethodGet, "/secrets?edit=missing", nil))
+	if missingResponse.Code != http.StatusNotFound {
+		t.Fatalf("missing secret edit status = %d", missingResponse.Code)
+	}
 	deleteForm := url.Values{"key": {"github-production"}}
 	deleteRequest := httptest.NewRequest(http.MethodPost, "/secrets/delete", strings.NewReader(deleteForm.Encode()))
 	deleteRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")

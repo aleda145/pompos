@@ -163,6 +163,11 @@ legend { font-weight: 500; padding: 0; }
 .hljs-variable, .hljs-template-variable { color: #ad400b; }
 .yaml-section .yaml-code { margin-top: 8px; }
 .secret-add, .destination-add { margin-bottom: 24px; }
+.secret-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.settings-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-bottom: 16px; }
+.settings-section { display: grid; align-content: start; min-width: 0; }
+.settings-section > a { justify-self: start; margin-top: 8px; }
+.settings-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
 .secret-usage ul { margin: 4px 0; padding-left: 18px; }
 .destination-edit { display: flex; gap: 8px; align-items: center; min-width: 260px; }
 .destination-edit label { flex: 1; margin: 0; }
