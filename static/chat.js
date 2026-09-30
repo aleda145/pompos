@@ -27,6 +27,44 @@
     details.append(summary, content);
     return details;
   }
+  function validationPreview(result) {
+    const section = element('section', 'results-preview validation-preview');
+    section.setAttribute('aria-label', 'Validation table preview');
+    section.append(element('h3', '', 'Validation table preview'));
+    const preview = result.preview;
+    if (!preview) {
+      section.append(element('p', 'hint', result.preview_error));
+      return section;
+    }
+    section.append(element('p', 'hint', `Showing ${preview.rows.length} rows after the second sample load (up to 10). The temporary database has been removed.`));
+    if (preview.rows.length) {
+      const scroll = element('div', 'table-scroll');
+      scroll.tabIndex = 0;
+      scroll.setAttribute('role', 'region');
+      scroll.setAttribute('aria-label', 'Validation rows');
+      const table = element('table', 'preview-table');
+      const head = element('thead');
+      const headers = element('tr');
+      for (const column of preview.columns) {
+        const cell = element('th', '', column);
+        cell.scope = 'col';
+        headers.append(cell);
+      }
+      head.append(headers);
+      const body = element('tbody');
+      for (const row of preview.rows) {
+        const cells = element('tr');
+        for (const value of row) cells.append(element('td', '', value));
+        body.append(cells);
+      }
+      table.append(head, body); scroll.append(table); section.append(scroll);
+    } else {
+      section.append(element('p', 'hint', 'The validation table is empty.'));
+    }
+    if (preview.has_more) section.append(element('p', 'hint', 'More rows were loaded during validation. To see more, run the saved ingestion, then query your destination database in a client of your choice.'));
+    if (preview.truncated) section.append(element('p', 'hint', 'Long cell values are shortened in this preview.'));
+    return section;
+  }
   function renderLog() {
     const log = $('#messages');
     const open = new Set([...log.querySelectorAll('details[open]')].map(node => node.dataset.key));
@@ -100,6 +138,10 @@
         }
         const row = disclosure(`tool-${index}-${callIndex}`, title, status, content);
         fragment.append(row);
+        if (name === 'validate_ingestion' && result && !failed) {
+          const validation = validationResult(result.content);
+          if (validation?.preview || validation?.preview_error) fragment.append(validationPreview(validation));
+        }
       });
     });
     if (thinking) {

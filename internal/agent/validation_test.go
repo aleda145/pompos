@@ -31,7 +31,8 @@ func (r *validationRunner) Validate(ctx context.Context, plan compiler.Execution
 	if r.err != nil {
 		return runnerpython.ValidationResult{}, "", r.err
 	}
-	result := runnerpython.ValidationResult{SampleCount: 1, FirstLoadRows: 1, SecondLoadRows: 1}
+	result := runnerpython.ValidationResult{SampleCount: 1, FirstLoadRows: 1, SecondLoadRows: 1,
+		Preview: &runnerpython.TablePreview{Columns: []string{"id"}, Rows: [][]string{{"1"}}}}
 	if plan.Strategy == "append" {
 		result.SecondLoadRows = 2
 	}
@@ -108,6 +109,19 @@ func TestValidationRequiresUserActionAndCannotBeReplayed(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(events, ","), "message,tool_start,message") {
 		t.Fatal("missing validation events")
+	}
+	reloaded, err := s.Load(v.ID)
+	if err != nil || reloaded.Validation == nil || reloaded.Validation.Result.Preview == nil {
+		t.Fatalf("validation preview did not survive reload: %v", err)
+	}
+	foundPreview := false
+	for _, message := range reloaded.Messages {
+		if message.Role == "tool" && strings.Contains(message.Content, `"preview":{"columns":["id"],"rows":[["1"]]`) {
+			foundPreview = true
+		}
+	}
+	if !foundPreview {
+		t.Fatal("validation preview missing from persistent chat activity")
 	}
 	if _, err = s.execute(ctx, &v, finish); err != nil {
 		t.Fatal(err)

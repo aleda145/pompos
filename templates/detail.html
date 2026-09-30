@@ -29,6 +29,21 @@
   </section>
   {{if .Ingestion.LastError}}<section><h2>Latest error</h2><pre class="error">{{.Ingestion.LastError}}</pre></section>{{end}}
   <section class="metadata"><h2>Metadata</h2><dl><div><dt>Ingestion ID</dt><dd><code>{{.Ingestion.ID}}</code></dd></div><div><dt>Spec path</dt><dd><code>{{.SpecPath}}</code></dd></div></dl></section>
+  <section class="results-preview" aria-label="Destination table preview">
+    <h2>Table preview{{with .Preview}} <span class="hint">(showing {{len .Rows}} rows out of {{.TotalRows}} rows)</span>{{end}}</h2>
+    {{with .Preview}}
+      {{if .Rows}}
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Destination rows">
+        <table class="preview-table"><thead><tr>{{range .Columns}}<th scope="col">{{.}}</th>{{end}}</tr></thead><tbody>
+          {{range .Rows}}<tr>{{range .}}<td>{{.}}</td>{{end}}</tr>{{end}}
+        </tbody></table>
+      </div>
+      {{else}}<p class="hint">The destination table is empty.</p>{{end}}
+      {{if .Truncated}}<p class="hint">Long cell values are shortened in this preview.</p>{{end}}
+    {{else}}
+      <p class="hint">{{if .PreviewError}}{{.PreviewError}}{{else}}Preview unavailable.{{end}}</p>
+    {{end}}
+  </section>
   {{if .Python}}<section class="yaml-section"><h2>Python</h2><p class="hint">Saved at <code>{{.Ingestion.Runtime.Script}}</code>. This exact script was source-tested before saving.</p><pre class="yaml-code"><code class="language-python">{{.Python}}</code></pre></section>{{end}}
  <section class="yaml-section"><h2>YAML</h2><pre class="yaml-code"><code class="language-yaml">{{.YAML}}</code></pre></section>
 </div>

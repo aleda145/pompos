@@ -76,6 +76,7 @@ func runServer() {
 		SpecDir:      filepath.Join(cfg.DataDir, "ingestions"),
 		Agent:        &agent.Service{Dir: filepath.Join(cfg.DataDir, "agent"), Secrets: secretStore, Destinations: metadata, Python: ingestionRunner},
 		Logger:       logger,
+		Previewer:    ingestionRunner,
 	})
 	if err != nil {
 		logger.Fatal(err)

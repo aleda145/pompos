@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {readChatEvents, rowEstimateText} = require('./chat-stream.js');
+const {readChatEvents, rowEstimateText, validationResult} = require('./chat-stream.js');
 const encoder = new TextEncoder();
 
 test('steps arrive before completion, even across split Unicode and lines', async () => {
@@ -45,4 +45,13 @@ test('row estimates distinguish unknown, zero, approximate and observed exact co
   assert.equal(rowEstimateText({rows: 0, kind: 'exact'}), '0 rows at observation time');
   assert.equal(rowEstimateText({rows: 12345, kind: 'approximate'}), 'About 12,345 rows');
   assert.equal(rowEstimateText({rows: 12345, kind: 'exact'}), '12,345 rows at observation time');
+});
+
+test('validation previews are recovered from saved tool output, including legacy results', () => {
+  const preview = {columns: ['id'], rows: [['1234567890123456789']], has_more: true};
+  const result = {sample_count: 100, preview};
+  assert.deepEqual(validationResult(`loading log\nPOMPOS_VALIDATION_RESULT=${JSON.stringify(result)}\n`), result);
+  assert.deepEqual(validationResult('POMPOS_VALIDATION_RESULT={"sample_count":1}'), {sample_count: 1});
+  assert.equal(validationResult('Error: failed'), null);
+  assert.equal(validationResult('POMPOS_VALIDATION_RESULT={broken'), null);
 });

@@ -32,4 +32,10 @@ function rowEstimateText(estimate) {
   const count = Number(estimate.rows).toLocaleString('en-US');
   return estimate.kind === 'approximate' ? `About ${count} rows` : `${count} rows at observation time`;
 }
-if (typeof module !== 'undefined') module.exports = {readChatEvents, rowEstimateText};
+function validationResult(output) {
+  const marker = 'POMPOS_VALIDATION_RESULT=';
+  const line = output.split('\n').find(line => line.startsWith(marker));
+  if (!line) return null;
+  try { return JSON.parse(line.slice(marker.length)); } catch { return null; }
+}
+if (typeof module !== 'undefined') module.exports = {readChatEvents, rowEstimateText, validationResult};

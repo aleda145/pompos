@@ -156,6 +156,12 @@ func TestDLTValidationLoadsBoundedSampleTwice(t *testing.T) {
 			if result.SampleCount != 7 || result.FirstLoadRows != 7 || result.SecondLoadRows != expected {
 				t.Fatalf("bad counts: %#v", result)
 			}
+			if result.Preview == nil || len(result.Preview.Rows) != min(expected, 10) || result.Preview.HasMore != (expected > 10) {
+				t.Fatalf("missing loaded-table preview: %#v (%s)", result.Preview, result.PreviewError)
+			}
+			if len(result.Preview.Columns) < 2 || result.Preview.Columns[0] != "id" || result.Preview.Columns[1] != "nested" {
+				t.Fatalf("preview did not use the loaded schema: %#v", result.Preview)
+			}
 			saved, _ := os.ReadFile(destination)
 			if string(saved) != "do not touch" {
 				t.Fatal("validation modified production destination")

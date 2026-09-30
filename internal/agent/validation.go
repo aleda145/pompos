@@ -117,6 +117,8 @@ func (s *Service) runValidation(ctx context.Context, v *Session, proposal *Valid
 		output = "Error: " + runErr.Error()
 	} else {
 		v.Validation = &Validation{Fingerprint: fingerprint, Result: result}
+		data, _ := json.Marshal(result)
+		output = "POMPOS_VALIDATION_RESULT=" + string(data)
 	}
 	message = Message{Role: "tool", CallID: call.ID, Content: output}
 	v.Messages = append(v.Messages, message)

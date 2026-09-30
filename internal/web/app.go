@@ -16,8 +16,10 @@ import (
 	"time"
 
 	"pompos/internal/agent"
+	"pompos/internal/compiler"
 	"pompos/internal/destination"
 	"pompos/internal/ingestion"
+	runnerpython "pompos/internal/runner/python"
 	"pompos/internal/secrets"
 	"pompos/internal/spec"
 	"pompos/internal/store"
@@ -53,7 +55,10 @@ type App struct {
 	Scheduler    ScheduleManager
 	SpecDir      string
 	Logger       *log.Logger
-	templates    map[string]*template.Template
+	Previewer    interface {
+		Preview(context.Context, compiler.ExecutionPlan) (runnerpython.TablePreview, error)
+	}
+	templates map[string]*template.Template
 }
 
 func New(app App) (*App, error) {
@@ -169,6 +174,8 @@ type detailPageData struct {
 	RunQueued     bool
 	YAML          string
 	Python        string
+	Preview       *runnerpython.TablePreview
+	PreviewError  string
 }
 
 func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
@@ -196,13 +203,25 @@ func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, err)
 		return
 	}
-	a.render(w, http.StatusOK, "detail", detailPageData{
+	page := detailPageData{
 		Title: item.Name, Ingestion: item, SpecPath: item.SpecPath,
 		NextRun: a.Scheduler.NextRun(item.ID), ScheduleValue: item.Schedule, ScheduleSaved: r.URL.Query().Get("schedule") == "saved",
 		RunQueued: r.URL.Query().Get("run") == "queued",
 		YAML:      string(yamlData),
 		Python:    string(code),
-	})
+	}
+	if a.Previewer != nil {
+		preview, err := a.Previewer.Preview(r.Context(), compiler.ExecutionPlan{
+			DestinationType: item.Destination.Type, DestinationPath: item.Destination.Path,
+			DestinationObject: item.Destination.Table, SecretRefs: item.Runtime.SecretRefs,
+		})
+		if err != nil {
+			page.PreviewError = runnerpython.PreviewUnavailable
+		} else {
+			page.Preview = &preview
+		}
+	}
+	a.render(w, http.StatusOK, "detail", page)
 }
 
 func (a *App) runIngestion(w http.ResponseWriter, r *http.Request) {

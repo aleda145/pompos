@@ -69,13 +69,21 @@ func (r Runner) Validate(ctx context.Context, plan compiler.ExecutionPlan, limit
 	if result.SampleCount < 1 || result.SampleCount > limit || result.FirstLoadRows != result.SampleCount || result.SecondLoadRows != expected {
 		return result, output, fmt.Errorf("validation returned inconsistent load counts")
 	}
+	preview, previewErr := r.Preview(ctx, plan)
+	if previewErr != nil {
+		result.PreviewError = "Validation passed, but its table preview is unavailable."
+	} else {
+		result.Preview = &preview
+	}
 	return result, output, nil
 }
 
 type ValidationResult struct {
-	SampleCount    int `json:"sample_count"`
-	FirstLoadRows  int `json:"first_load_rows"`
-	SecondLoadRows int `json:"second_load_rows"`
+	SampleCount    int           `json:"sample_count"`
+	FirstLoadRows  int           `json:"first_load_rows"`
+	SecondLoadRows int           `json:"second_load_rows"`
+	Preview        *TablePreview `json:"preview,omitempty"`
+	PreviewError   string        `json:"preview_error,omitempty"`
 }
 type ProbeResult struct {
 	Rows     []map[string]any       `json:"rows"`
@@ -170,14 +178,19 @@ func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 
 type cappedOutput struct {
 	sync.Mutex
-	data []byte
+	data  []byte
+	limit int
 }
 
 func (b *cappedOutput) Write(p []byte) (int, error) {
 	b.Lock()
 	defer b.Unlock()
 	n := len(p)
-	remaining := 16384 - len(b.data)
+	limit := b.limit
+	if limit == 0 {
+		limit = 16384
+	}
+	remaining := limit - len(b.data)
 	if remaining > 0 {
 		if len(p) > remaining {
 			p = p[:remaining]

@@ -61,6 +61,11 @@ tbody th { font-weight: 400; }
 tbody tr:last-child > * { border-bottom: 0; }
 tbody tr:hover { background: var(--bg); }
 .table-name { font-weight: 600; }
+.preview-table { width: max-content; min-width: 100%; font: 12px/1.6 var(--mono); }
+.preview-table th { text-transform: none; letter-spacing: 0; }
+.preview-table td { min-width: 80px; max-width: 360px; white-space: pre-wrap; }
+.results-preview .table-scroll { max-height: 440px; }
+.validation-preview { min-width: 0; margin: 12px 0 16px 76px; }
 .cell-detail { display: block; color: var(--text-muted); font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; min-width: 150px; max-width: 340px; font-weight: 400; }
 dl { margin: 0; }
 dl div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; padding: 3px 0; }
@@ -101,11 +106,11 @@ legend { font-weight: 600; padding: 0; }
 .yaml-code code { font: inherit; }
 .hljs { color: var(--text); }
 .hljs-comment { color: #565851; font-style: italic; }
-.hljs-keyword, .hljs-literal, .hljs-meta { color: #784377; }
-.hljs-string, .hljs-regexp { color: #365f3c; }
-.hljs-number, .hljs-symbol { color: #854a25; }
-.hljs-title, .hljs-built_in, .hljs-type, .hljs-attr, .hljs-attribute { color: #315b76; }
-.hljs-variable, .hljs-template-variable { color: #854a25; }
+.hljs-keyword, .hljs-literal, .hljs-meta { color: #8524bf; }
+.hljs-string, .hljs-regexp { color: #067033; }
+.hljs-number, .hljs-symbol { color: #ad400b; }
+.hljs-title, .hljs-built_in, .hljs-type, .hljs-attr, .hljs-attribute { color: #075cc9; }
+.hljs-variable, .hljs-template-variable { color: #ad400b; }
 .yaml-section .yaml-code { margin-top: 8px; }
 .secret-add, .destination-add { margin-bottom: 24px; }
 .secret-usage ul { margin: 4px 0; padding-left: 18px; }
@@ -198,6 +203,7 @@ legend { font-weight: 600; padding: 0; }
   .details .half-section:first-child { border-right: 0; }
   .log-message { grid-template-columns: 48px minmax(0, 1fr); gap: 8px; }
   .activity { margin-left: 0; }
+  .validation-preview { margin-left: 0; }
   .chat-handoff { padding-left: 16px; }
   .inline-secret, .loading-options { grid-template-columns: minmax(0, 1fr); }
   .chat-publish { flex-wrap: wrap; }
