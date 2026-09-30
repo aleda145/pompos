@@ -86,6 +86,7 @@ code { font-size: 1em; overflow-wrap: anywhere; }
 .nowrap { white-space: nowrap; }
 .page-heading, .chat-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
 .heading-state { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; min-width: 0; }
+.run-state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 12px; }
 .button, button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; border: 1px solid var(--border-strong); border-radius: 3px; background: var(--surface); color: var(--text); padding: 5px 12px; font: 500 14px/1.5 var(--sans); text-decoration: none; cursor: pointer; }
 .button:hover, button:hover { background: var(--surface-inset); border-color: var(--text); text-decoration: none; }
 .button:active, button:active { background: var(--border); transform: translateY(1px); }
@@ -139,13 +140,16 @@ form.panel > button { justify-self: start; margin-top: 8px; }
 fieldset { min-width: 0; margin: 4px 0 12px; padding: 0; border: 0; }
 legend { font-weight: 500; padding: 0; }
 .details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0; overflow: hidden; }
-.details section { grid-column: 1 / -1; min-width: 0; border-bottom: 1px solid var(--border); padding: 16px; }
+.details > section { grid-column: 1 / -1; min-width: 0; border-bottom: 1px solid var(--border); padding: 12px 16px; }
 .details section:last-child { border-bottom: 0; }
 .details .half-section { grid-column: auto; }
-.details .half-section:first-child { border-right: 1px solid var(--border); }
+.details .half-section:nth-child(odd) { border-right: 1px solid var(--border); }
 .details p { margin-bottom: 0; }
 .details .hint { margin-top: 6px; }
-.schedule-form { display: grid; max-width: 560px; }
+.connection h2 { margin-bottom: 4px; }
+.connection .url { font-size: 12px; }
+.schedule-form { display: grid; grid-template-columns: auto minmax(0, 400px) minmax(0, 1fr); gap: 8px 16px; align-items: center; }
+.schedule-form label, .schedule-form .hint { margin: 0; }
 .schedule-controls { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
 .schedule-controls button { white-space: nowrap; }
 .yaml-code { margin: 0; padding: 12px; max-height: 608px; overflow: auto; color: var(--text); background: var(--surface-inset); white-space: pre; tab-size: 2; font: 12px/1.65 var(--mono); border: 1px solid var(--border); border-radius: 2px; }
@@ -240,7 +244,8 @@ legend { font-weight: 500; padding: 0; }
   nav { gap: 8px 16px; }
   main { padding: 20px 12px 32px; }
   .details { grid-template-columns: minmax(0, 1fr); }
-  .details .half-section:first-child { border-right: 0; }
+  .details .half-section:nth-child(odd) { border-right: 0; }
+  .schedule-form { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .log-message { grid-template-columns: 48px minmax(0, 1fr); gap: 8px; }
   .activity { margin-left: 0; }
   .validation-preview { margin-left: 0; }

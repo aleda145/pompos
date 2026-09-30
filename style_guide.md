@@ -16,6 +16,7 @@ Appliance influence is visual and interactional only. Avoid retro cosplay.
 - Prefer tables and sections over cards.
 - Use color on status indicators, borders, and control backgrounds. Keep UI text black; preserve syntax highlighting in code.
 - Keep interactions immediate.
+- Keep small, useful sections visible. Do not add a disclosure or extra click merely to make the page look cleaner.
 - Use terse, literal copy.
 - Treat config and logs as first-class UI.
 
@@ -45,6 +46,7 @@ Remove copy such as “Saved conversations and their ingestions,” “This exac
 - Rectangular controls, no pills.
 - Inset surfaces for status/control panels.
 - Dense layouts with clear hierarchy.
+- Group related values in compact rows. Keep run time beside status, prioritize actual results over setup estimates, and put secondary metadata below the working area.
 
 ## Type
 
