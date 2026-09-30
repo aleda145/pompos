@@ -79,13 +79,7 @@
           const article = element('article', `log-message ${message.role}`);
           article.append(element('span', 'log-role', message.role === 'user' ? 'You' : 'Pompos'));
           const content = element('div', 'message-content', message.content);
-          if (message.role === 'assistant' && (message.content.length > 600 || message.content.split('\n').length > 8)) {
-            const details = element('details', 'message-more');
-            details.dataset.key = `response-${index}`;
-            const preview = message.content.split('\n').find(line => line.trim()) || 'Response';
-            details.append(element('summary', '', `${preview.slice(0, 160)}${preview.length > 160 ? '…' : ''} · expand`), content);
-            article.append(details);
-          } else { article.append(content); }
+          article.append(content);
           fragment.append(article);
         }
       }
@@ -154,18 +148,6 @@
   }
   function loadingCard(pending) {
     const options = pending.loading;
-    const container = element('div', 'loading-card');
-    const summary = element('dl', 'loading-summary');
-    for (const [label, text] of [
-      ['Schedule', options.cron ? `${options.cron} · UTC` : 'Manual'],
-      ['Loading', options.strategy],
-      ['Row keys', options.primary_key?.join(', ') || 'None'],
-    ]) {
-      const row = element('div'); row.append(element('dt', '', label), element('dd', '', text)); summary.append(row);
-    }
-    container.append(summary);
-    const details = element('details', 'loading-adjust');
-    details.append(element('summary', '', 'Adjust schedule or loading'));
     const form = element('form', 'loading-options');
     const presetLabel = element('label', '', 'Frequency');
     const preset = element('select');
@@ -187,14 +169,13 @@
       keys.required = strategy.value === 'merge';
     };
     strategy.addEventListener('change', updateStrategy); updateStrategy();
-    const submitButton = element('button', '', 'Use adjusted settings'); submitButton.type = 'submit';
+    const submitButton = element('button', 'primary', 'Use these settings'); submitButton.type = 'submit';
     form.append(presetLabel, cronLabel, strategyLabel, keysLabel, submitButton);
     form.addEventListener('submit', event => {
       event.preventDefault();
       submit({action_id: 'accept_loading', handoff_id: pending.id, loading: {cron: cron.value.trim(), strategy: strategy.value, primary_key: keys.value.split(',').map(value => value.trim()).filter(Boolean)}});
     });
-    details.append(form); container.append(details);
-    return container;
+    return form;
   }
   function validationCard(pending) {
     const container = element('div', 'loading-card');
@@ -226,8 +207,6 @@
       if (pending.kind === 'loading' && pending.loading) target.append(loadingCard(pending));
       if (pending.kind === 'validation' && pending.validation) target.append(validationCard(pending));
       if (pending.kind === 'secret') {
-        const details = element('details', 'secret-entry');
-        details.append(element('summary', '', `Add or update “${pending.secret_name}”`));
         const form = element('form', 'inline-secret');
         const nameLabel = element('label', '', 'Secret name');
         const name = element('input'); name.value = pending.secret_name || ''; name.required = true; name.maxLength = 200; name.autocomplete = 'off'; nameLabel.append(name);
@@ -246,12 +225,14 @@
           } catch (err) { error.textContent = err.message; }
           finally { save.disabled = false; }
         });
-        details.append(form);
-        target.append(details);
+        target.append(form);
       }
       const actions = element('div', 'quick-actions');
-      for (const action of pending.actions) actions.append(button(action.label, () => submit({action_id: action.id, handoff_id: pending.id})));
-      target.append(actions);
+      for (const action of pending.actions) {
+        if (pending.kind === 'loading' && pending.loading && action.id === 'accept_loading') continue;
+        actions.append(button(action.label, () => submit({action_id: action.id, handoff_id: pending.id})));
+      }
+      if (actions.hasChildNodes()) target.append(actions);
     }
     target.hidden = !target.hasChildNodes();
   }

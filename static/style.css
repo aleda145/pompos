@@ -182,8 +182,6 @@ legend { font-weight: 500; padding: 0; }
 .log-message.user { background: var(--bg); margin: 0 -16px; padding: 12px 16px; }
 .log-role { font: 12px/1.6 var(--mono); text-transform: uppercase; color: var(--text); }
 .message-content { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
-.message-more summary { cursor: pointer; line-height: 1.6; overflow-wrap: anywhere; }
-.message-more[open] .message-content { margin-top: 8px; }
 .activity { margin: 4px 0 4px 76px; color: var(--text); font: 12px/1.6 var(--mono); }
 .activity summary { cursor: pointer; padding: 4px 0; display: flex; align-items: center; gap: 8px; list-style: none; }
 .activity summary::-webkit-details-marker { display: none; }
@@ -203,9 +201,7 @@ legend { font-weight: 500; padding: 0; }
 .handoff-prompt { line-height: 1.6; margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .quick-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
 .suggestion { font-weight: 400; text-align: left; }
-.secret-entry { margin: 8px 0; }
-.secret-entry summary, .loading-adjust > summary { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
-.inline-secret { display: grid; grid-template-columns: 1fr 1.4fr; gap: 8px 12px; margin: 8px 0; padding: 12px; background: var(--surface-inset); border: 1px solid var(--border); border-radius: 2px; }
+.inline-secret { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin: 8px 0; padding: 12px; background: var(--surface-inset); border: 1px solid var(--border); border-radius: 2px; }
 .inline-secret label { margin: 0; font-size: 12px; }
 .inline-secret input { margin-top: 4px; }
 .inline-secret button { justify-self: start; }
@@ -224,7 +220,7 @@ legend { font-weight: 500; padding: 0; }
 .loading-summary { margin: 4px 0 8px; }
 .loading-summary div { grid-template-columns: 150px minmax(0, 1fr); }
 .loading-summary dd { font-family: var(--mono); }
-.loading-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; padding: 12px; background: var(--surface-inset); border: 1px solid var(--border); border-radius: 2px; }
+.loading-options { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 12px; padding: 12px; background: var(--surface-inset); border: 1px solid var(--border); border-radius: 2px; }
 .loading-options label { font-size: 12px; margin: 0; }
 .loading-options input, .loading-options select { margin-top: 4px; }
 .loading-options .hint, .loading-options button { grid-column: 1 / -1; }
@@ -255,7 +251,6 @@ legend { font-weight: 500; padding: 0; }
   .activity { margin-left: 0; }
   .validation-preview { margin-left: 0; }
   .chat-handoff { padding-left: 16px; }
-  .inline-secret, .loading-options { grid-template-columns: minmax(0, 1fr); }
   .chat-publish { flex-wrap: wrap; }
   .loading-summary div { grid-template-columns: 110px minmax(0, 1fr); }
 }
