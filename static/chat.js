@@ -72,7 +72,16 @@
           if (match) title += ` · ${match[1]} sample rows`;
         }
         const content = element('div', 'tool-detail');
-        content.append(element('h3', '', 'Request'), element('pre', '', pretty(call.function.arguments)));
+        if (name === 'write_script' && typeof args.code === 'string') {
+          const {code, ...metadata} = args;
+          const source = element('code', 'language-python', code);
+          const pre = element('pre');
+          pre.append(source);
+          content.append(element('h3', '', 'Request'), element('pre', '', JSON.stringify(metadata, null, 2)), element('h3', '', 'Python'), pre);
+          if (window.hljs) hljs.highlightElement(source);
+        } else {
+          content.append(element('h3', '', 'Request'), element('pre', '', pretty(call.function.arguments)));
+        }
         if (result) content.append(element('h3', '', 'Result'), element('pre', '', pretty(result.content)));
         if (result && !failed && (name === 'web_search' || name === 'read_webpage')) {
           try {
@@ -222,7 +231,10 @@
     $('#chat-title').textContent = session.messages?.length ? 'Ingestion chat' : 'New ingestion';
     $('#draft').hidden = !session.draft || !!session.published_id;
     $('#draft-target').textContent = session.draft ? `${session.draft.destination} / ${session.draft.table} · ${session.draft.strategy} · ${session.draft.schedule ? `${session.draft.schedule} UTC` : 'manual'}` : '';
-    $('#draft-code').textContent = session.draft?.code || '';
+    const draftCode = $('#draft-code');
+    draftCode.textContent = session.draft?.code || '';
+    delete draftCode.dataset.highlighted;
+    if (window.hljs && draftCode.textContent) hljs.highlightElement(draftCode);
     $('#row-estimate').hidden = !session.draft || !!session.published_id;
     $('#row-estimate').textContent = `Production extraction: ${rowEstimateText(session.estimate)}${session.estimate?.basis ? ` · ${session.estimate.basis}` : ''}${session.estimate?.observed_at ? ` · observed ${session.estimate.observed_at}` : ''}. Future runs may differ.`;
     $('#validation-result').hidden = !session.validation || !!session.published_id;

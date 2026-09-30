@@ -29,7 +29,7 @@
   </section>
   {{if .Ingestion.LastError}}<section><h2>Latest error</h2><pre class="error">{{.Ingestion.LastError}}</pre></section>{{end}}
   <section class="metadata"><h2>Metadata</h2><dl><div><dt>Ingestion ID</dt><dd><code>{{.Ingestion.ID}}</code></dd></div><div><dt>Spec path</dt><dd><code>{{.SpecPath}}</code></dd></div></dl></section>
-  {{if .Python}}<section class="yaml-section"><h2>Python</h2><p class="hint">Saved at <code>{{.Ingestion.Runtime.Script}}</code>. This exact script was source-tested before saving.</p><pre class="yaml-code"><code>{{.Python}}</code></pre></section>{{end}}
- <section class="yaml-section"><h2>YAML</h2><pre class="yaml-code"><code>{{.YAML}}</code></pre></section>
+  {{if .Python}}<section class="yaml-section"><h2>Python</h2><p class="hint">Saved at <code>{{.Ingestion.Runtime.Script}}</code>. This exact script was source-tested before saving.</p><pre class="yaml-code"><code class="language-python">{{.Python}}</code></pre></section>{{end}}
+ <section class="yaml-section"><h2>YAML</h2><pre class="yaml-code"><code class="language-yaml">{{.YAML}}</code></pre></section>
 </div>
 {{end}}

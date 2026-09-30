@@ -99,6 +99,13 @@ legend { font-weight: 600; padding: 0; }
 .schedule-controls button { white-space: nowrap; }
 .yaml-code { margin: 0; padding: 12px; max-height: 608px; overflow: auto; color: var(--text); background: var(--surface-inset); white-space: pre; tab-size: 2; font: 12px/1.65 var(--mono); border: 1px solid var(--border); border-radius: 2px; }
 .yaml-code code { font: inherit; }
+.hljs { color: var(--text); }
+.hljs-comment { color: #565851; font-style: italic; }
+.hljs-keyword, .hljs-literal, .hljs-meta { color: #784377; }
+.hljs-string, .hljs-regexp { color: #365f3c; }
+.hljs-number, .hljs-symbol { color: #854a25; }
+.hljs-title, .hljs-built_in, .hljs-type, .hljs-attr, .hljs-attribute { color: #315b76; }
+.hljs-variable, .hljs-template-variable { color: #854a25; }
 .yaml-section .yaml-code { margin-top: 8px; }
 .secret-add, .destination-add { margin-bottom: 24px; }
 .secret-usage ul { margin: 4px 0; padding-left: 18px; }
