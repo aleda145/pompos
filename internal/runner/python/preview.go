@@ -24,7 +24,7 @@ type TablePreview struct {
 	Truncated bool       `json:"truncated"`
 }
 
-const PreviewUnavailable = "Preview unavailable. The table may not have been loaded yet, or the database may be busy. Refresh after the ingestion finishes."
+const PreviewUnavailable = "Preview unavailable. The table may not have been loaded yet, or the database may be busy. Try again after the ingestion finishes."
 
 //go:embed preview.py
 var previewScript string

@@ -39,7 +39,19 @@
     </form>
   </section>
   {{if .Ingestion.LastError}}<section><h2>Latest error</h2><pre class="error">{{.Ingestion.LastError}}</pre></section>{{end}}
-  <section class="results-preview" aria-label="Destination table preview">
+  <section class="results-preview" aria-label="Destination table preview" data-preview-url="/ingestions/{{.Ingestion.ID}}/preview">
+    <h2>Table preview</h2>
+    <p class="hint" role="status">Loading preview…</p>
+    <noscript><p class="hint">Enable JavaScript to load the table preview.</p></noscript>
+  </section>
+  {{if .Python}}<section class="yaml-section"><h2>Python</h2><pre class="yaml-code"><code class="language-python">{{.Python}}</code></pre></section>{{end}}
+ <section class="yaml-section"><h2>YAML</h2><pre class="yaml-code"><code class="language-yaml">{{.YAML}}</code></pre></section>
+  <section><h2>Metadata</h2><dl><div><dt>Ingestion ID</dt><dd><code>{{.Ingestion.ID}}</code></dd></div><div><dt>Spec path</dt><dd><code>{{.SpecPath}}</code></dd></div></dl></section>
+</div>
+<script src="/static/preview.js" defer></script>
+{{end}}
+
+{{define "preview"}}
     <h2>Table preview{{with .Preview}} <span class="hint">{{len .Rows}} / {{.TotalRows}} rows</span>{{end}}</h2>
     {{with .Preview}}
       {{if .Rows}}
@@ -51,11 +63,7 @@
       {{else}}<p class="hint">No rows.</p>{{end}}
       {{if .Truncated}}<p class="hint">Values truncated.</p>{{end}}
     {{else}}
-      <p class="hint">{{if .PreviewError}}{{.PreviewError}}{{else}}Preview unavailable.{{end}}</p>
+      <p class="hint" role="status">{{.PreviewError}}</p>
+      <button type="button" data-preview-retry>Retry</button>
     {{end}}
-  </section>
-  {{if .Python}}<section class="yaml-section"><h2>Python</h2><pre class="yaml-code"><code class="language-python">{{.Python}}</code></pre></section>{{end}}
- <section class="yaml-section"><h2>YAML</h2><pre class="yaml-code"><code class="language-yaml">{{.YAML}}</code></pre></section>
-  <section><h2>Metadata</h2><dl><div><dt>Ingestion ID</dt><dd><code>{{.Ingestion.ID}}</code></dd></div><div><dt>Spec path</dt><dd><code>{{.SpecPath}}</code></dd></div></dl></section>
-</div>
 {{end}}

@@ -104,6 +104,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /settings/agent", a.agentSettings)
 	mux.HandleFunc("POST /settings/agent", a.agentSettings)
 	mux.HandleFunc("GET /ingestions/{id}", a.ingestionDetail)
+	mux.HandleFunc("GET /ingestions/{id}/preview", a.ingestionPreview)
 	mux.HandleFunc("POST /ingestions/{id}/run", a.runIngestion)
 	mux.HandleFunc("POST /ingestions/{id}/schedule", a.updateSchedule)
 	mux.HandleFunc("GET /secrets", a.listSecrets)
@@ -175,8 +176,6 @@ type detailPageData struct {
 	RunQueued     bool
 	YAML          string
 	Python        string
-	Preview       *runnerpython.TablePreview
-	PreviewError  string
 }
 
 func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
@@ -210,17 +209,6 @@ func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
 		RunQueued: r.URL.Query().Get("run") == "queued",
 		YAML:      string(yamlData),
 		Python:    string(code),
-	}
-	if a.Previewer != nil {
-		preview, err := a.Previewer.Preview(r.Context(), compiler.ExecutionPlan{
-			DestinationType: item.Destination.Type, DestinationPath: item.Destination.Path,
-			DestinationObject: item.Destination.Table, SecretRefs: item.Runtime.SecretRefs,
-		})
-		if err != nil {
-			page.PreviewError = runnerpython.PreviewUnavailable
-		} else {
-			page.Preview = &preview
-		}
 	}
 	a.render(w, http.StatusOK, "detail", page)
 }
