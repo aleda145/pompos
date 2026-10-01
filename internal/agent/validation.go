@@ -26,6 +26,9 @@ type Validation struct {
 func (s *Service) validationPlan(ctx context.Context, v *Session) (compiler.ExecutionPlan, string, error) {
 	var plan compiler.ExecutionPlan
 	if v.Draft == nil || v.Loading == nil {
+		if v.External {
+			return plan, "", errors.New("call write_script, test_script and configure_loading before validate_ingestion")
+		}
 		return plan, "", errors.New("write and probe the script, then confirm loading settings before validation")
 	}
 	if err := v.Loading.Validate(); err != nil {
@@ -89,6 +92,9 @@ func (s *Service) requireValidation(ctx context.Context, v *Session) error {
 		return err
 	}
 	if v.Validation == nil || v.Validation.Fingerprint != fingerprint {
+		if v.External {
+			return errors.New("call validate_ingestion successfully for the current script and loading settings before saving")
+		}
 		return errors.New("call propose_validation and wait for the user to approve a successful validation before finishing or saving")
 	}
 	return nil

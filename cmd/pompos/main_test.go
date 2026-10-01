@@ -110,3 +110,11 @@ func TestRebuildSpecProjectionsFromFiles(t *testing.T) {
 		t.Fatal("unsupported spec was silently accepted or skipped")
 	}
 }
+
+func TestLegacyMCPTokenCommandDirectsToAgentSettings(t *testing.T) {
+	var out bytes.Buffer
+	err := runCommandIO([]string{"mcp-token"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "no longer requires a token") || out.Len() != 0 {
+		t.Fatal("legacy token command should explain that authentication was removed")
+	}
+}

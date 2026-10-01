@@ -1,4 +1,4 @@
-FROM golang:1.22-bookworm AS build
+FROM golang:1.25-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -14,7 +14,8 @@ RUN pip install --no-cache-dir -r /tmp/requirements-local.txt \
 COPY --from=build /out/pompos /usr/local/bin/pompos
 USER pompos
 WORKDIR /app
-ENV POMPOS_DATA_DIR=/data \
+ENV POMPOS_ADDRESS=:8080 \
+    POMPOS_DATA_DIR=/data \
     POMPOS_DESTINATION_PATH=/data/pompos.duckdb \
     POMPOS_METADATA_PATH=/data/pompos.sqlite
 EXPOSE 8080

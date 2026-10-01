@@ -1,11 +1,21 @@
 {{define "content"}}
 <div class="setup-flow">
  <ol class="setup-steps" aria-label="Setup progress">
-  <li {{if eq .Step "agent"}}aria-current="step"{{end}}>1 · Agent <span>Required</span></li>
-  <li {{if eq .Step "search"}}aria-current="step"{{end}}>2 · Web search <span>Optional</span></li>
+  <li {{if eq .Step "mode"}}aria-current="step"{{end}}>1 · Connection <span>Required</span></li>
+  <li {{if eq .Step "agent"}}aria-current="step"{{end}}>2 · Agent <span>Required</span></li>
+  <li {{if eq .Step "search"}}aria-current="step"{{end}}>3 · Web search <span>Optional</span></li>
  </ol>
  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
- {{if eq .Step "agent"}}
+ {{if eq .Step "mode"}}
+ <h1>Choose how to develop ingestions</h1>
+ <form method="post" action="/setup/mode" class="panel form-panel">
+  <p>Use your own agent through MCP, or configure an agent inside Pompos.</p>
+  <button class="primary" type="submit" name="mode" value="mcp">Connect MCP · Codex CLI or another client</button>
+  <p>Develop, confirm, validate and save in your client. Only source credential values need to be entered in Pompos.</p>
+  <button class="secondary" type="submit" name="mode" value="agent">Provide agent credentials</button>
+  <p>Configure an OpenAI-compatible model to chat directly in Pompos.</p>
+ </form>
+ {{else if eq .Step "agent"}}
  <h1>Configure agent</h1>
  <form method="post" action="/setup/agent" class="panel form-panel">
   <label for="endpoint">OpenAI-compatible base URL</label>
@@ -30,5 +40,6 @@
   <div class="setup-actions"><button class="primary" type="submit" name="action" value="save">Save search settings</button><button type="submit" name="action" value="skip" class="secondary" formnovalidate>Skip for now</button></div>
  </form>
  {{end}}
+ <p><a href="/setup?step=mode">Change connection method</a></p>
 </div>
 {{end}}

@@ -145,6 +145,10 @@ func runCommand(args []string) error {
 }
 
 func runCommandIO(args []string, stdout io.Writer) error {
+	if len(args) == 1 && args[0] == "mcp-token" {
+		return errors.New("MCP no longer requires a token; connect from Agent settings")
+	}
+
 	if len(args) != 2 {
 		return errors.New("usage: pompos <validate|plan|run> ingestion.yaml")
 	}

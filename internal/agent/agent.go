@@ -44,6 +44,8 @@ type Service struct {
 	mu             sync.Mutex
 }
 type Settings struct {
+	Mode         string `json:"mode,omitempty"`
+	MCPEnabled   bool   `json:"mcp_enabled"`
 	ExaSkipped   bool   `json:"exa_skipped"`
 	ExaAPIKeyRef string `json:"exa_api_key_ref"`
 	Endpoint     string `json:"endpoint"`
@@ -76,6 +78,7 @@ type Draft struct {
 	Code        string   `json:"code"`
 }
 type Session struct {
+	External        bool                   `json:"external,omitempty"`
 	SavedIngestions []SavedIngestion       `json:"saved_ingestions,omitempty"`
 	DraftID         string                 `json:"draft_id,omitempty"`
 	Estimate        *ingestion.RowEstimate `json:"estimate,omitempty"`
@@ -173,6 +176,12 @@ func (s *Service) SaveSettings(v Settings) error {
 }
 
 func (v Settings) Validate() error {
+	if v.Mode == "mcp" {
+		return nil
+	}
+	if v.Mode != "" && v.Mode != "agent" {
+		return errors.New("choose MCP or agent credentials")
+	}
 	u, e := url.Parse(v.Endpoint)
 	if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("endpoint must be an HTTP(S) base URL without credentials or query parameters")
@@ -256,6 +265,11 @@ func (s *Service) Turn(ctx context.Context, id, input string) (Session, error) {
 func (s *Service) TurnWithEvents(ctx context.Context, id string, input Input, emit func(Event)) (Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.turnWithEvents(ctx, id, input, emit)
+}
+
+// turnWithEvents shares user actions between the web chat and MCP. Caller holds mu.
+func (s *Service) turnWithEvents(ctx context.Context, id string, input Input, emit func(Event)) (Session, error) {
 	v, e := s.load(id)
 	if e != nil {
 		return v, e
@@ -312,7 +326,7 @@ func (s *Service) TurnWithEvents(ctx context.Context, id string, input Input, em
 			input.Message = options.description()
 		}
 		if input.ActionID == "retry_secret" {
-			if _, err := s.Secrets.Get(ctx, v.Pending.SecretName); err != nil {
+			if value, err := s.Secrets.Get(ctx, v.Pending.SecretName); err != nil || len(value) == 0 {
 				return v, fmt.Errorf("add the managed secret %q first", v.Pending.SecretName)
 			}
 		}
@@ -324,7 +338,7 @@ func (s *Service) TurnWithEvents(ctx context.Context, id string, input Input, em
 	if e != nil {
 		return v, e
 	}
-	if cfg.Endpoint == "" {
+	if cfg.Mode != "mcp" && !v.External && cfg.Endpoint == "" {
 		return v, errors.New("configure the agent endpoint and model first")
 	}
 	if v.PublishedID != "" {
@@ -375,6 +389,15 @@ func (s *Service) TurnWithEvents(ctx context.Context, id string, input Input, em
 		v.Messages = append(v.Messages, message)
 		v.Pending = previousHandoff
 		v.Pending.ID = fmt.Sprint(len(v.Messages))
+		send(Event{Type: "message", Message: &message})
+		return v, s.save(v)
+	}
+	if cfg.Mode == "mcp" || v.External {
+		if input.ActionID == "explain" {
+			v.Pending = previousHandoff
+		}
+		message := Message{Role: "assistant", Content: "Response saved. Continue in your MCP client; refresh this page when it has updated the draft."}
+		v.Messages = append(v.Messages, message)
 		send(Event{Type: "message", Message: &message})
 		return v, s.save(v)
 	}
@@ -633,6 +656,9 @@ func (s *Service) Publish(ctx context.Context, id, artifactDir string, persist f
 		return v.PublishedID, nil
 	}
 	if !v.Ready || v.Draft == nil {
+		if v.External {
+			return "", errors.New("call validate_ingestion successfully before saving")
+		}
 		return "", errors.New("finish a user-approved validation before saving")
 	}
 	data, e := os.ReadFile(s.scriptPath(id))

@@ -444,11 +444,14 @@ func TestExaSettingsPersistSecretReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := &agent.Service{Dir: filepath.Join(dir, "agent"), Secrets: db.Secrets()}
+	if err := service.SaveSettings(agent.Settings{Mode: "agent", Endpoint: "https://model.example/v1", Model: "test", APIKeyRef: "model_key"}); err != nil {
+		t.Fatal(err)
+	}
 	app, err := New(App{Agent: service, Store: db, Secrets: db.Secrets(), SpecDir: filepath.Join(dir, "ingestions"), Logger: log.New(io.Discard, "", 0)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := url.Values{"endpoint": {"https://model.example/v1"}, "model": {"test"}, "exa_api_key_ref": {"exa_key"}}.Encode()
+	body := url.Values{"section": {"search"}, "exa_api_key_ref": {"exa_key"}}.Encode()
 	request := httptest.NewRequest("POST", "/settings/agent", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
@@ -460,5 +463,17 @@ func TestExaSettingsPersistSecretReference(t *testing.T) {
 	settings, err := restarted.Settings()
 	if err != nil || settings.ExaAPIKeyRef != "exa_key" {
 		t.Fatalf("Exa reference lost: %#v %v", settings, err)
+	}
+	if settings.Endpoint != "https://model.example/v1" || settings.Model != "test" || settings.APIKeyRef != "model_key" || settings.Mode != "agent" {
+		t.Fatalf("saving search changed agent settings: %+v", settings)
+	}
+	response = setupRequest(app, "POST", "/settings/agent", url.Values{"section": {"agent"}, "endpoint": {settings.Endpoint}, "model": {"updated"}, "api_key_ref": {settings.APIKeyRef}})
+	settings, err = restarted.Settings()
+	if response.Code != 200 || err != nil || settings.Model != "updated" || settings.ExaAPIKeyRef != "exa_key" {
+		t.Fatalf("saving agent changed search settings: %+v %v", settings, err)
+	}
+	response = setupRequest(app, "POST", "/settings/agent", url.Values{"section": {"invalid"}})
+	if response.Code != http.StatusBadRequest {
+		t.Fatal("unknown settings section accepted")
 	}
 }

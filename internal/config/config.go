@@ -24,7 +24,7 @@ func Load() Config {
 	destinationPath := env("POMPOS_DESTINATION_PATH", joinDataPath(dataDir, "pompos.duckdb"))
 	return Config{
 		PythonBinary: env("POMPOS_PYTHON_BINARY", "python3"),
-		Address:      env("POMPOS_ADDRESS", ":8080"),
+		Address:      env("POMPOS_ADDRESS", "127.0.0.1:8080"),
 		DataDir:      dataDir,
 		MetadataPath: env("POMPOS_METADATA_PATH", joinDataPath(dataDir, "pompos.sqlite")),
 		Destination: Destination{

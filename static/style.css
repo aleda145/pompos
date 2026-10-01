@@ -168,6 +168,10 @@ legend { font-weight: 500; padding: 0; }
 .settings-section { display: grid; align-content: start; min-width: 0; }
 .settings-section > a { justify-self: start; margin-top: 8px; }
 .settings-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+.settings-save { justify-content: flex-start; margin-top: 16px; }
+.mcp-state { text-decoration: underline; text-underline-offset: 3px; }
+.mcp-command { display: grid; gap: 4px; min-width: 0; margin-top: 12px; }
+.mcp-command code { display: block; padding: 8px 10px; border: 1px solid var(--border); border-radius: 2px; background: var(--surface-inset); white-space: nowrap; overflow-x: auto; user-select: all; }
 .secret-usage ul { margin: 4px 0; padding-left: 18px; }
 .destination-edit { display: flex; gap: 8px; align-items: center; min-width: 260px; }
 .destination-edit label { flex: 1; margin: 0; }

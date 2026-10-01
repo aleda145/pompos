@@ -20,6 +20,12 @@ type setupPageData struct {
 }
 
 func (a *App) setupStep(ctx context.Context, cfg agent.Settings) (string, error) {
+	if cfg.Mode == "mcp" {
+		return "", nil
+	}
+	if cfg.Mode == "" && cfg.Validate() != nil {
+		return "mode", nil
+	}
 	if cfg.Validate() != nil {
 		return "agent", nil
 	}
@@ -92,6 +98,9 @@ func (a *App) setupPage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.serverError(w, err)
 		return
+	}
+	if r.URL.Query().Get("step") == "mode" {
+		step = "mode"
 	}
 	if step == "" {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -193,10 +202,11 @@ func (a *App) setupAgent(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, err)
 		return
 	}
-	if step != "agent" {
+	if step != "agent" && step != "mode" {
 		http.Redirect(w, r, "/setup", http.StatusSeeOther)
 		return
 	}
+	cfg.Mode = "agent"
 	cfg.Endpoint = strings.TrimRight(strings.TrimSpace(r.FormValue("endpoint")), "/")
 	cfg.Model = strings.TrimSpace(r.FormValue("model"))
 	cfg.APIKeyRef = r.FormValue("api_key_ref")
@@ -218,7 +228,7 @@ func (a *App) setupSearch(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, err)
 		return
 	}
-	if step == "agent" {
+	if step == "agent" || step == "mode" {
 		http.Redirect(w, r, "/setup", http.StatusSeeOther)
 		return
 	}
@@ -243,4 +253,21 @@ func (a *App) setupSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (a *App) setupMode(w http.ResponseWriter, r *http.Request) {
+	cfg, ok := a.setupForm(w, r)
+	if !ok {
+		return
+	}
+	mode := r.FormValue("mode")
+	if err := a.Agent.SelectMode(mode); err != nil {
+		a.renderSetup(w, r, 422, setupPageData{Step: "mode", Settings: cfg, Error: err.Error()})
+		return
+	}
+	if mode == "mcp" {
+		http.Redirect(w, r, "/settings/agent#mcp", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/setup", http.StatusSeeOther)
 }

@@ -11,12 +11,42 @@ make setup
 make run
 ```
 
-Open `http://localhost:8080`. When configuration is missing, Pompos opens a two-step setup flow:
+Open `http://localhost:8080`. Setup starts with a separate **Connection** step:
 
-1. **Agent — required.** Enter an OpenAI-compatible base URL (for example `https://api.openai.com/v1`) and model ID. Paste the provider key directly into setup or select an existing managed secret. For a local endpoint without authentication, explicitly select **No authentication**. The model must support Chat Completions function/tool calling.
-2. **Web search — optional, recommended.** Add an [Exa API](https://exa.ai/docs/reference/search) key, select an existing secret, or choose **Skip for now**. Pompos remembers that choice across restarts. Reading a supplied public documentation URL works without a search key.
+1. **Connect MCP** to use Codex CLI or another MCP client. Your client handles the model and its credentials; Pompos needs no model or search provider key. Setup goes directly to the connection instructions below.
+2. **Provide agent credentials** to use the built-in chat. Enter an OpenAI-compatible base URL (for example `https://api.openai.com/v1`) and model ID. Paste a provider key or select an existing managed secret. For a local endpoint without authentication, explicitly select **No authentication**. The model must support Chat Completions function/tool calling. A separate **Web search** step offers an optional [Exa API](https://exa.ai/docs/reference/search) key or **Skip for now**.
 
-Setup stores new keys in managed secrets and saves only their references in agent settings. Existing valid configuration is reused, and incomplete setup resumes at the missing step. If a referenced credential is deleted or empty, setup offers to repair it. Saving setup checks the configuration and local secret availability; it does not make a paid model or search request to verify the credentials. You can change the model or enable Exa later in **Agent settings**; manage key values under **Secrets**.
+Existing valid agent configurations continue working. Incomplete setup resumes at the missing step. New provider keys are stored in managed secrets; settings contain only their references. Saving configuration does not make a paid provider request. Switching modes retains provider settings and existing ingestions, and disables MCP access when you select the built-in agent.
+
+## Codex CLI and Claude Code through MCP
+
+Choose **Connect MCP** in setup, then click **Enable** under **Agent settings → MCP**. MCP defaults to disabled, including existing configurations without the enable flag. The status and action button update immediately; **Disable** rejects subsequent MCP requests without changing provider settings or ingestions. Select and copy the one-line registration command for Codex CLI or Claude Code. No MCP token or model-provider credentials are required by Pompos. Keep Pompos running on localhost and run your client on the same machine; no Pompos project checkout or build is needed. This also works with the provided Docker Compose setup.
+
+Registration persists in your client's configuration. If upgrading from token authentication, remove the old entry with `codex mcp remove pompos` and copy the new command from Agent settings to remove the token environment-variable requirement. Old server token files are no longer used. Claude Code connects with `claude mcp add --transport http pompos http://127.0.0.1:8080/mcp`; see its [MCP documentation](https://code.claude.com/docs/en/mcp).
+
+Try asking Codex:
+
+> Use Pompos to ingest today's ECB exchange rates.
+
+The entire ingestion workflow can stay in Codex CLI. Codex uses Pompos tools to find existing ingestions or develop a new one, without inspecting local project files or setting up Python. It writes and probes a draft, configures loading, validates a sample, saves, and runs it when requested. A request to ingest includes these ordinary steps; a request only to prepare or validate does not authorize a production run. Runs stay manual unless you request a schedule. Saving activates a configured cron schedule.
+
+When a meaningful choice is unclear, Codex asks you directly in the CLI and waits for your answer before the dependent action. For example, it can ask whether you want a current snapshot or historical rates, or which destination to use. Answers are applied in the next tool call; there is no MCP proposal/response loop or web confirmation step. Codex should reuse choices and permission already supplied, and ask before ambiguous replacement of existing data, adding a schedule, or materially broadening the request. These instructions guide the client; they cannot disable its other tools.
+
+The tools are:
+
+- **Develop:** `new_chat`, `list_chats`, `get_chat`, `context`, `write_script`, `test_script`, `read_webpage`, and optional Exa-backed `web_search`.
+- **Configure and validate:** `configure_loading` sets UTC cron, strategy and row keys directly. `validate_ingestion` executes a bounded sample check (default 100 rows, maximum 1,000) and returns checks and a preview. Success makes the draft ready to save.
+- **Save and operate:** `save_ingestion`, `list_ingestions`, `get_ingestion`, `run_ingestion`, `set_schedule`, and `preview_ingestion`. No separate `finish` call is needed.
+
+Development tools take a `session_id`; saved-ingestion tools take an `ingestion_id`. Chat IDs and drafts persist across reconnects. Normal tool responses contain compact state and the current result, without replaying history or Python code. `list_chats`/`get_chat` resume work; `get_chat` includes draft code and validation, with recent messages available through `include_history: true`. Optional review links let you inspect the same state in the web UI. Questions asked in Codex remain in the Codex conversation; only applied settings and tool activity persist in Pompos. A queued full run is reported as queued, not completed; `get_ingestion` reports its execution status. Previews use the same fixed, read-only, 10-row query as the UI. No arbitrary SQL tool is exposed.
+
+The MCP client is responsible for honoring your scope and authorization when configuring, validating, saving, changing schedules, or starting full loads. Pompos binds validation to the current script and settings, rejects untested scripts, and requires successful current validation before saving. Code or loading changes invalidate validation. Each validation call executes another bounded check. Retrying a save returns the same ingestion; retrying a full-run request can queue another run. The built-in web agent retains its approval cards.
+
+**Source credentials are the exception:** Codex asks you to save the named value on Pompos's Secrets page using `context`'s `credentials_path`. After saving it, tell Codex to continue; it refreshes the available secret names and retries the operation. No secret-value read/write tool is exposed. Keep credentials out of Codex messages and Python code. Public sources need no credential detour. Codex can use its own research tools without an Exa key. Python probes and validation execute generated code with the server's operating-system permissions; use trusted clients. Source samples, code, and tool output are visible to your MCP client and its model provider.
+
+The server uses the [official Go MCP SDK](https://github.com/modelcontextprotocol/go-sdk) and Streamable HTTP. `/mcp` is unauthenticated and available only when its status is **Enabled** (`mcp_enabled: true` in settings). It rejects browser origins and non-loopback Host names, bounds request sizes, and validates tool arguments. Access is controlled by the localhost listener, not a token; Host checks alone do not restrict network peers. This is a trusted local integration, like the rest of Pompos's unauthenticated interface. The app defaults to `127.0.0.1:8080`; Docker Compose publishes its port on `127.0.0.1`.
+
+## Built-in agent
 
 Choose **Add ingestion** and try:
 
@@ -74,15 +104,17 @@ The generated file can also run directly with `POMPOS_PROBE=1`, or with `POMPOS_
 
 This is a trusted, self-hosted operator tool. Generated Python executes with Pompos's operating-system permissions and network access. Probe mode skips the provided dlt loader, but arbitrary generated code is not sandboxed. Use a dedicated environment and trusted model endpoint. The endpoint receives conversation text, generated code, destination descriptions, source samples, search results and fetched documentation. Search queries are sent to Exa; fetched URLs are requested directly from their hosts. Only explicitly referenced secrets are injected into Python; exact secret values are redacted from captured output. The existing secret store uses SQLite, without encryption at rest. Do not expose the unauthenticated application to untrusted users.
 
-`POMPOS_DATA_DIR` defaults to `./data`, `POMPOS_ADDRESS` to `:8080`, and `POMPOS_PYTHON_BINARY` to `python3`. `make run` selects the project virtual environment. Docker installs the same pinned Python dependencies.
+`POMPOS_DATA_DIR` defaults to `./data`, `POMPOS_ADDRESS` to `127.0.0.1:8080`, and `POMPOS_PYTHON_BINARY` to `python3`. `make run` selects the project virtual environment. Docker installs the same pinned Python dependencies.
 
 ## Development
+
+Go 1.25 or newer is required by the MCP SDK. Go installations with automatic toolchain downloads enabled can obtain it from the module requirement.
 
 ```bash
 make build
 make test
 make vet
-node --test static/chat-stream.test.cjs
+node --test static/*.test.cjs
 # Real dlt/DuckDB integration test (after make setup):
 POMPOS_TEST_PYTHON="$PWD/.venv/bin/python" go test ./internal/runner/python -v
 make docker-build

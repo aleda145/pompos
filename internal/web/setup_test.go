@@ -53,9 +53,10 @@ func TestSetupRequiresAgentAndRemembersOptionalSearchSkip(t *testing.T) {
 		assertRedirect(t, setupRequest(app, "GET", path, nil), "/setup")
 	}
 	page := setupRequest(app, "GET", "/setup", nil)
-	if page.Code != 200 || !strings.Contains(page.Body.String(), "Configure agent") || strings.Contains(page.Body.String(), "Skip for now") {
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "Choose how to develop ingestions") || strings.Contains(page.Body.String(), "Skip for now") {
 		t.Fatalf("required agent page: %d %s", page.Code, page.Body)
 	}
+	assertRedirect(t, setupRequest(app, "POST", "/setup/mode", url.Values{"mode": {"agent"}}), "/setup")
 	assertRedirect(t, setupRequest(app, "POST", "/setup/search", url.Values{"action": {"skip"}}), "/setup")
 	bad := setupRequest(app, "POST", "/setup/agent", url.Values{"endpoint": {"https://model.example/v1"}, "model": {"test"}})
 	if bad.Code != 422 {
@@ -78,7 +79,7 @@ func TestSetupRequiresAgentAndRemembersOptionalSearchSkip(t *testing.T) {
 		t.Fatalf("onboarded home: %d", w.Code)
 	}
 	// Editing agent settings must preserve the explicit skip choice.
-	settings := setupRequest(app, "POST", "/settings/agent", url.Values{"endpoint": {cfg.Endpoint}, "model": {"updated-model"}})
+	settings := setupRequest(app, "POST", "/settings/agent", url.Values{"section": {"agent"}, "endpoint": {cfg.Endpoint}, "model": {"updated-model"}})
 	if settings.Code != 200 {
 		t.Fatal("settings update failed")
 	}

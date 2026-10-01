@@ -91,8 +91,15 @@ func New(app App) (*App, error) {
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", a.home)
+	mux.HandleFunc("GET /{$}", a.home)
 	mux.HandleFunc("GET /setup", a.setupPage)
+	mux.HandleFunc("POST /setup/mode", a.setupMode)
+	mux.HandleFunc("GET /settings/mcp", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/settings/agent#mcp", http.StatusSeeOther)
+	})
+	if a.Agent != nil {
+		mux.Handle("/mcp", a.mcpHandler())
+	}
 	mux.HandleFunc("POST /setup/agent", a.setupAgent)
 	mux.HandleFunc("POST /setup/search", a.setupSearch)
 	mux.HandleFunc("GET /ingestions/new", a.chatPage)
@@ -103,6 +110,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /chat/{id}/secret", a.chatSecret)
 	mux.HandleFunc("GET /settings/agent", a.agentSettings)
 	mux.HandleFunc("POST /settings/agent", a.agentSettings)
+	mux.HandleFunc("POST /settings/agent/mcp", a.toggleMCP)
 	mux.HandleFunc("GET /ingestions/{id}", a.ingestionDetail)
 	mux.HandleFunc("GET /ingestions/{id}/preview", a.ingestionPreview)
 	mux.HandleFunc("POST /ingestions/{id}/run", a.runIngestion)
@@ -114,7 +122,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /destinations", a.saveDestination)
 	assets, _ := fs.Sub(staticfiles.FS, ".")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(assets))))
-	return a.logRequests(a.recover(a.requireSetup(mux)))
+	return a.logRequests(a.recover(sameOriginWrites(a.requireSetup(mux))))
 }
 
 func (a *App) home(w http.ResponseWriter, r *http.Request) {
@@ -214,34 +222,16 @@ func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) runIngestion(w http.ResponseWriter, r *http.Request) {
-	item, err := a.Store.Get(r.Context(), r.PathValue("id"))
-	if errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
-		return
-	}
-	if err != nil {
-		a.serverError(w, err)
-		return
-	}
-	_, data, err := spec.Read(item.SpecPath)
-	if err != nil {
-		a.serverError(w, err)
-		return
-	}
-	digest := spec.Digest(data)
-	if digest != item.SpecDigest {
-		if err := a.Store.UpdateSpecReference(r.Context(), item.ID, item.SpecPath, digest); err != nil {
-			a.serverError(w, err)
+	id := r.PathValue("id")
+	if err := a.queueIngestion(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
 			return
 		}
-	}
-	a.Logger.Printf("rerun requested ingestion_id=%s", item.ID)
-	if err := a.Scheduler.Enqueue(r.Context(), item.ID); err != nil {
 		a.serverError(w, err)
 		return
 	}
-	a.Logger.Printf("rerun enqueued ingestion_id=%s", item.ID)
-	http.Redirect(w, r, "/ingestions/"+item.ID+"?run=queued", http.StatusSeeOther)
+	http.Redirect(w, r, "/ingestions/"+id+"?run=queued", http.StatusSeeOther)
 }
 
 func (a *App) updateSchedule(w http.ResponseWriter, r *http.Request) {
@@ -267,29 +257,10 @@ func (a *App) updateSchedule(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	previous := item.Schedule
-	item.Schedule = schedule
-	if _, err := spec.Write(a.SpecDir, item); err != nil {
+	if err := a.setIngestionSchedule(r.Context(), item.ID, schedule); err != nil {
 		a.serverError(w, err)
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(a.SpecDir, item.ID+".yaml"))
-	if err != nil {
-		a.serverError(w, err)
-		return
-	}
-	if err := a.Store.UpdateSpecReference(r.Context(), item.ID, filepath.Join(a.SpecDir, item.ID+".yaml"), spec.Digest(data)); err != nil {
-		a.serverError(w, err)
-		return
-	}
-	if err := a.Scheduler.Upsert(item); err != nil {
-		item.Schedule = previous
-		_, _ = spec.Write(a.SpecDir, item)
-		_ = a.Scheduler.Upsert(item)
-		a.serverError(w, err)
-		return
-	}
-	a.Logger.Printf("schedule updated ingestion_id=%s schedule=%q timezone=UTC", item.ID, schedule)
 	http.Redirect(w, r, "/ingestions/"+item.ID+"?schedule=saved", http.StatusSeeOther)
 }
 
