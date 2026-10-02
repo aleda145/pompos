@@ -19,6 +19,7 @@ import (
 	"pompos/internal/compiler"
 	"pompos/internal/config"
 	"pompos/internal/execution"
+	"pompos/internal/ingestion"
 	runnerpython "pompos/internal/runner/python"
 	"pompos/internal/scheduler"
 	"pompos/internal/spec"
@@ -128,12 +129,16 @@ func rebuildSpecProjections(ctx context.Context, metadata *store.SQLite, directo
 			continue
 		}
 		path := filepath.Join(directory, entry.Name())
-		document, data, err := spec.Read(path)
-		if err != nil {
-			return fmt.Errorf("load desired ingestion %s: %w", path, err)
-		}
 		id := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
-		if err := metadata.UpsertProjection(ctx, spec.ToProjection(document, id, path, spec.Digest(data))); err != nil {
+		document, data, err := spec.Read(path)
+		item := ingestion.Ingestion{ID: id, Status: ingestion.StatusPending, SpecPath: path, SpecDigest: spec.Digest(data)}
+		if err != nil {
+			// Retain an identity for broken files so the UI can show the error.
+			log.Printf("ingestion spec unavailable ingestion_id=%s spec_path=%s error=%q", id, path, err)
+		} else {
+			item = spec.ToProjection(document, id, path, spec.Digest(data))
+		}
+		if err := metadata.UpsertProjection(ctx, item); err != nil {
 			return err
 		}
 	}

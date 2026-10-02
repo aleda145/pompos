@@ -21,8 +21,10 @@ type Ingestion struct {
 	NextRun         *time.Time
 	LastRun         *time.Time
 	LastError       string
-	SpecPath        string
-	SpecDigest      string
+	// LoadError describes the current YAML configuration, independently of run history.
+	LoadError  string
+	SpecPath   string
+	SpecDigest string
 }
 
 type Run struct {

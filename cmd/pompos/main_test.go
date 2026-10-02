@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"pompos/internal/ingestion"
 	"pompos/internal/spec"
 	"pompos/internal/store"
 )
@@ -106,8 +107,34 @@ func TestRebuildSpecProjectionsFromFiles(t *testing.T) {
 	if err = os.WriteFile(path, []byte(strings.Replace(string(input), spec.APIVersion, "pompos.dev/v1", 1)), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err = rebuildSpecProjections(ctx, metadata, specDir); err == nil {
-		t.Fatal("unsupported spec was silently accepted or skipped")
+	if err = metadata.Finish(ctx, "customers", ingestion.StatusFailed, "previous failure"); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(specDir, "a-broken.yaml"), []byte("invalid: ["), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(specDir, "z-healthy.yaml"), input, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = rebuildSpecProjections(ctx, metadata, specDir); err != nil {
+		t.Fatalf("broken spec blocked startup: %v", err)
+	}
+	items, err := metadata.List(ctx)
+	if err != nil || len(items) != 3 {
+		t.Fatalf("broken and healthy files must remain registered: %#v, %v", items, err)
+	}
+	item, err = metadata.Get(ctx, "customers")
+	if err != nil || item.Status != ingestion.StatusFailed || item.LastError != "previous failure" {
+		t.Fatalf("rebuild lost run history: %#v, %v", item, err)
+	}
+	if err = os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err = rebuildSpecProjections(ctx, metadata, specDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = metadata.Get(ctx, "customers"); err != nil {
+		t.Fatalf("deleted YAML lost its registered identity: %v", err)
 	}
 }
 

@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 	"pompos/internal/destination"
 	"pompos/internal/ingestion"
 	runnerpython "pompos/internal/runner/python"
+	"pompos/internal/scheduler"
 	"pompos/internal/secrets"
 	"pompos/internal/spec"
 	"pompos/internal/store"
@@ -130,17 +130,10 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	items, err := a.Store.List(r.Context())
+	items, err := a.ingestionList(r.Context())
 	if err != nil {
 		a.serverError(w, err)
 		return
-	}
-	for index := range items {
-		items[index], err = a.hydrate(items[index])
-		if err != nil {
-			a.serverError(w, err)
-			return
-		}
 	}
 	a.render(w, http.StatusOK, "home", struct {
 		Title      string
@@ -184,10 +177,12 @@ type detailPageData struct {
 	RunQueued     bool
 	YAML          string
 	Python        string
+	PythonError   string
+	RunError      string
 }
 
 func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
-	item, err := a.Store.Get(r.Context(), r.PathValue("id"))
+	item, err := a.getIngestion(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return
@@ -196,29 +191,33 @@ func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, err)
 		return
 	}
-	item, err = a.hydrate(item)
-	if err != nil {
-		a.serverError(w, err)
-		return
-	}
-	_, yamlData, err := spec.Read(item.SpecPath)
-	if err != nil {
-		a.serverError(w, err)
-		return
-	}
-	code, err := os.ReadFile(item.Runtime.Script)
-	if err != nil {
-		a.serverError(w, err)
-		return
-	}
+	page := a.detailData(item)
+	page.ScheduleSaved = r.URL.Query().Get("schedule") == "saved"
+	page.RunQueued = r.URL.Query().Get("run") == "queued"
+	a.render(w, http.StatusOK, "detail", page)
+}
+
+func (a *App) detailData(item ingestion.Ingestion) detailPageData {
 	page := detailPageData{
 		Title: item.Name, Ingestion: item, SpecPath: item.SpecPath,
-		NextRun: a.Scheduler.NextRun(item.ID), ScheduleValue: item.Schedule, ScheduleSaved: r.URL.Query().Get("schedule") == "saved",
-		RunQueued: r.URL.Query().Get("run") == "queued",
-		YAML:      string(yamlData),
-		Python:    string(code),
+		NextRun: item.NextRun, ScheduleValue: item.Schedule,
 	}
-	a.render(w, http.StatusOK, "detail", page)
+	// Keep malformed YAML visible so the operator can diagnose it.
+	yamlData, err := os.ReadFile(item.SpecPath)
+	if err != nil && page.Ingestion.LoadError == "" {
+		page.Ingestion.LoadError = err.Error()
+		page.NextRun = nil
+	}
+	page.YAML = string(yamlData)
+	if item.Runtime.Script != "" {
+		code, err := os.ReadFile(item.Runtime.Script)
+		if err != nil {
+			page.PythonError = fmt.Sprintf("Read Python script %s: %v", item.Runtime.Script, err)
+		} else {
+			page.Python = string(code)
+		}
+	}
+	return page
 }
 
 func (a *App) runIngestion(w http.ResponseWriter, r *http.Request) {
@@ -228,7 +227,14 @@ func (a *App) runIngestion(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		a.serverError(w, err)
+		item, loadErr := a.getIngestion(r.Context(), id)
+		if loadErr != nil {
+			a.serverError(w, loadErr)
+			return
+		}
+		page := a.detailData(item)
+		page.RunError = err.Error()
+		a.render(w, http.StatusUnprocessableEntity, "detail", page)
 		return
 	}
 	http.Redirect(w, r, "/ingestions/"+id+"?run=queued", http.StatusSeeOther)
@@ -246,19 +252,20 @@ func (a *App) updateSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err = a.hydrate(item)
 	if err != nil {
-		a.serverError(w, err)
+		a.render(w, http.StatusUnprocessableEntity, "detail", a.detailData(item))
 		return
 	}
 	schedule := strings.TrimSpace(r.FormValue("schedule"))
 	if err := a.Scheduler.Validate(schedule); err != nil {
-		a.render(w, http.StatusUnprocessableEntity, "detail", detailPageData{
-			Title: item.Name, Ingestion: item, SpecPath: filepath.Join(a.SpecDir, item.ID+".yaml"),
-			NextRun: a.Scheduler.NextRun(item.ID), ScheduleValue: schedule, ScheduleError: err.Error(),
-		})
+		page := a.detailData(item)
+		page.ScheduleValue, page.ScheduleError = schedule, err.Error()
+		a.render(w, http.StatusUnprocessableEntity, "detail", page)
 		return
 	}
 	if err := a.setIngestionSchedule(r.Context(), item.ID, schedule); err != nil {
-		a.serverError(w, err)
+		page := a.detailData(item)
+		page.ScheduleValue, page.ScheduleError = schedule, err.Error()
+		a.render(w, http.StatusUnprocessableEntity, "detail", page)
 		return
 	}
 	http.Redirect(w, r, "/ingestions/"+item.ID+"?schedule=saved", http.StatusSeeOther)
@@ -363,17 +370,10 @@ func (a *App) renderSecrets(w http.ResponseWriter, r *http.Request, status int, 
 		a.serverError(w, err)
 		return
 	}
-	ingestions, err := a.Store.List(r.Context())
+	ingestions, err := a.ingestionList(r.Context())
 	if err != nil {
 		a.serverError(w, err)
 		return
-	}
-	for index := range ingestions {
-		ingestions[index], err = a.hydrate(ingestions[index])
-		if err != nil {
-			a.serverError(w, err)
-			return
-		}
 	}
 	data.Title = "Secrets"
 	for _, entry := range entries {
@@ -392,13 +392,21 @@ func (a *App) renderSecrets(w http.ResponseWriter, r *http.Request, status int, 
 	a.render(w, status, "secrets", data)
 }
 
+// Failed loads retain their identity and run history for read-only views.
+// Callers that modify or execute the configuration must reject the error.
 func (a *App) hydrate(state ingestion.Ingestion) (ingestion.Ingestion, error) {
 	document, data, err := spec.Read(state.SpecPath)
 	if err != nil {
-		return ingestion.Ingestion{}, err
+		state.Name = state.ID
+		state.LoadError, state.NextRun = err.Error(), nil
+		return state, err
 	}
 	projection := spec.ToProjection(document, state.ID, state.SpecPath, spec.Digest(data))
 	projection.Status, projection.LastRun, projection.LastError, projection.NextRun = state.Status, state.LastRun, state.LastError, state.NextRun
+	if err := scheduler.ValidateCron(projection.Schedule); err != nil {
+		projection.LoadError, projection.NextRun = err.Error(), nil
+		return projection, err
+	}
 	return projection, nil
 }
 

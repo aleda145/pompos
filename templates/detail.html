@@ -3,10 +3,12 @@
 <div class="page-heading">
   <div class="heading-state">
     <h1 class="mono">{{.Ingestion.Name}}</h1>
-    <div class="run-state">{{template "status" .Ingestion.Status}}{{if .Ingestion.LastRun}}<time class="mono" datetime="{{.Ingestion.LastRun.Format "2006-01-02T15:04:05Z07:00"}}" title="Last run">{{.Ingestion.LastRun.Format "2006-01-02 15:04:05 UTC"}}</time>{{else}}<span>Never run</span>{{end}}</div>
+    <div class="run-state">{{if .Ingestion.LoadError}}{{template "status" "broken"}}{{else}}{{template "status" .Ingestion.Status}}{{end}}{{if .Ingestion.LastRun}}<time class="mono" datetime="{{.Ingestion.LastRun.Format "2006-01-02T15:04:05Z07:00"}}" title="Last run">{{.Ingestion.LastRun.Format "2006-01-02 15:04:05 UTC"}}</time>{{else}}<span>Never run</span>{{end}}</div>
   </div>
-  <form method="post" action="/ingestions/{{.Ingestion.ID}}/run"><button class="primary" type="submit">Run ingestion</button></form>
+  <form method="post" action="/ingestions/{{.Ingestion.ID}}/run"><button class="primary" type="submit" {{if .Ingestion.LoadError}}disabled{{end}}>Run ingestion</button></form>
 </div>
+{{if .Ingestion.LoadError}}<div class="error" role="alert"><strong>Ingestion configuration unavailable</strong><p>{{.Ingestion.LoadError}}</p><p>Restore or fix <code>{{.SpecPath}}</code>. This ingestion’s schedule is skipped until its YAML is valid again. Other ingestions continue normally.</p></div>{{end}}
+{{if .RunError}}<div class="error" role="alert">{{.RunError}}</div>{{end}}
 {{if .RunQueued}}<div class="notice notice-success" role="status">Run queued.</div>{{end}}
 
 <div class="panel details">
@@ -32,19 +34,21 @@
     <form method="post" action="/ingestions/{{.Ingestion.ID}}/schedule" class="schedule-form">
       <label for="schedule">Schedule · UTC</label>
       <div class="schedule-controls">
-        <input class="mono" id="schedule" name="schedule" value="{{.ScheduleValue}}" placeholder="Manual" autocomplete="off">
-        <button type="submit">Save schedule</button>
+        <input {{if .Ingestion.LoadError}}disabled{{end}} class="mono" id="schedule" name="schedule" value="{{.ScheduleValue}}" placeholder="Manual" autocomplete="off">
+        <button type="submit" {{if .Ingestion.LoadError}}disabled{{end}}>Save schedule</button>
       </div>
       {{if .NextRun}}<p class="hint">Next run: <span class="mono">{{.NextRun.Format "2006-01-02 15:04:05 UTC"}}</span></p>{{end}}
     </form>
   </section>
   {{with .Ingestion.Source.Estimate}}<section><h2>Extraction estimate</h2><p>{{.Description}}</p><p class="hint">{{.Basis}}{{if .ObservedAt}} · Observed {{.ObservedAt}}{{end}}</p></section>{{end}}
   {{if .Ingestion.LastError}}<section><h2>Latest error</h2><pre class="error">{{.Ingestion.LastError}}</pre></section>{{end}}
-  <section class="results-preview" aria-label="Destination table preview" data-preview-url="/ingestions/{{.Ingestion.ID}}/preview">
+  {{if not .Ingestion.LoadError}}<section class="results-preview" aria-label="Destination table preview" data-preview-url="/ingestions/{{.Ingestion.ID}}/preview">
     <h2>Table preview</h2>
     <p class="hint" role="status">Loading preview…</p>
     <noscript><p class="hint">Enable JavaScript to load the table preview.</p></noscript>
   </section>
+  {{end}}
+  {{if .PythonError}}<section><h2>Python unavailable</h2><pre class="error">{{.PythonError}}</pre></section>{{end}}
   {{if .Python}}<section class="yaml-section"><h2>Python</h2><pre class="yaml-code"><code class="language-python">{{.Python}}</code></pre></section>{{end}}
  <section class="yaml-section"><h2>YAML</h2><pre class="yaml-code"><code class="language-yaml">{{.YAML}}</code></pre></section>
   <section><h2>Metadata</h2><dl><div><dt>Ingestion ID</dt><dd><code>{{.Ingestion.ID}}</code></dd></div><div><dt>Spec path</dt><dd><code>{{.SpecPath}}</code></dd></div></dl></section>

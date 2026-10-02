@@ -24,16 +24,14 @@ func (a *App) ingestionPreview(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, err)
 		return
 	}
-	item, err = a.hydrate(item)
-	if err != nil {
-		a.serverError(w, err)
-		return
-	}
+	item, _ = a.hydrate(item)
 	data := struct {
 		Preview      *runnerpython.TablePreview
 		PreviewError string
 	}{PreviewError: runnerpython.PreviewUnavailable}
-	if a.Previewer != nil {
+	if item.LoadError != "" {
+		data.PreviewError = item.LoadError
+	} else if a.Previewer != nil {
 		preview, err := a.Previewer.Preview(ctx, compiler.ExecutionPlan{
 			DestinationType: item.Destination.Type, DestinationPath: item.Destination.Path,
 			DestinationObject: item.Destination.Table, SecretRefs: item.Runtime.SecretRefs,

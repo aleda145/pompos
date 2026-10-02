@@ -107,6 +107,9 @@ func (a *App) previewIngestion(ctx context.Context, id string) (runnerpython.Tab
 	if err != nil {
 		return runnerpython.TablePreview{}, err
 	}
+	if item.LoadError != "" {
+		return runnerpython.TablePreview{}, errors.New(item.LoadError)
+	}
 	if a.Previewer == nil {
 		return runnerpython.TablePreview{}, errors.New(runnerpython.PreviewUnavailable)
 	}

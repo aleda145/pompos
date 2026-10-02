@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -38,15 +39,16 @@ type Store interface {
 // Manager uses gocron to drive a poller and calculate cron occurrences. Both
 // manual and scheduled executable work live in SQLite.
 type Manager struct {
-	scheduler gocron.Scheduler
-	store     Store
-	logger    *log.Logger
-	run       RunFunc
-	now       func() time.Time
-	ctx       context.Context
-	cancel    context.CancelFunc
-	pollMu    sync.Mutex
-	wake      chan struct{}
+	scheduler       gocron.Scheduler
+	store           Store
+	logger          *log.Logger
+	run             RunFunc
+	now             func() time.Time
+	ctx             context.Context
+	cancel          context.CancelFunc
+	pollMu          sync.Mutex
+	wake            chan struct{}
+	reconcileErrors map[string]string
 }
 
 func New(logger *log.Logger, store Store, run RunFunc) (*Manager, error) {
@@ -61,7 +63,7 @@ func New(logger *log.Logger, store Store, run RunFunc) (*Manager, error) {
 		return nil, fmt.Errorf("create scheduler: %w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{scheduler: s, store: store, logger: logger, run: run, now: time.Now, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1)}
+	m := &Manager{scheduler: s, store: store, logger: logger, run: run, now: time.Now, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), reconcileErrors: make(map[string]string)}
 	if _, err := s.NewJob(
 		gocron.DurationJob(pollInterval),
 		gocron.NewTask(func(ctx context.Context) { m.poll(ctx) }),
@@ -186,7 +188,6 @@ func (m *Manager) poll(ctx context.Context) {
 	defer m.pollMu.Unlock()
 	if err := m.enqueueDue(ctx); err != nil {
 		m.logger.Printf("schedule poll failed error=%q", err)
-		return
 	}
 	for {
 		now := m.now().UTC()
@@ -209,56 +210,64 @@ func (m *Manager) enqueueDue(ctx context.Context) error {
 	}
 	now := m.now().UTC()
 	for _, item := range items {
-		document, data, err := spec.Read(item.SpecPath)
-		if err != nil {
-			m.logger.Printf("schedule spec load failed ingestion_id=%s spec_path=%s error=%q", item.ID, item.SpecPath, err)
-			continue
-		}
-		digest := spec.Digest(data)
-		if digest != item.SpecDigest {
-			if err := m.store.UpdateSpecReference(ctx, item.ID, item.SpecPath, digest); err != nil {
-				return fmt.Errorf("refresh spec reference %s: %w", item.ID, err)
-			}
-			item.NextRun = nil
-		}
-		item.Schedule = ""
-		if document.Schedule != nil {
-			item.Schedule = document.Schedule.Cron
-		}
-		if item.Schedule == "" {
-			if item.NextRun != nil {
-				if err := m.store.UpdateNextRun(ctx, item.ID, nil); err != nil {
-					return fmt.Errorf("disable schedule %s: %w", item.ID, err)
-				}
+		if err := m.reconcileSchedule(ctx, item, now); err != nil {
+			if m.reconcileErrors[item.ID] != err.Error() {
+				m.logger.Printf("schedule reconciliation failed ingestion_id=%s spec_path=%s error=%q", item.ID, item.SpecPath, err)
+				m.reconcileErrors[item.ID] = err.Error()
 			}
 			continue
 		}
-		if item.NextRun == nil {
-			next, err := nextRun(item.Schedule, now)
-			if err != nil {
-				m.logger.Printf("schedule invalid during reconciliation ingestion_id=%s error=%q", item.ID, err)
-				continue
-			}
-			if err := m.store.UpdateNextRun(ctx, item.ID, &next); err != nil {
-				return fmt.Errorf("initialize schedule %s: %w", item.ID, err)
-			}
-			continue
+		if _, failed := m.reconcileErrors[item.ID]; failed {
+			m.logger.Printf("schedule reconciliation recovered ingestion_id=%s", item.ID)
+			delete(m.reconcileErrors, item.ID)
 		}
-		if item.NextRun.After(now) {
-			continue
+	}
+	return nil
+}
+
+func (m *Manager) reconcileSchedule(ctx context.Context, item ingestion.Ingestion, now time.Time) error {
+	document, data, err := spec.Read(item.SpecPath)
+	item.Schedule = ""
+	if err == nil && document.Schedule != nil {
+		item.Schedule = document.Schedule.Cron
+		err = m.Validate(item.Schedule)
+	}
+	if err != nil {
+		// Invalid configurations must not retain a runnable schedule clock.
+		if item.NextRun != nil {
+			err = errors.Join(err, m.store.UpdateNextRun(ctx, item.ID, nil))
 		}
-		next, err := nextRun(item.Schedule, now)
-		if err != nil {
-			m.logger.Printf("schedule invalid while due ingestion_id=%s error=%q", item.ID, err)
-			continue
+		return err
+	}
+	digest := spec.Digest(data)
+	if digest != item.SpecDigest {
+		if err := m.store.UpdateSpecReference(ctx, item.ID, item.SpecPath, digest); err != nil {
+			return fmt.Errorf("refresh spec reference: %w", err)
 		}
-		enqueued, err := m.store.EnqueueScheduledRun(ctx, item.ID, item.NextRun.UTC(), next)
-		if err != nil {
-			return fmt.Errorf("enqueue schedule %s: %w", item.ID, err)
+		item.NextRun = nil
+	}
+	if item.Schedule == "" {
+		if item.NextRun != nil {
+			return m.store.UpdateNextRun(ctx, item.ID, nil)
 		}
-		if enqueued {
-			m.logger.Printf("scheduled run enqueued ingestion_id=%s scheduled_for=%s next_run_at=%s", item.ID, item.NextRun.UTC().Format(time.RFC3339), next.Format(time.RFC3339))
-		}
+		return nil
+	}
+	if item.NextRun != nil && item.NextRun.After(now) {
+		return nil
+	}
+	next, err := nextRun(item.Schedule, now)
+	if err != nil {
+		return err
+	}
+	if item.NextRun == nil {
+		return m.store.UpdateNextRun(ctx, item.ID, &next)
+	}
+	enqueued, err := m.store.EnqueueScheduledRun(ctx, item.ID, item.NextRun.UTC(), next)
+	if err != nil {
+		return fmt.Errorf("enqueue schedule: %w", err)
+	}
+	if enqueued {
+		m.logger.Printf("scheduled run enqueued ingestion_id=%s scheduled_for=%s next_run_at=%s", item.ID, item.NextRun.UTC().Format(time.RFC3339), next.Format(time.RFC3339))
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"time"
 
 	"pompos/internal/compiler"
@@ -38,7 +39,14 @@ func New(service Service) (*Service, error) {
 	return &service, nil
 }
 
-func (s *Service) Run(ctx context.Context, queued ingestion.Run) error {
+func (s *Service) Run(ctx context.Context, queued ingestion.Run) (runErr error) {
+	defer func() {
+		if value := recover(); value != nil {
+			runErr = fmt.Errorf("ingestion panicked: %v", value)
+			s.Logger.Printf("ingestion panic ingestion_id=%s error=%q stack=%s", queued.IngestionID, runErr, debug.Stack())
+			runErr = errors.Join(runErr, s.finish(queued.IngestionID, ingestion.StatusFailed, runErr.Error()))
+		}
+	}()
 	item, err := s.Store.Get(ctx, queued.IngestionID)
 	if err != nil {
 		return err

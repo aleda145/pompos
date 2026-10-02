@@ -9,6 +9,7 @@ import (
 
 	"pompos/internal/agent"
 	"pompos/internal/ingestion"
+	"pompos/internal/scheduler"
 	"pompos/internal/spec"
 	"pompos/internal/store"
 )
@@ -47,11 +48,8 @@ func (a *App) getIngestion(ctx context.Context, id string) (ingestion.Ingestion,
 	if err != nil {
 		return item, err
 	}
-	item, err = a.hydrate(item)
-	if err == nil {
-		item.NextRun = a.Scheduler.NextRun(id)
-	}
-	return item, err
+	item, _ = a.hydrate(item)
+	return item, nil
 }
 
 func (a *App) ingestionList(ctx context.Context) ([]ingestion.Ingestion, error) {
@@ -60,11 +58,7 @@ func (a *App) ingestionList(ctx context.Context) ([]ingestion.Ingestion, error) 
 		return nil, err
 	}
 	for i := range items {
-		items[i], err = a.hydrate(items[i])
-		if err != nil {
-			return nil, err
-		}
-		items[i].NextRun = a.Scheduler.NextRun(items[i].ID)
+		items[i], _ = a.hydrate(items[i])
 	}
 	return items, nil
 }
@@ -74,9 +68,14 @@ func (a *App) queueIngestion(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	_, data, err := spec.Read(item.SpecPath)
+	document, data, err := spec.Read(item.SpecPath)
 	if err != nil {
 		return err
+	}
+	if document.Schedule != nil {
+		if err := scheduler.ValidateCron(document.Schedule.Cron); err != nil {
+			return err
+		}
 	}
 	digest := spec.Digest(data)
 	if digest != item.SpecDigest {
@@ -99,6 +98,9 @@ func (a *App) setIngestionSchedule(ctx context.Context, id, schedule string) err
 	item, err := a.getIngestion(ctx, id)
 	if err != nil {
 		return err
+	}
+	if item.LoadError != "" {
+		return errors.New(item.LoadError)
 	}
 	previous := item.Schedule
 	item.Schedule = schedule
