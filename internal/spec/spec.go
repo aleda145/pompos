@@ -14,6 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"pompos/internal/destination"
 	"pompos/internal/ingestion"
 )
 
@@ -43,6 +44,7 @@ type Source struct {
 	Table string `yaml:"table"`
 }
 type Destination struct {
+	Schema string `yaml:"schema,omitempty"`
 	Type   string `yaml:"type"`
 	Path   string `yaml:"path"`
 	Object string `yaml:"object"`
@@ -143,6 +145,9 @@ func (s Ingestion) Validate() error {
 	if s.Schedule != nil && s.Schedule.Timezone != "" && s.Schedule.Timezone != "UTC" {
 		return errors.New("spec.schedule.timezone: must be UTC")
 	}
+	if !objectName.MatchString(destination.SchemaName(s.Destination.Schema)) {
+		return errors.New("spec.destination.schema: must start with a letter or underscore and contain only letters, numbers, and underscores")
+	}
 	if !objectName.MatchString(s.Destination.Object) {
 		return errors.New("spec.destination.object: must start with a letter or underscore and contain only letters, numbers, and underscores")
 	}
@@ -187,7 +192,7 @@ func Digest(data []byte) string {
 func FromIngestion(item ingestion.Ingestion) Ingestion {
 	document := Ingestion{APIVersion: APIVersion, Kind: Kind, Metadata: Metadata{Name: item.Name},
 		Source:          Source{Type: item.Source.Type, URL: item.Source.URL, Table: item.Source.Table},
-		Destination:     Destination{Type: item.Destination.Type, Path: item.Destination.Path, Object: item.Destination.Table},
+		Destination:     Destination{Schema: item.Destination.Schema, Type: item.Destination.Type, Path: item.Destination.Path, Object: item.Destination.Table},
 		Materialization: Materialization{Strategy: defaultStrategy(item.Materialization.Strategy), PrimaryKey: item.Materialization.PrimaryKey},
 		Runtime:         Runtime{Engine: item.Runtime.Engine, Orchestrator: item.Runtime.Orchestrator, Script: item.Runtime.Script, ScriptDigest: item.Runtime.ScriptDigest, SecretRefs: item.Runtime.SecretRefs},
 	}
@@ -200,7 +205,7 @@ func FromIngestion(item ingestion.Ingestion) Ingestion {
 func ToProjection(document Ingestion, id, path, digest string) ingestion.Ingestion {
 	item := ingestion.Ingestion{ID: id, Name: document.Metadata.Name, Status: ingestion.StatusPending,
 		Source:          ingestion.Source{Type: document.Source.Type, URL: document.Source.URL, Table: document.Source.Table},
-		Destination:     ingestion.Destination{Type: document.Destination.Type, Path: document.Destination.Path, Table: document.Destination.Object},
+		Destination:     ingestion.Destination{Schema: destination.SchemaName(document.Destination.Schema), Type: document.Destination.Type, Path: document.Destination.Path, Table: document.Destination.Object},
 		Materialization: ingestion.Materialization{Strategy: defaultStrategy(document.Materialization.Strategy), PrimaryKey: document.Materialization.PrimaryKey},
 		Runtime:         ingestion.Runtime{Engine: document.Runtime.Engine, Orchestrator: document.Runtime.Orchestrator, Script: document.Runtime.Script, ScriptDigest: document.Runtime.ScriptDigest, SecretRefs: document.Runtime.SecretRefs}, SpecPath: path, SpecDigest: digest,
 	}
@@ -218,15 +223,18 @@ func defaultStrategy(strategy string) string {
 }
 
 func Write(directory string, item ingestion.Ingestion) (string, error) {
-	if err := os.MkdirAll(directory, 0o755); err != nil {
-		return "", fmt.Errorf("create ingestion spec directory: %w", err)
+	if !filepath.IsLocal(item.ID) {
+		return "", errors.New("invalid ingestion ID")
 	}
 	path := filepath.Join(directory, item.ID+".yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", fmt.Errorf("create ingestion spec directory: %w", err)
+	}
 	data, err := Marshal(FromIngestion(item))
 	if err != nil {
 		return "", err
 	}
-	temporary, err := os.CreateTemp(directory, ".pompos-spec-*.yaml")
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".pompos-spec-*.yaml")
 	if err != nil {
 		return "", fmt.Errorf("create temporary ingestion spec: %w", err)
 	}

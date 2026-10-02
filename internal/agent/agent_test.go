@@ -135,6 +135,9 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 	calls := 0
 	persist := func(id string, doc spec.Ingestion) error {
 		calls++
+		if id != v.Draft.Destination+"/main/"+v.Draft.Table || filepath.Base(doc.Runtime.Script) != v.Draft.Table+".py" {
+			t.Fatalf("artifact names do not match the destination table: %q %q", id, doc.Runtime.Script)
+		}
 		b, e := spec.Marshal(doc)
 		if e != nil {
 			return e

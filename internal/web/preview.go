@@ -34,7 +34,7 @@ func (a *App) ingestionPreview(w http.ResponseWriter, r *http.Request) {
 	} else if a.Previewer != nil {
 		preview, err := a.Previewer.Preview(ctx, compiler.ExecutionPlan{
 			DestinationType: item.Destination.Type, DestinationPath: item.Destination.Path,
-			DestinationObject: item.Destination.Table, SecretRefs: item.Runtime.SecretRefs,
+			DestinationSchema: item.Destination.Schema, DestinationObject: item.Destination.Table, SecretRefs: item.Runtime.SecretRefs,
 		})
 		if err == nil {
 			data.Preview = &preview

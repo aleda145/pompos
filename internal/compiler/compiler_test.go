@@ -39,12 +39,13 @@ func TestPlanUsesExplicitDestinationAndManagedSecretReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc.Destination.Path = "data/warehouse.duckdb"
+	doc.Destination.Schema = "raw"
 	doc.Materialization = spec.Materialization{Strategy: "merge", PrimaryKey: []string{"account_id", "id"}}
 	plan, err := Compile(doc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.DestinationPath != doc.Destination.Path || plan.Strategy != "merge" || len(plan.PrimaryKey) != 2 || len(plan.SecretRefs) != 1 || plan.SecretRefs[0] != "source-key" {
+	if plan.DestinationSchema != "raw" || plan.DestinationPath != doc.Destination.Path || plan.Strategy != "merge" || len(plan.PrimaryKey) != 2 || len(plan.SecretRefs) != 1 || plan.SecretRefs[0] != "source-key" {
 		t.Fatalf("plan: %#v", plan)
 	}
 	doc.Destination.Path = ""

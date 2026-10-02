@@ -115,6 +115,6 @@ func (a *App) previewIngestion(ctx context.Context, id string) (runnerpython.Tab
 	}
 	return a.Previewer.Preview(ctx, compiler.ExecutionPlan{
 		DestinationType: item.Destination.Type, DestinationPath: item.Destination.Path,
-		DestinationObject: item.Destination.Table, SecretRefs: item.Runtime.SecretRefs,
+		DestinationSchema: item.Destination.Schema, DestinationObject: item.Destination.Table, SecretRefs: item.Runtime.SecretRefs,
 	})
 }

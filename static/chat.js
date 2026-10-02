@@ -237,7 +237,7 @@
     renderLog(); renderHandoff();
     $('#chat-title').textContent = session.messages?.length ? 'Ingestion chat' : 'New ingestion';
     $('#draft').hidden = !session.draft || !!session.published_id;
-    $('#draft-target').textContent = session.draft ? `${session.draft.destination} / ${session.draft.table} · ${session.draft.strategy} · ${session.draft.schedule ? `${session.draft.schedule} UTC` : 'manual'}` : '';
+    $('#draft-target').textContent = session.draft ? `${session.draft.destination} / ${session.draft.schema || 'main'} / ${session.draft.table} · ${session.draft.strategy} · ${session.draft.schedule ? `${session.draft.schedule} UTC` : 'manual'}` : '';
     const draftCode = $('#draft-code');
     draftCode.textContent = session.draft?.code || '';
     delete draftCode.dataset.highlighted;
@@ -256,7 +256,7 @@
     $('#published').hidden = !saved.length;
     const links = saved.map(ingestion => {
       const item = element('li');
-      const link = element('a', '', `${ingestion.name} · ${ingestion.table} →`);
+      const link = element('a', '', `${ingestion.name} · ${ingestion.destination}/${ingestion.schema || 'main'}/${ingestion.table} →`);
       link.href = `/ingestions/${ingestion.id}`;
       item.append(link);
       return item;

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"pompos/internal/compiler"
+	"pompos/internal/destination"
 	"pompos/internal/secrets"
 	"pompos/internal/spec"
 )
@@ -115,7 +116,7 @@ func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 		values[ref] = string(value)
 	}
 	payload, _ := json.Marshal(values)
-	config, _ := json.Marshal(map[string]any{"destination": plan.DestinationPath, "table": plan.DestinationObject, "strategy": plan.Strategy, "primary_key": plan.PrimaryKey, "validation_limit": validationLimit})
+	config, _ := json.Marshal(map[string]any{"destination": plan.DestinationPath, "schema": destination.SchemaName(plan.DestinationSchema), "table": plan.DestinationObject, "strategy": plan.Strategy, "primary_key": plan.PrimaryKey, "validation_limit": validationLimit})
 	timeout := 30 * time.Minute
 	if validationLimit > 0 {
 		timeout = 90 * time.Second
@@ -233,7 +234,7 @@ if __name__ == "__main__":
         Path(_path).parent.mkdir(parents=True, exist_ok=True)
         _pipeline = dlt.pipeline(pipeline_name="pompos_" + Path(__file__).stem,
             pipelines_dir=str(Path(__file__).parent / ".dlt"),
-            destination=dlt.destinations.duckdb(credentials=_path), dataset_name="main")
+            destination=dlt.destinations.duckdb(credentials=_path), dataset_name=_config.get("schema") or "main")
         def _load(rows):
             _resource = dlt.resource(rows, name=_config["table"], table_name=_config["table"],
                 max_table_nesting=0, write_disposition=_config["strategy"],
@@ -260,7 +261,8 @@ if __name__ == "__main__":
             def _count():
                 with duckdb.connect(_path, read_only=True) as _db:
                     _table = _pipeline.default_schema.naming.normalize_table_identifier(_config["table"])
-                    return _db.execute('SELECT count(*) FROM main."' + _table.replace('"', '""') + '"').fetchone()[0]
+                    _schema = _pipeline.dataset_name
+                    return _db.execute('SELECT count(*) FROM "' + _schema.replace('"', '""') + '"."' + _table.replace('"', '""') + '"').fetchone()[0]
             _load(copy.deepcopy(_sample))
             _first = _count()
             _load(copy.deepcopy(_sample))

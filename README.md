@@ -74,7 +74,7 @@ Review the source, destination, schedule, load strategy, Python draft, and valid
 
 One chat can create multiple ingestions, one at a time. Saving keeps you in the conversation and adds a link to the saved ingestion. For example, after saving men's high-jump records, ask "do the same for women" to reuse the conversation's research and code. The new ingestion has its own table, Python file, YAML, loading confirmation, and validation; saving it does not change earlier ingestions. Choose **New chat** when you want a separate conversation.
 
-Conversations and drafts survive restarts under `data/agent/`. Open **Chat** in the header to revisit a conversation or start a new one. Chats are named from their first message and listed by most recent activity, with their saved-ingestion counts. Each saved ingestion has its own ID, independent of the chat; its artifacts live under `data/ingestions/<id>.py` and `<id>.yaml`. YAML stores the Python digest and secret references, never secret values. Schedule changes preserve those fields. If the saved Python changes, execution fails its digest check; develop and test a new ingestion through chat to replace it.
+Conversations and drafts survive restarts under `data/agent/`. Open **Chat** in the header to revisit a conversation or start a new one. Chats are named from their first message and listed by most recent activity, with their saved-ingestion counts. Each saved ingestion is identified by `destination/schema/table`; its artifacts live under `data/ingestions/<destination>/<schema>/<table>.py` and `<table>.yaml`. For example, `analytics/raw/customers` produces `analytics/raw/customers.py` and `analytics/raw/customers.yaml`. The `schema` draft field and YAML destination field select the actual DuckDB schema, defaulting to `main`. Table names can repeat across destinations and schemas; a duplicate full target is rejected. Saving a new ingestion never overwrites existing files. Existing files are not renamed or migrated. YAML stores the Python digest and secret references, never secret values. Schedule changes preserve those fields. If the saved Python changes, execution fails its digest check; develop and test a new ingestion through chat to replace it.
 
 ## Python contract
 
@@ -93,10 +93,10 @@ Pompos adds a runnable entrypoint that probes `fetch`, validates a sample, or lo
 Run a saved ingestion from the CLI with the same data directory and interpreter:
 
 ```bash
-POMPOS_PYTHON_BINARY="$PWD/.venv/bin/python" go run ./cmd/pompos run data/ingestions/<id>.yaml
+POMPOS_PYTHON_BINARY="$PWD/.venv/bin/python" go run ./cmd/pompos run data/ingestions/<destination>/<schema>/<table>.yaml
 ```
 
-The generated file can also run directly with `POMPOS_PROBE=1`, or with `POMPOS_CONFIG` JSON containing `destination`, `table`, `strategy` and `primary_key`. Supply selected secrets as a `POMPOS_SECRETS` JSON object. Normal Pompos execution prepares these variables from managed storage.
+The generated file can also run directly with `POMPOS_PROBE=1`, or with `POMPOS_CONFIG` JSON containing `destination`, `schema`, `table`, `strategy` and `primary_key`. Supply selected secrets as a `POMPOS_SECRETS` JSON object. Normal Pompos execution prepares these variables from managed storage.
 
 ## Runtime and trust
 

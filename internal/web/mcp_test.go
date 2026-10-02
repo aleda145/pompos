@@ -213,7 +213,7 @@ func TestMCPClientCompletesWorkflowWithoutWebApprovalsOrModel(t *testing.T) {
 		t.Fatal("context must return structured data, not encoded JSON text")
 	}
 	call("write_script", map[string]any{"session_id": id, "code": 10}, true) // SDK schema validation.
-	write := map[string]any{"session_id": id, "name": "Fixture rows", "source": "fixture/rows", "table": "fixture_rows", "destination": "local-duckdb", "strategy": "replace", "secret_refs": []string{}, "code": "def fetch(secret, limit):\n    yield {'id': 1, 'name': 'example'}\n"}
+	write := map[string]any{"session_id": id, "name": "Fixture rows", "source": "fixture/rows", "table": "fixture_rows", "schema": "raw", "destination": "local-duckdb", "strategy": "replace", "secret_refs": []string{}, "code": "def fetch(secret, limit):\n    yield {'id': 1, 'name': 'example'}\n"}
 	call("write_script", write, false)
 	call("validate_ingestion", args(), true)
 	call("test_script", args(), false)

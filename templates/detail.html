@@ -13,7 +13,7 @@
 
 <div class="panel details">
   <section class="half-section connection"><h2>Source</h2><p class="url mono">{{.Ingestion.Source.DisplayLocation}}</p></section>
-  <section class="half-section connection"><h2>Destination</h2><p class="url mono">{{.Ingestion.Destination.Path}}</p></section>
+  <section class="half-section connection"><h2>Destination</h2><p class="url mono">{{.Ingestion.Destination.Path}} / {{.Ingestion.Destination.Schema}}.{{.Ingestion.Destination.Table}}</p></section>
   <section class="half-section">
     <h2>Loading</h2>
     <dl>

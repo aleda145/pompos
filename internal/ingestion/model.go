@@ -46,9 +46,10 @@ type Source struct {
 func (s Source) DisplayLocation() string { return s.URL }
 
 type Destination struct {
-	Type  string
-	Path  string
-	Table string
+	Schema string
+	Type   string
+	Path   string
+	Table  string
 }
 
 type Runtime struct {

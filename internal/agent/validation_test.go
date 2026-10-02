@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"pompos/internal/compiler"
+	"pompos/internal/destination"
 	runnerpython "pompos/internal/runner/python"
 	"pompos/internal/spec"
 	"pompos/internal/store"
@@ -190,7 +191,7 @@ func TestPublicationRetryKeepsArtifactID(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil || savedID != firstID || savedID == v.ID {
+	if err != nil || savedID != firstID || savedID != v.Draft.Destination+"/main/"+v.Draft.Table {
 		t.Fatalf("retry failed: %q %v", savedID, err)
 	}
 	persisted, err := restarted.Load(v.ID)
@@ -199,8 +200,85 @@ func TestPublicationRetryKeepsArtifactID(t *testing.T) {
 	}
 }
 
+func TestPublicationRejectsExistingTableFiles(t *testing.T) {
+	for _, extension := range []string{".py", ".yaml"} {
+		t.Run(extension, func(t *testing.T) {
+			ctx := context.Background()
+			s, _, v := validationFixture(t)
+			_, fingerprint, err := s.validationPlan(ctx, &v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v.Validation = &Validation{Fingerprint: fingerprint}
+			v.Ready = true
+			if err := s.save(v); err != nil {
+				t.Fatal(err)
+			}
+			artifactDir := t.TempDir()
+			path := filepath.Join(artifactDir, v.Draft.Destination, "main", v.Draft.Table+extension)
+			if err := WriteFile(path, []byte("existing ingestion")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Publish(ctx, v.ID, artifactDir, func(string, spec.Ingestion) error {
+				t.Fatal("duplicate ingestion was published")
+				return nil
+			}); err == nil || !strings.Contains(err.Error(), "already exists") {
+				t.Fatalf("expected filename collision, got %v", err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != "existing ingestion" {
+				t.Fatalf("existing file changed: %s, %v", data, err)
+			}
+		})
+	}
+}
+
+func TestPublicationScopesTablesByDestinationAndSchema(t *testing.T) {
+	ctx := context.Background()
+	s, _, base := validationFixture(t)
+	warehouse := destination.NewDuckDB("warehouse", filepath.Join(t.TempDir(), "warehouse.duckdb"))
+	if err := s.Destinations.(*store.SQLite).PutDestination(ctx, warehouse); err != nil {
+		t.Fatal(err)
+	}
+	artifactDir := t.TempDir()
+	for _, target := range []struct{ destination, schema string }{
+		{"local-duckdb", "main"}, {"local-duckdb", "raw"}, {"warehouse", "main"}, {"warehouse", "raw"},
+	} {
+		v := base
+		draft := *base.Draft
+		v.Draft = &draft
+		v.ID = target.destination + "_" + target.schema
+		v.Draft.Destination, v.Draft.Schema = target.destination, target.schema
+		if err := WriteFile(s.scriptPath(v.ID), []byte(runnerpython.Wrap(v.Draft.Code))); err != nil {
+			t.Fatal(err)
+		}
+		_, fingerprint, err := s.validationPlan(ctx, &v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v.Validation, v.Ready = &Validation{Fingerprint: fingerprint}, true
+		if err := s.save(v); err != nil {
+			t.Fatal(err)
+		}
+		wantID := target.destination + "/" + target.schema + "/rows"
+		id, err := s.Publish(ctx, v.ID, artifactDir, func(id string, doc spec.Ingestion) error {
+			if doc.Destination.Schema != target.schema || doc.Runtime.Script != filepath.Join(artifactDir, wantID+".py") {
+				t.Fatalf("wrong publication target: %#v", doc)
+			}
+			data, err := spec.Marshal(doc)
+			if err != nil {
+				return err
+			}
+			return WriteFile(filepath.Join(artifactDir, id+".yaml"), data)
+		})
+		if err != nil || id != wantID {
+			t.Fatalf("publish %s: %q, %v", wantID, id, err)
+		}
+	}
+}
+
 func TestValidationApprovalRejectsChangedDraftAndSettings(t *testing.T) {
-	for _, change := range []string{"script", "loading", "destination"} {
+	for _, change := range []string{"script", "loading", "destination", "schema"} {
 		t.Run(change, func(t *testing.T) {
 			s, runner, v := validationFixture(t)
 			switch change {
@@ -212,6 +290,8 @@ func TestValidationApprovalRejectsChangedDraftAndSettings(t *testing.T) {
 				v.Loading.Strategy = "append"
 			case "destination":
 				v.Draft.Table = "different"
+			case "schema":
+				v.Draft.Schema = "raw"
 			}
 			if err := s.save(v); err != nil {
 				t.Fatal(err)

@@ -85,7 +85,11 @@ func TestRebuildSpecProjectionsFromFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(specDir, "customers.yaml")
+	path := filepath.Join(specDir, "analytics", "raw", "customers.yaml")
+	input = bytes.Replace(input, []byte("destination:\n"), []byte("destination:\n  schema: raw\n"), 1)
+	if err = os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
 	if err = os.WriteFile(path, input, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +101,7 @@ func TestRebuildSpecProjectionsFromFiles(t *testing.T) {
 	if err = rebuildSpecProjections(ctx, metadata, specDir); err != nil {
 		t.Fatal(err)
 	}
-	item, err := metadata.Get(ctx, "customers")
+	item, err := metadata.Get(ctx, "analytics/raw/customers")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,13 +111,24 @@ func TestRebuildSpecProjectionsFromFiles(t *testing.T) {
 	if err = os.WriteFile(path, []byte(strings.Replace(string(input), spec.APIVersion, "pompos.dev/v1", 1)), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err = metadata.Finish(ctx, "customers", ingestion.StatusFailed, "previous failure"); err != nil {
+	if err = metadata.Finish(ctx, "analytics/raw/customers", ingestion.StatusFailed, "previous failure"); err != nil {
 		t.Fatal(err)
 	}
 	if err = os.WriteFile(filepath.Join(specDir, "a-broken.yaml"), []byte("invalid: ["), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(specDir, "z-healthy.yaml"), input, 0600); err != nil {
+	otherPath := filepath.Join(specDir, "reporting", "raw", "customers.yaml")
+	if err = os.MkdirAll(filepath.Dir(otherPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(otherPath, input, 0600); err != nil {
+		t.Fatal(err)
+	}
+	hidden := filepath.Join(filepath.Dir(path), ".dlt")
+	if err = os.MkdirAll(hidden, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(hidden, "state.yaml"), []byte("not an ingestion"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err = rebuildSpecProjections(ctx, metadata, specDir); err != nil {
@@ -123,7 +138,10 @@ func TestRebuildSpecProjectionsFromFiles(t *testing.T) {
 	if err != nil || len(items) != 3 {
 		t.Fatalf("broken and healthy files must remain registered: %#v, %v", items, err)
 	}
-	item, err = metadata.Get(ctx, "customers")
+	if _, err = metadata.Get(ctx, "reporting/raw/customers"); err != nil {
+		t.Fatalf("same table in another destination was not discovered: %v", err)
+	}
+	item, err = metadata.Get(ctx, "analytics/raw/customers")
 	if err != nil || item.Status != ingestion.StatusFailed || item.LastError != "previous failure" {
 		t.Fatalf("rebuild lost run history: %#v, %v", item, err)
 	}
@@ -133,7 +151,7 @@ func TestRebuildSpecProjectionsFromFiles(t *testing.T) {
 	if err = rebuildSpecProjections(ctx, metadata, specDir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = metadata.Get(ctx, "customers"); err != nil {
+	if _, err = metadata.Get(ctx, "analytics/raw/customers"); err != nil {
 		t.Fatalf("deleted YAML lost its registered identity: %v", err)
 	}
 }

@@ -40,3 +40,11 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
+
+// SchemaName returns the destination schema, defaulting to DuckDB's main schema.
+func SchemaName(schema string) string {
+	if schema == "" {
+		return "main"
+	}
+	return schema
+}

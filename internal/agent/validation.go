@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"pompos/internal/compiler"
+	"pompos/internal/destination"
 	runnerpython "pompos/internal/runner/python"
 	"pompos/internal/spec"
 )
@@ -51,7 +52,7 @@ func (s *Service) validationPlan(ctx context.Context, v *Session) (compiler.Exec
 	applyLoading(v)
 	plan = compiler.ExecutionPlan{Engine: "python", Script: s.scriptPath(v.ID), ScriptDigest: v.TestedDigest,
 		SecretRefs: v.Draft.SecretRefs, DestinationType: dest.Type, DestinationPath: dest.Path,
-		DestinationObject: v.Draft.Table, Strategy: v.Loading.Strategy, PrimaryKey: v.Loading.PrimaryKey}
+		DestinationSchema: destination.SchemaName(v.Draft.Schema), DestinationObject: v.Draft.Table, Strategy: v.Loading.Strategy, PrimaryKey: v.Loading.PrimaryKey}
 	data, err = json.Marshal(struct {
 		Draft *Draft
 		Plan  compiler.ExecutionPlan

@@ -3,10 +3,12 @@ package compiler
 import (
 	"bytes"
 	"gopkg.in/yaml.v3"
+	"pompos/internal/destination"
 	"pompos/internal/spec"
 )
 
 type ExecutionPlan struct {
+	DestinationSchema string   `yaml:"destinationSchema"`
 	Engine            string   `yaml:"engine"`
 	Script            string   `yaml:"script"`
 	ScriptDigest      string   `yaml:"scriptDigest"`
@@ -31,7 +33,7 @@ func Compile(document spec.Ingestion) (ExecutionPlan, error) {
 	return ExecutionPlan{
 		Engine: "python", Script: document.Runtime.Script, ScriptDigest: document.Runtime.ScriptDigest, SecretRefs: document.Runtime.SecretRefs,
 		SourceURI: document.Source.URL, SourceTable: document.Source.Table,
-		DestinationType: document.Destination.Type, DestinationPath: document.Destination.Path, DestinationObject: document.Destination.Object,
+		DestinationSchema: destination.SchemaName(document.Destination.Schema), DestinationType: document.Destination.Type, DestinationPath: document.Destination.Path, DestinationObject: document.Destination.Object,
 		Strategy: strategy, PrimaryKey: document.Materialization.PrimaryKey,
 	}, nil
 }

@@ -86,6 +86,40 @@ func TestProbeRequiresActualSample(t *testing.T) {
 	}
 }
 
+func TestDLTLoadsAndPreviewsSeparateSchemas(t *testing.T) {
+	binary := os.Getenv("POMPOS_TEST_PYTHON")
+	if binary == "" {
+		t.Skip("set POMPOS_TEST_PYTHON for dlt integration test")
+	}
+	ctx := context.Background()
+	dir := t.TempDir()
+	r := Runner{Binary: binary}
+	for _, schema := range []string{"main", "raw"} {
+		path := filepath.Join(dir, schema, "customers.py")
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		data := []byte(Wrap("def fetch(secret, limit):\n    yield {'id': 1, 'schema': '" + schema + "'}\n"))
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		plan := compiler.ExecutionPlan{Engine: "python", Script: path, ScriptDigest: spec.Digest(data), DestinationPath: filepath.Join(dir, "out.duckdb"), DestinationSchema: schema, DestinationObject: "customers", Strategy: "replace"}
+		result, output, err := r.Validate(ctx, plan, 5)
+		if err != nil || result.Preview == nil || result.Preview.Rows[0][1] != schema {
+			t.Fatalf("validate %s: %#v, %v, %s", schema, result, err, output)
+		}
+		if err := r.Run(ctx, plan); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, schema := range []string{"main", "raw"} {
+		preview, err := r.Preview(ctx, compiler.ExecutionPlan{DestinationPath: filepath.Join(dir, "out.duckdb"), DestinationSchema: schema, DestinationObject: "customers"})
+		if err != nil || preview.TotalRows != 1 || preview.Rows[0][1] != schema {
+			t.Fatalf("preview %s: %#v, %v", schema, preview, err)
+		}
+	}
+}
+
 func TestProbeOnlyFetchesSample(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "probe.py")
 	data := []byte(Wrap(`def fetch(secret, limit):

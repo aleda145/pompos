@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"pompos/internal/compiler"
+	"pompos/internal/destination"
 )
 
 // TablePreview contains display values from a fixed, bounded table read.
@@ -35,6 +36,10 @@ var previewTableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // supplied by a user/model. The destination comes from the saved ingestion.
 func (r Runner) Preview(ctx context.Context, plan compiler.ExecutionPlan) (TablePreview, error) {
 	var result TablePreview
+	schema := destination.SchemaName(plan.DestinationSchema)
+	if !previewTableName.MatchString(schema) {
+		return result, fmt.Errorf("invalid preview schema name")
+	}
 	if !previewTableName.MatchString(plan.DestinationObject) {
 		return result, fmt.Errorf("invalid preview table name")
 	}
@@ -50,7 +55,7 @@ func (r Runner) Preview(ctx context.Context, plan compiler.ExecutionPlan) (Table
 	if binary == "" {
 		binary = "python3"
 	}
-	cmd := exec.CommandContext(ctx, binary, "-c", previewScript, plan.DestinationPath, plan.DestinationObject)
+	cmd := exec.CommandContext(ctx, binary, "-c", previewScript, plan.DestinationPath, schema, plan.DestinationObject)
 	cmd.Env = []string{"DLT_TELEMETRY=0"}
 	for _, key := range []string{"PATH", "LANG", "SYSTEMROOT", "TMPDIR"} {
 		if value, ok := os.LookupEnv(key); ok {

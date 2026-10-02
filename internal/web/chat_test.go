@@ -59,7 +59,7 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 					t.Error("continuation lost the previous extractor or save status")
 				}
 			}
-			b, _ := json.Marshal(agent.Draft{Name: group + " records", Source: "fixture/" + group, Table: group + "_records", Destination: "local-duckdb", Strategy: "replace", Code: "def fetch(secret, limit):\n    yield {'id': 1, 'group': '" + group + "'}\n"})
+			b, _ := json.Marshal(agent.Draft{Schema: "raw", Name: group + " records", Source: "fixture/" + group, Table: group + "_records", Destination: "local-duckdb", Strategy: "replace", Code: "def fetch(secret, limit):\n    yield {'id': 1, 'group': '" + group + "'}\n"})
 			call.Function.Arguments = string(b)
 		case 1:
 			call.Function.Name = "test_script"
@@ -145,13 +145,16 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 	}
 	chatID := strings.TrimPrefix(path, "/chat/")
 	saved, err := service.Load(chatID)
-	if err != nil || len(saved.SavedIngestions) != 1 || saved.PublishedID == chatID {
+	if err != nil || len(saved.SavedIngestions) != 1 || saved.PublishedID != "local-duckdb/raw/men_records" {
 		t.Fatalf("ingestion was not saved separately from its chat: %#v %v", saved.SavedIngestions, err)
 	}
 	detail := "/ingestions/" + saved.PublishedID
 	initial, _, err := spec.Read(filepath.Join(app.SpecDir, strings.TrimPrefix(detail, "/ingestions/")+".yaml"))
 	if err != nil || initial.Schedule == nil || initial.Schedule.Cron != "0 * * * *" || initial.Schedule.Timezone != "UTC" || initial.Materialization.Strategy != "merge" || len(initial.Materialization.PrimaryKey) != 1 || initial.Materialization.PrimaryKey[0] != "id" {
 		t.Fatalf("confirmed loading lost: %#v %v", initial, err)
+	}
+	if initial.Destination.Schema != "raw" || filepath.Base(initial.Runtime.Script) != "men_records.py" {
+		t.Fatalf("script filename does not match the destination table: %q", initial.Runtime.Script)
 	}
 	if schedules.item.Schedule != "0 * * * *" {
 		t.Fatal("schedule not registered on publish")
@@ -172,7 +175,7 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 	if e != nil {
 		t.Fatal(e)
 	}
-	if doc.Runtime.Engine != "python" || doc.Runtime.Script == "" || doc.Runtime.ScriptDigest == "" || doc.Schedule.Cron != "0 6 * * *" {
+	if doc.Destination.Schema != "raw" || doc.Runtime.Engine != "python" || doc.Runtime.Script == "" || doc.Runtime.ScriptDigest == "" || doc.Schedule.Cron != "0 6 * * *" {
 		t.Fatalf("lost Python spec fields: %#v", doc)
 	}
 	w = request("POST", detail+"/run", "", "")
@@ -227,7 +230,7 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 		t.Fatalf("second publish: %d %s", w.Code, w.Body)
 	}
 	both, err := app.Agent.Load(chatID)
-	if err != nil || len(both.SavedIngestions) != 2 || both.PublishedID == saved.PublishedID || both.PublishedID == chatID {
+	if err != nil || len(both.SavedIngestions) != 2 || both.PublishedID != "local-duckdb/raw/women_records" {
 		t.Fatalf("expected two independent ingestions: %#v %v", both.SavedIngestions, err)
 	}
 	second, _, err := spec.Read(filepath.Join(app.SpecDir, both.PublishedID+".yaml"))

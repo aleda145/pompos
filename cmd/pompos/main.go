@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -117,19 +118,31 @@ func runServer() {
 }
 
 func rebuildSpecProjections(ctx context.Context, metadata *store.SQLite, directory string) error {
-	entries, err := os.ReadDir(directory)
+	_, err := os.Stat(directory)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("read ingestion specs: %w", err)
 	}
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yaml" {
-			continue
+	return filepath.WalkDir(directory, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
-		path := filepath.Join(directory, entry.Name())
-		id := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		if strings.HasPrefix(entry.Name(), ".") && path != directory {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".yaml" {
+			return nil
+		}
+		relative, err := filepath.Rel(directory, path)
+		if err != nil {
+			return err
+		}
+		id := strings.TrimSuffix(filepath.ToSlash(relative), ".yaml")
 		document, data, err := spec.Read(path)
 		item := ingestion.Ingestion{ID: id, Status: ingestion.StatusPending, SpecPath: path, SpecDigest: spec.Digest(data)}
 		if err != nil {
@@ -138,11 +151,8 @@ func rebuildSpecProjections(ctx context.Context, metadata *store.SQLite, directo
 		} else {
 			item = spec.ToProjection(document, id, path, spec.Digest(data))
 		}
-		if err := metadata.UpsertProjection(ctx, item); err != nil {
-			return err
-		}
-	}
-	return nil
+		return metadata.UpsertProjection(ctx, item)
+	})
 }
 
 func runCommand(args []string) error {

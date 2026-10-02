@@ -115,6 +115,17 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /ingestions/{id}/preview", a.ingestionPreview)
 	mux.HandleFunc("POST /ingestions/{id}/run", a.runIngestion)
 	mux.HandleFunc("POST /ingestions/{id}/schedule", a.updateSchedule)
+	for pattern, handler := range map[string]http.HandlerFunc{
+		"GET /ingestions/{destination}/{schema}/{table}":           a.ingestionDetail,
+		"GET /ingestions/{destination}/{schema}/{table}/preview":   a.ingestionPreview,
+		"POST /ingestions/{destination}/{schema}/{table}/run":      a.runIngestion,
+		"POST /ingestions/{destination}/{schema}/{table}/schedule": a.updateSchedule,
+	} {
+		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+			r.SetPathValue("id", r.PathValue("destination")+"/"+r.PathValue("schema")+"/"+r.PathValue("table"))
+			handler(w, r)
+		})
+	}
 	mux.HandleFunc("GET /secrets", a.listSecrets)
 	mux.HandleFunc("POST /secrets", a.createSecret)
 	mux.HandleFunc("POST /secrets/delete", a.deleteSecret)
