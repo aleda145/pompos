@@ -392,7 +392,7 @@ func TestLegacyPublishedChatCanContinueWithFreshDraftState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Draft != nil || v.Loading != nil || v.Validation != nil || v.Estimate != nil || v.TestedDigest != "" || v.Ready || v.PublishedID != "" || v.DraftID != "" || v.Pending == nil {
+	if v.Draft != nil || v.Loading != nil || v.Validation != nil || v.TestedDigest != "" || v.Ready || v.PublishedID != "" || v.DraftID != "" || v.Pending == nil {
 		t.Fatal("saved draft state leaked into the new ingestion")
 	}
 	restarted := &Service{Dir: s.Dir}

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"pompos/internal/compiler"
-	"pompos/internal/ingestion"
 	"pompos/internal/secrets"
 	"pompos/internal/spec"
 )
@@ -86,9 +85,8 @@ type ValidationResult struct {
 	PreviewError   string        `json:"preview_error,omitempty"`
 }
 type ProbeResult struct {
-	Rows     []map[string]any       `json:"rows"`
-	Count    int                    `json:"sample_count"`
-	Estimate *ingestion.RowEstimate `json:"estimate,omitempty"`
+	Rows  []map[string]any `json:"rows"`
+	Count int              `json:"sample_count"`
 }
 
 func ReadResult(output, marker string, result any) error {
@@ -228,20 +226,7 @@ if __name__ == "__main__":
         _sample = list(itertools.islice(_rows(), 5))
         if not _sample:
             raise ValueError("Probe returned no rows; verify the source and filters before saving")
-        _estimate = {"rows": None, "kind": "unknown", "basis": "The source did not provide a cheap count."}
-        if callable(globals().get("estimate")):
-            try:
-                _candidate = estimate(secret)
-                if (isinstance(_candidate, dict)
-                    and _candidate.get("kind") in ("exact", "approximate", "unknown")
-                    and isinstance(_candidate.get("basis"), str)
-                    and 0 < len(_candidate["basis"]) <= 1000
-                    and ((_candidate["kind"] == "unknown" and _candidate.get("rows") is None)
-                         or (_candidate["kind"] != "unknown" and type(_candidate.get("rows")) is int and _candidate["rows"] >= 0))):
-                    _estimate = _candidate
-            except Exception:
-                _estimate["basis"] = "The optional source count request failed; no full scan was attempted."
-        print("POMPOS_PROBE_RESULT=" + json.dumps({"rows": _sample, "sample_count": len(_sample), "estimate": _estimate}, default=str))
+        print("POMPOS_PROBE_RESULT=" + json.dumps({"rows": _sample, "sample_count": len(_sample)}, default=str))
     else:
         import dlt
         _path = str(Path(_config["destination"]).resolve())

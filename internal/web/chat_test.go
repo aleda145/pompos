@@ -59,7 +59,7 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 					t.Error("continuation lost the previous extractor or save status")
 				}
 			}
-			b, _ := json.Marshal(agent.Draft{Name: group + " records", Source: "fixture/" + group, Table: group + "_records", Destination: "local-duckdb", Strategy: "replace", Code: "def fetch(secret, limit):\n    yield {'id': 1, 'group': '" + group + "'}\ndef estimate(secret):\n    return {'rows': 42, 'kind': 'exact', 'basis': 'Fixture source total_count'}\n"})
+			b, _ := json.Marshal(agent.Draft{Name: group + " records", Source: "fixture/" + group, Table: group + "_records", Destination: "local-duckdb", Strategy: "replace", Code: "def fetch(secret, limit):\n    yield {'id': 1, 'group': '" + group + "'}\n"})
 			call.Function.Arguments = string(b)
 		case 1:
 			call.Function.Name = "test_script"
@@ -153,9 +153,6 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 	if err != nil || initial.Schedule == nil || initial.Schedule.Cron != "0 * * * *" || initial.Schedule.Timezone != "UTC" || initial.Materialization.Strategy != "merge" || len(initial.Materialization.PrimaryKey) != 1 || initial.Materialization.PrimaryKey[0] != "id" {
 		t.Fatalf("confirmed loading lost: %#v %v", initial, err)
 	}
-	if initial.Source.Estimate == nil || initial.Source.Estimate.Rows == nil || *initial.Source.Estimate.Rows != 42 || initial.Source.Estimate.ObservedAt == "" {
-		t.Fatal("source estimate was not persisted")
-	}
 	if schedules.item.Schedule != "0 * * * *" {
 		t.Fatal("schedule not registered on publish")
 	}
@@ -163,7 +160,7 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 		t.Fatal("publish prematurely queued full load")
 	}
 	w = request("GET", detail, "", "")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "fetch(secret, limit)") || !strings.Contains(w.Body.String(), "42 rows at observation time") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "fetch(secret, limit)") {
 		t.Fatalf("detail: %d %s", w.Code, w.Body)
 	}
 	w = request("POST", detail+"/schedule", url.Values{"schedule": {"0 6 * * *"}}.Encode(), "application/x-www-form-urlencoded")
@@ -175,7 +172,7 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 	if e != nil {
 		t.Fatal(e)
 	}
-	if doc.Runtime.Engine != "python" || doc.Runtime.Script == "" || doc.Runtime.ScriptDigest == "" || doc.Schedule.Cron != "0 6 * * *" || doc.Source.Estimate == nil || *doc.Source.Estimate.Rows != 42 {
+	if doc.Runtime.Engine != "python" || doc.Runtime.Script == "" || doc.Runtime.ScriptDigest == "" || doc.Schedule.Cron != "0 6 * * *" {
 		t.Fatalf("lost Python spec fields: %#v", doc)
 	}
 	w = request("POST", detail+"/run", "", "")

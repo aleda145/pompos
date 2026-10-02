@@ -80,10 +80,10 @@ func (s *Service) proposeValidation(ctx context.Context, v *Session, arguments s
 		Validation: &ValidationProposal{Limit: request.Limit, Fingerprint: fingerprint},
 		Actions: []Action{
 			{ID: "accept_validation", Label: "Run validation", Message: fmt.Sprintf("Validate up to %d source rows in a temporary database using the confirmed loading strategy.", request.Limit)},
-			{ID: "explain", Label: "Tell me more", Message: "Explain the validation sample, estimated production rows, uncertainty, and what will be checked. Keep validation awaiting my confirmation."},
+			{ID: "explain", Label: "Tell me more", Message: "Explain the validation sample and what will be checked. Keep validation awaiting my confirmation."},
 			{ID: "defer_validation", Label: "Not now", Message: "Do not run validation yet. Keep the draft; I will decide when to validate."},
 		}}
-	return "Waiting for explicit user confirmation. The card shows the validation row limit, production estimate, and temporary loading checks. Validation has not run.", nil
+	return "Waiting for explicit user confirmation. The card shows the validation row limit and temporary loading checks. Validation has not run.", nil
 }
 
 func (s *Service) requireValidation(ctx context.Context, v *Session) error {

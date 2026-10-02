@@ -180,12 +180,9 @@
   function validationCard(pending) {
     const container = element('div', 'loading-card');
     const summary = element('dl', 'loading-summary');
-    const estimate = session.estimate;
     const limit = pending.validation.limit;
-    const expected = estimate?.rows != null ? Math.min(limit, estimate.rows) : null;
     for (const [label, text] of [
-      ['Validation sample', `Up to ${limit.toLocaleString('en-US')} rows${expected != null ? ` · expected ${estimate.kind === 'approximate' ? 'about ' : ''}${expected.toLocaleString('en-US')}` : ''}`],
-      ['Extraction estimate', rowEstimateText(estimate)],
+      ['Validation sample', `Up to ${limit.toLocaleString('en-US')} rows`],
       ['Loading check', `${session.loading?.strategy} · 2 sample loads`],
       ['Test destination', 'Temporary DuckDB'],
     ]) {
@@ -245,8 +242,6 @@
     draftCode.textContent = session.draft?.code || '';
     delete draftCode.dataset.highlighted;
     if (window.hljs && draftCode.textContent) hljs.highlightElement(draftCode);
-    $('#row-estimate').hidden = !session.draft || !!session.published_id;
-    $('#row-estimate').textContent = `Extraction estimate: ${rowEstimateText(session.estimate)}`;
     $('#validation-result').hidden = !session.validation || !!session.published_id;
     if (session.validation) {
       const result = session.validation.result;

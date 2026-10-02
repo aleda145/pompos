@@ -9,7 +9,6 @@
  <div id="chat-error" class="error" role="alert" hidden></div>
  <div id="recovery" class="quick-actions" hidden><button type="button" id="retry-turn" class="suggestion">Retry</button><a href="/settings/agent">Agent settings</a></div>
  <details id="draft" class="chat-artifact" hidden><summary>Ingestion draft <span id="draft-target"></span></summary><pre class="yaml-code"><code id="draft-code" class="language-python"></code></pre></details>
- <p id="row-estimate" class="hint" hidden></p>
  <p id="validation-result" class="hint" role="status" hidden></p>
  <form id="publish" class="chat-publish" method="post" action="/chat/{{.Session.ID}}/publish" hidden><span id="publish-status"></span><button class="primary" type="submit">Save ingestion</button></form>
  <div class="chat-composer">

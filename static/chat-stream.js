@@ -27,15 +27,10 @@ async function readChatEvents(body, onEvent) {
     reader.releaseLock();
   }
 }
-function rowEstimateText(estimate) {
-  if (!estimate || estimate.rows == null || estimate.kind === 'unknown') return 'Unknown';
-  const count = Number(estimate.rows).toLocaleString('en-US');
-  return estimate.kind === 'approximate' ? `About ${count} rows` : `${count} rows at observation time`;
-}
 function validationResult(output) {
   const marker = 'POMPOS_VALIDATION_RESULT=';
   const line = output.split('\n').find(line => line.startsWith(marker));
   if (!line) return null;
   try { return JSON.parse(line.slice(marker.length)); } catch { return null; }
 }
-if (typeof module !== 'undefined') module.exports = {readChatEvents, rowEstimateText, validationResult};
+if (typeof module !== 'undefined') module.exports = {readChatEvents, validationResult};

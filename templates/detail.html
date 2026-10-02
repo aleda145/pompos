@@ -40,7 +40,6 @@
       {{if .NextRun}}<p class="hint">Next run: <span class="mono">{{.NextRun.Format "2006-01-02 15:04:05 UTC"}}</span></p>{{end}}
     </form>
   </section>
-  {{with .Ingestion.Source.Estimate}}<section><h2>Extraction estimate</h2><p>{{.Description}}</p><p class="hint">{{.Basis}}{{if .ObservedAt}} · Observed {{.ObservedAt}}{{end}}</p></section>{{end}}
   {{if .Ingestion.LastError}}<section><h2>Latest error</h2><pre class="error">{{.Ingestion.LastError}}</pre></section>{{end}}
   {{if not .Ingestion.LoadError}}<section class="results-preview" aria-label="Destination table preview" data-preview-url="/ingestions/{{.Ingestion.ID}}/preview">
     <h2>Table preview</h2>

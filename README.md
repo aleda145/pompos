@@ -60,7 +60,7 @@ Each turn allows up to 12 model/tool rounds and four minutes. A source probe has
 
 After inspecting the source, the agent proposes a schedule and loading strategy with a short explanation. Confirm them with **Use these settings**, or adjust the frequency, five-field cron expression, strategy, and row keys in the settings card. All schedules use UTC; blank cron means manual runs only. The agent uses replace for current-state snapshots, merge for updates with stable row keys, or append for events and intentional history, and asks when the desired behavior is unclear. Confirmation is required before saving, and script revisions cannot silently override those choices.
 
-Before saving, the agent proposes **Run validation**, **Tell me more**, or **Not now**. The card shows a source-row limit (100 by default, 1–1,000 allowed), expected sample size when known, and a separate production extraction estimate. Only clicking **Run validation** starts this step. It has a 90-second timeout, fetches the bounded sample once, and loads that same sample twice into a disposable DuckDB using the confirmed strategy. It checks missing/null/duplicate row keys when configured, load errors, and row counts: replace and merge should keep one copy; append should keep both. The temporary database and its dlt state are removed afterward. API requests may return whole pages even when fewer rows are consumed.
+Before saving, the agent proposes **Run validation**, **Tell me more**, or **Not now**. The card shows a source-row limit (100 by default, 1–1,000 allowed) and the temporary loading checks. Only clicking **Run validation** starts this step. It has a 90-second timeout, fetches the bounded sample once, and loads that same sample twice into a disposable DuckDB using the confirmed strategy. It checks missing/null/duplicate row keys when configured, load errors, and row counts: replace and merge should keep one copy; append should keep both. The temporary database and its dlt state are removed afterward. API requests may return whole pages even when fewer rows are consumed.
 
 A successful validation of the current script and settings is required before **Save ingestion** becomes available. Failures return to the agent for repair; code or loading changes require fresh validation approval. **Not now** keeps the draft. Validation checks a sample in a temporary database, so it does not prove every source page will work or verify production destination permissions and existing schema conflicts.
 
@@ -68,7 +68,7 @@ Successful validation also shows a table preview of up to 10 rows actually loade
 
 Pompos does not accept or execute user-defined SQL. Previews use a built-in, fixed, read-only table query against the configured DuckDB destination; there is no SQL editor or arbitrary-query endpoint.
 
-Production row estimates use cheap source metadata where available, such as a matching API total count. They are labeled exact at observation time, approximate, or unknown, with an explanation and timestamp. Unknown counts do not block validation. Estimates describe rows the extractor emits on a full run, not newly inserted rows, and are never derived from sample size alone. They are saved in YAML and shown on the ingestion detail page; they are observations from development, not automatically refreshed forecasts for every scheduled run.
+The agent skips row estimates by default. When the source or user context suggests a full extraction may exceed 1 million rows, it uses readily available metadata to discuss volume, scope, cadence, and loading strategy in the conversation. It does not scan the source just to count it, and an unavailable count does not block progress. Estimates are not part of the extractor contract or saved ingestion YAML.
 
 Review the source, destination, schedule, load strategy, Python draft, and validation results. **Save ingestion** creates the Python and YAML files. A confirmed cron schedule becomes active when you save; its first automatic load runs at the next scheduled time. From the detail page, **Run ingestion** queues an immediate full load, and the schedule can also be changed there. Full loads have a 30-minute timeout. Existing run status, retries and scheduler behavior remain in Go. `replace` is the default strategy; `append` and primary-key-based `merge` are also supported for Python jobs.
 
@@ -87,8 +87,6 @@ def fetch(secret, limit):
     # Yield dictionaries for one entity. Respect any integer limit; paginate when None.
     yield {"id": 1, "name": "example"}
 ```
-
-An extractor may also define `estimate(secret)`, returning `{"rows": 123, "kind": "exact", "basis": "API total_count for this query"}`. Use `approximate` for inferred counts or `{"rows": None, "kind": "unknown", "basis": "No count endpoint"}` when unavailable. This optional function runs during the source probe, should make only bounded metadata requests with explicit timeouts, and must account for the extractor's filters. Failed or invalid estimates fall back to unknown.
 
 Pompos adds a runnable entrypoint that probes `fetch`, validates a sample, or loads through a single dlt resource. `limit` is 5 during a source probe, the approved cap during validation, and `None` during a full load. No connector catalog is required. Python's standard library, requests, dlt and DuckDB are installed. Extra source libraries must be installed by the operator; the agent has no package-install tool.
 
@@ -122,6 +120,6 @@ make docker-up
 make docker-down
 ```
 
-Tests cover the iterative repair loop, persistent conversations, documentation research and source links, provider credential separation, user-approved validation before saving, row estimates, secret redaction, script digest checks, chat publication, scheduling, and a real dlt load. Provider behavior is tested with a fake OpenAI-compatible endpoint; a real configured model still needs an end-to-end trial.
+Tests cover the iterative repair loop, persistent conversations, documentation research and source links, provider credential separation, user-approved validation before saving, secret redaction, script digest checks, chat publication, scheduling, and a real dlt load. Provider behavior is tested with a fake OpenAI-compatible endpoint; a real configured model still needs an end-to-end trial.
 
 The runtime uses dlt's [resource](https://dlthub.com/docs/general-usage/resource) and [pipeline](https://dlthub.com/docs/general-usage/pipeline) APIs.

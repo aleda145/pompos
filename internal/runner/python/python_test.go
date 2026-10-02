@@ -86,38 +86,29 @@ func TestProbeRequiresActualSample(t *testing.T) {
 	}
 }
 
-func TestProbeRowEstimates(t *testing.T) {
-	for _, tc := range []struct {
-		name, hook, kind string
-		rows             int64
-	}{
-		{"exact", "def estimate(secret):\n    return {'rows': 42, 'kind': 'exact', 'basis': 'API total_count for this query'}\n", "exact", 42},
-		{"approximate", "def estimate(secret):\n    return {'rows': 90, 'kind': 'approximate', 'basis': 'Last page times page size'}\n", "approximate", 90},
-		{"missing", "", "unknown", 0},
-		{"failed", "def estimate(secret):\n    raise ValueError('private error')\n", "unknown", 0},
-		{"invalid", "def estimate(secret):\n    return {'rows': -1, 'kind': 'exact', 'basis': 'invalid'}\n", "unknown", 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "probe.py")
-			data := []byte(Wrap("def fetch(secret, limit):\n    yield {'id': 1}\n" + tc.hook))
-			if err := os.WriteFile(path, data, 0600); err != nil {
-				t.Fatal(err)
-			}
-			output, err := (Runner{Binary: "python3"}).Execute(context.Background(), compiler.ExecutionPlan{Script: path, ScriptDigest: spec.Digest(data)}, true)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var result ProbeResult
-			if err := ReadResult(output, "POMPOS_PROBE_RESULT=", &result); err != nil {
-				t.Fatal(err)
-			}
-			if result.Estimate == nil || result.Estimate.Kind != tc.kind || result.Estimate.Validate() != nil {
-				t.Fatalf("bad estimate: %#v", result.Estimate)
-			}
-			if tc.kind != "unknown" && *result.Estimate.Rows != tc.rows {
-				t.Fatal("wrong count")
-			}
-		})
+func TestProbeOnlyFetchesSample(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "probe.py")
+	data := []byte(Wrap(`def fetch(secret, limit):
+    assert limit == 5
+    for i in range(10):
+        yield {'id': i}
+
+def estimate(secret):
+    raise SystemExit('Probe must not call the legacy estimate hook')
+`))
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := (Runner{Binary: "python3"}).Execute(context.Background(), compiler.ExecutionPlan{Script: path, ScriptDigest: spec.Digest(data)}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result ProbeResult
+	if err := ReadResult(output, "POMPOS_PROBE_RESULT=", &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 5 || len(result.Rows) != 5 || strings.Contains(output, `"estimate"`) {
+		t.Fatalf("expected only a bounded sample: %s", output)
 	}
 }
 
