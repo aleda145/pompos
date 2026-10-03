@@ -32,11 +32,7 @@ func New(service *agent.Service, operations Operations) *mcp.Server {
 			}
 			result := []agent.SessionSummary{}
 			for _, chat := range chats {
-				v, err := service.Load(chat.ID)
-				if err != nil {
-					return nil, nil, err
-				}
-				if v.External {
+				if chat.External {
 					result = append(result, chat)
 				}
 			}
@@ -117,7 +113,7 @@ func fullChatResult(v agent.Session, includeHistory bool) map[string]any {
 	v.Messages = messages
 	// Legacy web handoffs are not actionable through the direct MCP interface.
 	v.Pending = nil
-	return map[string]any{"session_id": v.ID, "review_path": "/chat/" + v.ID, "credentials_path": "/secrets", "session": v}
+	return map[string]any{"session_id": v.ID, "credentials_path": "/secrets", "session": v}
 }
 
 func toolOutput(name, output string) any {

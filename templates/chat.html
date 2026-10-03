@@ -1,6 +1,5 @@
 {{define "content"}}
 <div class="chat-heading"><div><h1 id="chat-title">New ingestion</h1></div><a href="/ingestions/new">New chat</a><a href="/settings/agent">Agent settings</a></div>
-{{if .MCP}}<p class="notice"><a href="/settings/agent#mcp">MCP settings</a>{{if .Session.External}} · Session <code>{{.Session.ID}}</code> · <a href="/chat/{{.Session.ID}}">Refresh</a>{{else}} · <a href="/ingestions/new">New MCP conversation</a>{{end}}</p>{{end}}
 <div id="chat" data-id="{{.Session.ID}}">
  <div id="chat-empty"><button type="button" id="example" class="suggestion">Example: GitHub stargazers</button></div>
  <div id="messages" class="chat-log" aria-label="Conversation"></div>

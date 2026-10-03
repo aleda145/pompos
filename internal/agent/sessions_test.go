@@ -1,12 +1,43 @@
 package agent
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestLoadWebChatPreservesMCPWork(t *testing.T) {
+	for _, withDraft := range []bool{false, true} {
+		s := &Service{Dir: t.TempDir()}
+		v, err := s.NewMCPChat("New ingestion")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if withDraft {
+			v.Draft = &Draft{Name: "Rates", Code: "def fetch(secret, limit): return []"}
+		} else {
+			v.Messages = append(v.Messages, Message{Role: "user", Content: "Load today's rates"})
+		}
+		if err := s.save(v); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(s.Dir, v.ID+".json")
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.LoadWebChat(v.ID); !errors.Is(err, ErrMCPConversation) {
+			t.Fatalf("accepted an MCP conversation with existing work: %v", err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil || string(before) != string(after) {
+			t.Fatal("opening a web chat changed existing MCP work", err)
+		}
+	}
+}
 
 func TestListSessionsRestoresHistoryNewestFirst(t *testing.T) {
 	s := &Service{Dir: filepath.Join(t.TempDir(), "agent")}

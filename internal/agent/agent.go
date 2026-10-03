@@ -180,6 +180,11 @@ func (v Settings) Validate() error {
 	if v.Mode != "" && v.Mode != "agent" {
 		return errors.New("choose MCP or agent credentials")
 	}
+	return v.ValidateAgent()
+}
+
+// Web chat always needs its own provider, regardless of MCP access or setup mode.
+func (v Settings) ValidateAgent() error {
 	u, e := url.Parse(v.Endpoint)
 	if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("endpoint must be an HTTP(S) base URL without credentials or query parameters")
@@ -266,11 +271,14 @@ func (s *Service) TurnWithEvents(ctx context.Context, id string, input Input, em
 	return s.turnWithEvents(ctx, id, input, emit)
 }
 
-// turnWithEvents shares user actions between the web chat and MCP. Caller holds mu.
+// turnWithEvents runs the custom agent's web conversation. Caller holds mu.
 func (s *Service) turnWithEvents(ctx context.Context, id string, input Input, emit func(Event)) (Session, error) {
 	v, e := s.load(id)
 	if e != nil {
 		return v, e
+	}
+	if v.External {
+		return v, ErrMCPConversation
 	}
 	if input.Loading != nil && input.ActionID != "accept_loading" {
 		return v, errors.New("loading settings must be submitted with the current settings action")
@@ -336,7 +344,7 @@ func (s *Service) turnWithEvents(ctx context.Context, id string, input Input, em
 	if e != nil {
 		return v, e
 	}
-	if cfg.Mode != "mcp" && !v.External && cfg.Endpoint == "" {
+	if cfg.ValidateAgent() != nil {
 		return v, errors.New("configure the agent endpoint and model first")
 	}
 	if v.PublishedID != "" {
@@ -387,15 +395,6 @@ func (s *Service) turnWithEvents(ctx context.Context, id string, input Input, em
 		v.Messages = append(v.Messages, message)
 		v.Pending = previousHandoff
 		v.Pending.ID = fmt.Sprint(len(v.Messages))
-		send(Event{Type: "message", Message: &message})
-		return v, s.save(v)
-	}
-	if cfg.Mode == "mcp" || v.External {
-		if input.ActionID == "explain" {
-			v.Pending = previousHandoff
-		}
-		message := Message{Role: "assistant", Content: "Response saved. Continue in your MCP client; refresh this page when it has updated the draft."}
-		v.Messages = append(v.Messages, message)
 		send(Event{Type: "message", Message: &message})
 		return v, s.save(v)
 	}

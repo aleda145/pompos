@@ -4,8 +4,8 @@
  <form method="post" class="panel settings-section" aria-labelledby="agent-heading">
  <input type="hidden" name="section" value="agent">
  <h2 id="agent-heading">Agent</h2>
- <label for="endpoint">OpenAI-compatible base URL</label><input id="endpoint" name="endpoint" type="url" {{if ne .Settings.Mode "mcp"}}required{{end}} value="{{.Settings.Endpoint}}" placeholder="https://api.openai.com/v1">
- <label for="model">Model ID · tool calling required</label><input id="model" name="model" {{if ne .Settings.Mode "mcp"}}required{{end}} value="{{.Settings.Model}}">
+ <label for="endpoint">OpenAI-compatible base URL</label><input id="endpoint" name="endpoint" type="url" required value="{{.Settings.Endpoint}}" placeholder="https://api.openai.com/v1">
+ <label for="model">Model ID · tool calling required</label><input id="model" name="model" required value="{{.Settings.Model}}">
  <label for="api_key_ref">API key secret</label><select name="api_key_ref" id="api_key_ref"><option value="">No authentication</option>{{range .Secrets}}<option value="{{.}}" {{if eq . $.Settings.APIKeyRef}}selected{{end}}>{{.}}</option>{{end}}</select>
  <div class="settings-actions settings-save"><button class="primary" type="submit">Save</button></div>
  </form>

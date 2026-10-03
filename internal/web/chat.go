@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -18,10 +19,16 @@ func (a *App) listChats(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, err)
 		return
 	}
+	webChats := make([]agent.SessionSummary, 0, len(sessions))
+	for _, session := range sessions {
+		if !session.External {
+			webChats = append(webChats, session)
+		}
+	}
 	a.render(w, http.StatusOK, "chats", struct {
 		Title string
 		Chats []agent.SessionSummary
-	}{"Chats", sessions})
+	}{"Chats", webChats})
 }
 
 func (a *App) chatPage(w http.ResponseWriter, r *http.Request) {
@@ -35,33 +42,35 @@ func (a *App) chatPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	if cfg.ValidateAgent() != nil {
+		http.Redirect(w, r, "/settings/agent", http.StatusSeeOther)
+		return
+	}
 	if id == "" {
 		id = newID()
-		if cfg.Mode == "mcp" {
-			session, err := a.Agent.NewMCPChat("New ingestion")
-			if err != nil {
-				a.serverError(w, err)
-				return
-			}
-			id = session.ID
-		}
 		http.Redirect(w, r, "/chat/"+id, http.StatusSeeOther)
 		return
 	}
-	v, e := a.Agent.Load(id)
+	v, e := a.Agent.LoadWebChat(id)
+	if errors.Is(e, agent.ErrMCPConversation) {
+		http.NotFound(w, r)
+		return
+	}
 	if e != nil {
 		http.Error(w, e.Error(), 400)
 		return
 	}
 	a.render(w, 200, "chat", struct {
-		MCP     bool
 		Title   string
 		Session agent.Session
-	}{cfg.Mode == "mcp" || v.External, "Ingestion chat", publicSession(v)})
+	}{"Ingestion chat", publicSession(v)})
 }
 func (a *App) chatTurn(w http.ResponseWriter, r *http.Request) {
 	if a.Agent == nil {
 		http.Error(w, "Agent is not configured", 503)
+		return
+	}
+	if !a.requireWebChat(w, r) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 20000)
@@ -121,6 +130,9 @@ func (a *App) chatSecret(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Agent is not configured", 503)
 		return
 	}
+	if !a.requireWebChat(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 20000)
 	var input struct {
 		Name      string `json:"name"`
@@ -144,6 +156,9 @@ func (a *App) publishChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Agent is not configured", 503)
 		return
 	}
+	if !a.requireWebChat(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	_, e := a.publishSession(r.Context(), id)
 	if e != nil {
@@ -151,6 +166,19 @@ func (a *App) publishChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/chat/"+id, http.StatusSeeOther)
+}
+
+func (a *App) requireWebChat(w http.ResponseWriter, r *http.Request) bool {
+	_, err := a.Agent.LoadWebChat(r.PathValue("id"))
+	if errors.Is(err, agent.ErrMCPConversation) {
+		http.NotFound(w, r)
+		return false
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return false
+	}
+	return true
 }
 func (a *App) agentSettings(w http.ResponseWriter, r *http.Request) {
 	if a.Agent == nil {
@@ -175,13 +203,16 @@ func (a *App) agentSettings(w http.ResponseWriter, r *http.Request) {
 			cfg.Endpoint = r.FormValue("endpoint")
 			cfg.Model = r.FormValue("model")
 			cfg.APIKeyRef = r.FormValue("api_key_ref")
+			e = cfg.ValidateAgent()
 		case "search":
 			cfg.ExaAPIKeyRef = r.FormValue("exa_api_key_ref")
 		default:
 			http.Error(w, "Unknown settings section", http.StatusBadRequest)
 			return
 		}
-		e = a.Agent.SaveSettings(cfg)
+		if e == nil {
+			e = a.Agent.SaveSettings(cfg)
+		}
 		if e != nil {
 			message = e.Error()
 		} else {
