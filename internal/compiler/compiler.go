@@ -4,28 +4,27 @@ import (
 	"bytes"
 	"gopkg.in/yaml.v3"
 	"pompos/internal/destination"
-	"pompos/internal/ingestion"
 	"pompos/internal/spec"
 )
 
 type ExecutionPlan struct {
-	EnvironmentKey    string                    `yaml:"-"`
-	PythonBinary      string                    `yaml:"-"`
-	Python            string                    `yaml:"python,omitempty"`
-	Dependencies      []string                  `yaml:"dependencies,omitempty"`
-	DependencyLock    *ingestion.DependencyLock `yaml:"dependencyLock,omitempty"`
-	DestinationSchema string                    `yaml:"destinationSchema"`
-	Engine            string                    `yaml:"engine"`
-	Script            string                    `yaml:"script"`
-	ScriptDigest      string                    `yaml:"scriptDigest"`
-	SecretRefs        []string                  `yaml:"secretRefs,omitempty"`
-	SourceURI         string                    `yaml:"sourceUri"`
-	SourceTable       string                    `yaml:"sourceTable"`
-	DestinationType   string                    `yaml:"destinationType"`
-	DestinationPath   string                    `yaml:"destinationPath"`
-	DestinationObject string                    `yaml:"destinationObject"`
-	Strategy          string                    `yaml:"strategy"`
-	PrimaryKey        []string                  `yaml:"primaryKey,omitempty"`
+	EnvironmentKey    string   `yaml:"-"`
+	PythonBinary      string   `yaml:"-"`
+	Python            string   `yaml:"python,omitempty"`
+	Dependencies      []string `yaml:"dependencies,omitempty"`
+	LockDigest        string   `yaml:"lockDigest,omitempty"`
+	DestinationSchema string   `yaml:"destinationSchema"`
+	Engine            string   `yaml:"engine"`
+	Script            string   `yaml:"script"`
+	ScriptDigest      string   `yaml:"scriptDigest"`
+	SecretRefs        []string `yaml:"secretRefs,omitempty"`
+	SourceURI         string   `yaml:"sourceUri"`
+	SourceTable       string   `yaml:"sourceTable"`
+	DestinationType   string   `yaml:"destinationType"`
+	DestinationPath   string   `yaml:"destinationPath"`
+	DestinationObject string   `yaml:"destinationObject"`
+	Strategy          string   `yaml:"strategy"`
+	PrimaryKey        []string `yaml:"primaryKey,omitempty"`
 }
 
 func Compile(document spec.Ingestion) (ExecutionPlan, error) {
@@ -37,7 +36,7 @@ func Compile(document spec.Ingestion) (ExecutionPlan, error) {
 		strategy = "replace"
 	}
 	return ExecutionPlan{
-		Engine: "python", Script: document.Runtime.Script, ScriptDigest: document.Runtime.ScriptDigest, SecretRefs: document.Runtime.SecretRefs, Python: document.Runtime.Python, Dependencies: document.Runtime.Dependencies, DependencyLock: document.Runtime.DependencyLock,
+		Engine: "python", Script: document.Runtime.Script, ScriptDigest: document.Runtime.ScriptDigest, SecretRefs: document.Runtime.SecretRefs, Python: document.Runtime.Python, Dependencies: document.Runtime.Dependencies, LockDigest: document.Runtime.LockDigest,
 		SourceURI: document.Source.URL, SourceTable: document.Source.Table,
 		DestinationSchema: destination.SchemaName(document.Destination.Schema), DestinationType: document.Destination.Type, DestinationPath: document.Destination.Path, DestinationObject: document.Destination.Object,
 		Strategy: strategy, PrimaryKey: document.Materialization.PrimaryKey,

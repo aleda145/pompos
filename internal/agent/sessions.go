@@ -33,7 +33,7 @@ func (s *Service) LoadWebChat(id string) (Session, error) {
 		len(v.Messages[0].Calls) == 0 && len(v.Messages[1].Calls) == 0 &&
 		v.Draft == nil && v.Pending == nil && v.Loading == nil && v.Validation == nil &&
 		v.PublishedID == "" && v.DraftID == "" && v.TestedDigest == "" && !v.Ready &&
-		len(v.SavedIngestions) == 0 && v.TestedRuntimeDigest == "" {
+		len(v.SavedIngestions) == 0 {
 		v.External = false
 		v.Messages = nil
 		return v, s.save(v)

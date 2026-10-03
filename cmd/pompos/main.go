@@ -142,7 +142,10 @@ func rebuildSpecProjections(ctx context.Context, metadata *store.SQLite, directo
 		if err != nil {
 			return err
 		}
-		id := strings.TrimSuffix(filepath.ToSlash(relative), ".yaml")
+		if strings.TrimSuffix(entry.Name(), ".yaml") != filepath.Base(filepath.Dir(relative)) {
+			return nil
+		}
+		id := filepath.ToSlash(filepath.Dir(relative))
 		document, data, err := spec.Read(path)
 		item := ingestion.Ingestion{ID: id, Status: ingestion.StatusPending, SpecPath: path, SpecDigest: spec.Digest(data)}
 		if err != nil {

@@ -149,7 +149,7 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 		t.Fatalf("ingestion was not saved separately from its chat: %#v %v", saved.SavedIngestions, err)
 	}
 	detail := "/ingestions/" + saved.PublishedID
-	initial, _, err := spec.Read(filepath.Join(app.SpecDir, strings.TrimPrefix(detail, "/ingestions/")+".yaml"))
+	initial, _, err := spec.Read(spec.ArtifactPath(app.SpecDir, strings.TrimPrefix(detail, "/ingestions/"), ".yaml"))
 	if err != nil || initial.Schedule == nil || initial.Schedule.Cron != "0 * * * *" || initial.Schedule.Timezone != "UTC" || initial.Materialization.Strategy != "merge" || len(initial.Materialization.PrimaryKey) != 1 || initial.Materialization.PrimaryKey[0] != "id" {
 		t.Fatalf("confirmed loading lost: %#v %v", initial, err)
 	}
@@ -171,7 +171,7 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 		t.Fatalf("schedule: %d %s", w.Code, w.Body)
 	}
 	id := strings.TrimPrefix(detail, "/ingestions/")
-	doc, _, e := spec.Read(filepath.Join(app.SpecDir, id+".yaml"))
+	doc, _, e := spec.Read(spec.ArtifactPath(app.SpecDir, id, ".yaml"))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -192,7 +192,7 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 	if w.Code != 303 || err != nil || len(repeated.SavedIngestions) != 1 || repeated.PublishedID != saved.PublishedID {
 		t.Fatal("duplicate publication created another ingestion")
 	}
-	firstYAMLPath := filepath.Join(app.SpecDir, saved.PublishedID+".yaml")
+	firstYAMLPath := spec.ArtifactPath(app.SpecDir, saved.PublishedID, ".yaml")
 	firstYAML, err := os.ReadFile(firstYAMLPath)
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +233,7 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 	if err != nil || len(both.SavedIngestions) != 2 || both.PublishedID != "local-duckdb/raw/women_records" {
 		t.Fatalf("expected two independent ingestions: %#v %v", both.SavedIngestions, err)
 	}
-	second, _, err := spec.Read(filepath.Join(app.SpecDir, both.PublishedID+".yaml"))
+	second, _, err := spec.Read(spec.ArtifactPath(app.SpecDir, both.PublishedID, ".yaml"))
 	if err != nil || second.Source.Table != "women_records" || second.Destination.Object != "women_records" || second.Runtime.Script == initial.Runtime.Script {
 		t.Fatalf("second ingestion is not independent: %#v %v", second, err)
 	}

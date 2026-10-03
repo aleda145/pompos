@@ -201,7 +201,7 @@ func TestPublicationRetryKeepsArtifactID(t *testing.T) {
 }
 
 func TestPublicationRejectsExistingTableFiles(t *testing.T) {
-	for _, extension := range []string{".py", ".yaml"} {
+	for _, extension := range []string{".py", ".yaml", ".py.lock"} {
 		t.Run(extension, func(t *testing.T) {
 			ctx := context.Background()
 			s, _, v := validationFixture(t)
@@ -215,7 +215,7 @@ func TestPublicationRejectsExistingTableFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			artifactDir := t.TempDir()
-			path := filepath.Join(artifactDir, v.Draft.Destination, "main", v.Draft.Table+extension)
+			path := spec.ArtifactPath(artifactDir, v.Draft.Destination+"/main/"+v.Draft.Table, extension)
 			if err := WriteFile(path, []byte("existing ingestion")); err != nil {
 				t.Fatal(err)
 			}
@@ -262,14 +262,14 @@ func TestPublicationScopesTablesByDestinationAndSchema(t *testing.T) {
 		}
 		wantID := target.destination + "/" + target.schema + "/rows"
 		id, err := s.Publish(ctx, v.ID, artifactDir, func(id string, doc spec.Ingestion) error {
-			if doc.Destination.Schema != target.schema || doc.Runtime.Script != filepath.Join(artifactDir, wantID+".py") {
+			if doc.Destination.Schema != target.schema || doc.Runtime.Script != spec.ArtifactPath(artifactDir, wantID, ".py") {
 				t.Fatalf("wrong publication target: %#v", doc)
 			}
 			data, err := spec.Marshal(doc)
 			if err != nil {
 				return err
 			}
-			return WriteFile(filepath.Join(artifactDir, id+".yaml"), data)
+			return WriteFile(spec.ArtifactPath(artifactDir, id, ".yaml"), data)
 		})
 		if err != nil || id != wantID {
 			t.Fatalf("publish %s: %q, %v", wantID, id, err)

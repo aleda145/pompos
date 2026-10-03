@@ -283,13 +283,13 @@ func TestMCPClientCompletesWorkflowWithoutWebApprovalsOrModel(t *testing.T) {
 	ingestionArgs := map[string]any{"ingestion_id": ingestionID}
 	call("get_ingestion", ingestionArgs, false)
 	call("list_ingestions", map[string]any{}, false)
-	before, _, err := spec.Read(filepath.Join(app.SpecDir, ingestionID+".yaml"))
+	before, _, err := spec.Read(spec.ArtifactPath(app.SpecDir, ingestionID, ".yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	call("set_schedule", map[string]any{"ingestion_id": ingestionID, "cron": "not cron"}, true)
 	call("set_schedule", map[string]any{"ingestion_id": ingestionID, "cron": ""}, false)
-	after, _, err := spec.Read(filepath.Join(app.SpecDir, ingestionID+".yaml"))
+	after, _, err := spec.Read(spec.ArtifactPath(app.SpecDir, ingestionID, ".yaml"))
 	if err != nil || after.Schedule != nil || after.Runtime.ScriptDigest != before.Runtime.ScriptDigest {
 		t.Fatal("schedule update changed code or failed to disable schedule", err)
 	}
@@ -329,7 +329,7 @@ func TestMCPClientCompletesWorkflowWithoutWebApprovalsOrModel(t *testing.T) {
 	if len(v.SavedIngestions) != 1 {
 		t.Fatal("ingestion not published")
 	}
-	if _, err := os.Stat(filepath.Join(app.SpecDir, v.SavedIngestions[0].ID+".yaml")); err != nil {
+	if _, err := os.Stat(spec.ArtifactPath(app.SpecDir, v.SavedIngestions[0].ID, ".yaml")); err != nil {
 		t.Fatal(err)
 	}
 	call("list_chats", map[string]any{}, false)

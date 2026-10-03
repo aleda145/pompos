@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"pompos/internal/agent"
@@ -22,7 +21,7 @@ func (a *App) publishSession(ctx context.Context, id string) (string, error) {
 		if e != nil {
 			return e
 		}
-		path := filepath.Join(a.SpecDir, ingestionID+".yaml")
+		path := spec.ArtifactPath(a.SpecDir, ingestionID, ".yaml")
 		item := spec.ToProjection(doc, ingestionID, path, spec.Digest(data))
 		if err := a.Scheduler.Validate(item.Schedule); err != nil {
 			return err
@@ -107,7 +106,7 @@ func (a *App) setIngestionSchedule(ctx context.Context, id, schedule string) err
 	if _, err := spec.Write(a.SpecDir, item); err != nil {
 		return err
 	}
-	path := filepath.Join(a.SpecDir, item.ID+".yaml")
+	path := spec.ArtifactPath(a.SpecDir, item.ID, ".yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err

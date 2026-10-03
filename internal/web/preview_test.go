@@ -91,8 +91,8 @@ func TestIngestionPreviewUsesSavedDestinationAndEscapesValues(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app.Previewer = previewFunc(func(_ context.Context, plan compiler.ExecutionPlan) (runnerpython.TablePreview, error) {
-				if plan.DestinationPath != destination || plan.DestinationObject != "rows" || plan.Script != "" {
-					t.Fatalf("preview used request parameters or an extractor: %#v", plan)
+				if plan.DestinationPath != destination || plan.DestinationObject != "rows" || plan.Script != filepath.Join(filepath.Dir(destination), "rows.py") {
+					t.Fatalf("preview did not use the saved destination and runtime: %#v", plan)
 				}
 				return tc.preview, tc.err
 			})

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"pompos/internal/compiler"
 	"pompos/internal/destination"
@@ -42,9 +43,15 @@ func (s *Service) validationPlan(ctx context.Context, v *Session) (compiler.Exec
 	if v.TestedDigest == "" || spec.Digest(data) != v.TestedDigest {
 		return plan, "", errors.New("the current script must pass test_script first")
 	}
-	if (v.TestedRuntimeDigest != "" || v.Draft.Python != "" || len(v.Draft.Dependencies) > 0 || v.Draft.DependencyLock != nil) && v.TestedRuntimeDigest != runtimeDigest(v.Draft) {
-		return plan, "", errors.New("Python dependencies changed; run test_script again before validation")
+	if !strings.HasPrefix(string(data), runnerpython.ScriptMetadata(v.Draft.Python, v.Draft.Dependencies)) {
+		return plan, "", errors.New("Python dependencies changed; run write_script and test_script again")
 	}
+	if v.Draft.LockDigest != "" {
+		if _, err := runnerpython.ReadScriptLock(s.scriptPath(v.ID), v.Draft.LockDigest); err != nil {
+			return plan, "", err
+		}
+	}
+
 	dest, err := s.Destinations.GetDestination(ctx, v.Draft.Destination)
 	if err != nil {
 		return plan, "", err
@@ -54,7 +61,7 @@ func (s *Service) validationPlan(ctx context.Context, v *Session) (compiler.Exec
 	}
 	applyLoading(v)
 	plan = compiler.ExecutionPlan{Engine: "python", Script: s.scriptPath(v.ID), ScriptDigest: v.TestedDigest,
-		Python: v.Draft.Python, Dependencies: v.Draft.Dependencies, DependencyLock: v.Draft.DependencyLock,
+		Python: v.Draft.Python, Dependencies: v.Draft.Dependencies, LockDigest: v.Draft.LockDigest,
 		SecretRefs: v.Draft.SecretRefs, DestinationType: dest.Type, DestinationPath: dest.Path,
 		DestinationSchema: destination.SchemaName(v.Draft.Schema), DestinationObject: v.Draft.Table, Strategy: v.Loading.Strategy, PrimaryKey: v.Loading.PrimaryKey}
 	data, err = json.Marshal(struct {

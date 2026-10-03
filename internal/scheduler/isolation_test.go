@@ -59,7 +59,11 @@ func TestBrokenScheduleIsSkippedAndRecovers(t *testing.T) {
 				err = os.WriteFile(broken.SpecPath, []byte("invalid: ["), 0600)
 			case "invalid cron":
 				broken.Schedule = "not a cron"
-				_, err = spec.Write(filepath.Dir(broken.SpecPath), broken)
+				data, marshalErr := spec.Marshal(spec.FromIngestion(broken))
+				if marshalErr != nil {
+					t.Fatal(marshalErr)
+				}
+				err = os.WriteFile(broken.SpecPath, data, 0600)
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -117,9 +121,9 @@ func TestWorkerContinuesAfterIngestionFailure(t *testing.T) {
 			ctx := context.Background()
 			metadata, items := isolationStore(t)
 			broken, healthy := items[0], items[1]
-			now := time.Now().UTC()
+			now := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
 			for i, item := range items {
-				if err := metadata.EnqueueRun(ctx, item.ID, now.Add(time.Duration(i)*time.Nanosecond)); err != nil {
+				if err := metadata.EnqueueRun(ctx, item.ID, now.Add(time.Duration(i)*time.Second)); err != nil {
 					t.Fatal(err)
 				}
 			}

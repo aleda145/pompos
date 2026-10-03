@@ -2,6 +2,7 @@ package python
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,7 +20,7 @@ func environmentFixture(t *testing.T) (Runner, compiler.ExecutionPlan) {
 	t.Helper()
 	dir := t.TempDir()
 	r := Runner{Environments: &Environments{Dir: filepath.Join(dir, "environments"), UVBinary: testutil.FakeUV(t)}}
-	code := []byte(Wrap("def fetch(secret, limit):\n    import fixture_package, sys\n    yield {'version': fixture_package.VERSION, 'python': sys.executable}\n"))
+	code := []byte(WrapWithRuntime("def fetch(secret, limit):\n    import fixture_package, sys\n    yield {'version': fixture_package.VERSION, 'python': sys.executable}\n", "", []string{"fixture-package==1.0"}))
 	script := filepath.Join(dir, "source.py")
 	if err := os.WriteFile(script, code, 0600); err != nil {
 		t.Fatal(err)
@@ -52,8 +53,18 @@ func TestEnvironmentsIsolateReuseAndLockVersions(t *testing.T) {
 		t.Fatal("cached environment invoked uv again")
 	}
 	// Publishing changes the script path but retains the destination identity.
+	original := plan.Script
 	plan.Script = filepath.Join(t.TempDir(), "published.py")
-	plan.DependencyLock = prepared.DependencyLock
+	for _, extension := range []string{"", ".lock"} {
+		data, err := os.ReadFile(original + extension)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(plan.Script+extension, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan.LockDigest = prepared.LockDigest
 	published, err := r.Prepare(ctx, plan)
 	if err != nil || published.PythonBinary != prepared.PythonBinary {
 		t.Fatalf("published ingestion lost its environment: %v", err)
@@ -64,10 +75,19 @@ func TestEnvironmentsIsolateReuseAndLockVersions(t *testing.T) {
 		t.Fatalf("ingestions shared an environment: %v", err)
 	}
 	plan.Dependencies = []string{"fixture-package==2.0"}
-	if _, err := r.Prepare(ctx, plan); err == nil || !strings.Contains(err.Error(), "changed") {
+	if _, err := r.Prepare(ctx, plan); err == nil || !strings.Contains(err.Error(), "metadata") {
 		t.Fatalf("changed dependencies reused the old lock: %v", err)
 	}
-	plan.DependencyLock = nil
+	plan.LockDigest = ""
+	updatedCode, err := os.ReadFile(plan.Script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedCode = []byte(strings.Replace(string(updatedCode), "fixture-package==1.0", "fixture-package==2.0", 1))
+	if err := os.WriteFile(plan.Script, updatedCode, 0600); err != nil {
+		t.Fatal(err)
+	}
+	plan.ScriptDigest = spec.Digest(updatedCode)
 	updated, err := r.Prepare(ctx, plan)
 	if err != nil || updated.PythonBinary == other.PythonBinary {
 		t.Fatalf("dependency change mutated the old environment: %v", err)
@@ -141,6 +161,32 @@ func TestEnvironmentLockWaitIsCancellable(t *testing.T) {
 	}
 }
 
+func TestSavedEnvironmentRejectsMissingOrChangedLock(t *testing.T) {
+	r, plan := environmentFixture(t)
+	prepared, err := r.Prepare(context.Background(), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.LockDigest = prepared.LockDigest
+	r.Environments.UVBinary = "/uv-must-not-relock-a-saved-ingestion"
+	lock, err := ReadScriptLock(plan.Script, plan.LockDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plan.Script+".lock", append(lock, []byte("# changed\n")...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Prepare(context.Background(), plan); err == nil || !strings.Contains(err.Error(), "changed") {
+		t.Fatalf("cached environment accepted changed lock: %v", err)
+	}
+	if err := os.Remove(plan.Script + ".lock"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Prepare(context.Background(), plan); err == nil || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("saved execution regenerated missing lock: %v", err)
+	}
+}
+
 // This exercises actual resolution, installation, probes, loading and previews.
 func TestUVIntegration(t *testing.T) {
 	uv := os.Getenv("POMPOS_TEST_UV")
@@ -149,7 +195,7 @@ func TestUVIntegration(t *testing.T) {
 	}
 	dir := t.TempDir()
 	r := Runner{Environments: &Environments{Dir: filepath.Join(dir, "environments"), UVBinary: uv}}
-	code := []byte(Wrap("def fetch(secret, limit):\n    import psycopg2\n    yield {'id': 1, 'driver': psycopg2.__version__}\n"))
+	code := []byte(WrapWithRuntime("def fetch(secret, limit):\n    import psycopg2\n    yield {'id': 1, 'driver': psycopg2.__version__}\n", "", []string{"psycopg2-binary"}))
 	script := filepath.Join(dir, "postgres.py")
 	if err := os.WriteFile(script, code, 0600); err != nil {
 		t.Fatal(err)
@@ -160,7 +206,11 @@ func TestUVIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(prepared.DependencyLock.Requirements, "psycopg2-binary==") {
+	lock, err := ReadScriptLock(script, prepared.LockDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(lock), `name = "psycopg2-binary"`) || !strings.Contains(string(lock), "sha256:") {
 		t.Fatal("source dependency missing from lock")
 	}
 	if _, err := r.Execute(ctx, prepared, true); err != nil {
@@ -177,7 +227,7 @@ func TestUVIntegration(t *testing.T) {
 		t.Fatalf("preview: %#v %v", preview, err)
 	}
 	// A fresh runner and saved lock can recover the same environment.
-	plan.DependencyLock = prepared.DependencyLock
+	plan.LockDigest = prepared.LockDigest
 	r.Environments.UVBinary = "/uv-must-not-be-needed-again"
 	if _, err := r.Execute(ctx, plan, true); err != nil {
 		t.Fatal(err)

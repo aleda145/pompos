@@ -165,7 +165,7 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 	if calls != 1 {
 		t.Fatal("duplicate publish")
 	}
-	data, e := os.ReadFile(filepath.Join(artifactDir, savedID+".py"))
+	data, e := os.ReadFile(spec.ArtifactPath(artifactDir, savedID, ".py"))
 	if e != nil || spec.Digest(data) != v.TestedDigest {
 		t.Fatal("published different code")
 	}

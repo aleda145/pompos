@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -54,7 +53,11 @@ func TestBrokenIngestionIsVisibleAndDoesNotBlockOthers(t *testing.T) {
 				err = os.WriteFile(path, []byte("apiVersion: unsupported"), 0600)
 			case "invalid cron":
 				broken.Schedule = "not a cron"
-				_, err = spec.Write(filepath.Dir(path), broken)
+				data, marshalErr := spec.Marshal(spec.FromIngestion(broken))
+				if marshalErr != nil {
+					t.Fatal(marshalErr)
+				}
+				err = os.WriteFile(path, data, 0600)
 			}
 			if err != nil {
 				t.Fatal(err)

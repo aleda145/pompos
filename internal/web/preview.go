@@ -33,7 +33,8 @@ func (a *App) ingestionPreview(w http.ResponseWriter, r *http.Request) {
 		data.PreviewError = item.LoadError
 	} else if a.Previewer != nil {
 		preview, err := a.Previewer.Preview(ctx, compiler.ExecutionPlan{
-			Python: item.Runtime.Python, Dependencies: item.Runtime.Dependencies, DependencyLock: item.Runtime.DependencyLock,
+			Script: item.Runtime.Script, ScriptDigest: item.Runtime.ScriptDigest,
+			Python: item.Runtime.Python, Dependencies: item.Runtime.Dependencies, LockDigest: item.Runtime.LockDigest,
 			DestinationType: item.Destination.Type, DestinationPath: item.Destination.Path,
 			DestinationSchema: item.Destination.Schema, DestinationObject: item.Destination.Table, SecretRefs: item.Runtime.SecretRefs,
 		})

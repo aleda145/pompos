@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"pompos/internal/ingestion"
+	runnerpython "pompos/internal/runner/python"
 	"pompos/internal/spec"
 	"pompos/internal/store"
 	"pompos/internal/testutil"
@@ -32,6 +33,7 @@ func commandFixture(t *testing.T, code string) string {
 		t.Fatal(err)
 	}
 	document.Runtime.Script = filepath.Join(dir, "customers.py")
+	code = runnerpython.ScriptMetadata("", nil) + code
 	document.Runtime.ScriptDigest = spec.Digest([]byte(code))
 	if err = os.WriteFile(document.Runtime.Script, []byte(code), 0600); err != nil {
 		t.Fatal(err)
@@ -87,7 +89,7 @@ func TestRebuildSpecProjectionsFromFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(specDir, "analytics", "raw", "customers.yaml")
+	path := spec.ArtifactPath(specDir, "analytics/raw/customers", ".yaml")
 	input = bytes.Replace(input, []byte("destination:\n"), []byte("destination:\n  schema: raw\n"), 1)
 	if err = os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
@@ -116,10 +118,11 @@ func TestRebuildSpecProjectionsFromFiles(t *testing.T) {
 	if err = metadata.Finish(ctx, "analytics/raw/customers", ingestion.StatusFailed, "previous failure"); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(specDir, "a-broken.yaml"), []byte("invalid: ["), 0600); err != nil {
+	os.MkdirAll(filepath.Join(specDir, "a-broken"), 0755)
+	if err = os.WriteFile(spec.ArtifactPath(specDir, "a-broken", ".yaml"), []byte("invalid: ["), 0600); err != nil {
 		t.Fatal(err)
 	}
-	otherPath := filepath.Join(specDir, "reporting", "raw", "customers.yaml")
+	otherPath := spec.ArtifactPath(specDir, "reporting/raw/customers", ".yaml")
 	if err = os.MkdirAll(filepath.Dir(otherPath), 0755); err != nil {
 		t.Fatal(err)
 	}

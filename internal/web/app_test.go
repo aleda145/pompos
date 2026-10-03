@@ -66,7 +66,7 @@ func TestUpdateSchedulePersistsAndRegisters(t *testing.T) {
 	if err != nil || stored.Schedule != "" || schedules.item.Schedule != "15 * * * *" {
 		t.Fatalf("stored = %#v, scheduled = %#v, error = %v", stored, schedules.item, err)
 	}
-	specContent, err := os.ReadFile(filepath.Join(dataDir, "ingestions", item.ID+".yaml"))
+	specContent, err := os.ReadFile(spec.ArtifactPath(filepath.Join(dataDir, "ingestions"), item.ID, ".yaml"))
 	if err != nil || !strings.Contains(string(specContent), `cron: 15 * * * *`) {
 		t.Fatalf("spec = %s, error = %v", specContent, err)
 	}

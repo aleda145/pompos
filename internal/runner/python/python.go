@@ -208,8 +208,10 @@ func (b *cappedOutput) String() string { b.Lock(); defer b.Unlock(); return stri
 
 // Wrap adds the same entrypoint for preview and scheduled execution. Nested source
 // values remain JSON columns, rather than creating extra destination tables.
-func Wrap(code string) string {
-	return code + `
+func Wrap(code string) string { return WrapWithRuntime(code, "", nil) }
+
+func WrapWithRuntime(code, python string, dependencies []string) string {
+	return ScriptMetadata(python, dependencies) + code + `
 
 # Pompos entrypoint: fetch(secret, limit) yields dictionaries for ONE source table.
 if __name__ == "__main__":
