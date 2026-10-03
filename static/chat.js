@@ -72,7 +72,9 @@
     const lastAssistant = messages.findLastIndex(item => item.role === 'assistant');
     messages.forEach((message, index) => {
       if (message.role === 'system' || message.role === 'tool') return;
-      if (message.content) {
+      if (message.role === 'user' && message.selection) {
+        fragment.append(handoffCard(message.selection.handoff, message.selection.action_id));
+      } else if (message.content) {
         if (message.role === 'assistant' && message.tool_calls?.length) {
           fragment.append(disclosure(`thinking-${index}`, 'Thinking', '', element('pre', 'activity-detail', message.content)));
         } else {
@@ -136,6 +138,10 @@
         }
       });
     });
+    if (busy && session.pending && lastInput?.action_id && lastInput.handoff_id === session.pending.id) {
+      const pending = {...session.pending, loading: lastInput.loading || session.pending.loading};
+      fragment.append(handoffCard(pending, lastInput.action_id));
+    }
     log.replaceChildren(fragment);
     log.querySelectorAll('details').forEach(node => { node.open = open.has(node.dataset.key); });
     $('#chat-empty').hidden = messages.length > 0 || busy;
@@ -181,16 +187,61 @@
     const container = element('div', 'loading-card');
     const summary = element('dl', 'loading-summary');
     const limit = pending.validation.limit;
+    const strategy = (pending.loading || session.loading)?.strategy;
     for (const [label, text] of [
       ['Validation sample', `Up to ${limit.toLocaleString('en-US')} rows`],
-      ['Loading check', `${session.loading?.strategy} · 2 sample loads`],
+      ['Loading check', `${strategy} · 2 sample loads`],
       ['Test destination', 'Temporary DuckDB'],
     ]) {
       const row = element('div'); row.append(element('dt', '', label), element('dd', '', text)); summary.append(row);
     }
     container.append(summary);
-    if (session.loading?.strategy === 'append') container.append(element('p', 'hint', 'Append can duplicate rows on repeated runs.'));
+    if (strategy === 'append') container.append(element('p', 'hint', 'Append can duplicate rows on repeated runs.'));
     return container;
+  }
+  function handoffCard(pending, selectedAction = '') {
+    const target = element('section', 'chat-handoff');
+    target.append(element('p', 'handoff-prompt', pending.prompt));
+    if (pending.kind === 'loading' && pending.loading) target.append(loadingCard(pending));
+    if (pending.kind === 'validation' && pending.validation) target.append(validationCard(pending));
+    if (pending.kind === 'secret' && !selectedAction) {
+      const form = element('form', 'inline-secret');
+      const nameLabel = element('label', '', 'Secret name');
+      const name = element('input'); name.value = pending.secret_name || ''; name.required = true; name.maxLength = 200; name.autocomplete = 'off'; nameLabel.append(name);
+      const valueLabel = element('label', '', 'Key');
+      const value = element('input'); value.type = 'password'; value.required = true; value.maxLength = 16000; value.autocomplete = 'new-password'; valueLabel.append(value);
+      const save = element('button', '', 'Save key & retry'); save.type = 'submit';
+      const error = element('p', 'secret-error'); error.setAttribute('role', 'alert');
+      form.append(nameLabel, valueLabel, save, error);
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault(); save.disabled = true; error.textContent = '';
+        try {
+          const response = await fetch(`/chat/${root.dataset.id}/secret`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: name.value, value: value.value, handoff_id: pending.id})});
+          if (!response.ok) throw new Error(await response.text());
+          value.value = '';
+          await submit({action_id: 'retry_secret', handoff_id: pending.id});
+        } catch (err) { error.textContent = err.message; }
+        finally { save.disabled = false; }
+      });
+      target.append(form);
+    }
+    const actions = element('div', 'quick-actions');
+    for (const action of pending.actions) {
+      if (pending.kind === 'loading' && pending.loading && action.id === 'accept_loading') continue;
+      const option = button(action.label, () => submit({action_id: action.id, handoff_id: pending.id}));
+      if (selectedAction) option.setAttribute('aria-pressed', String(action.id === selectedAction));
+      actions.append(option);
+    }
+    if (actions.hasChildNodes()) target.append(actions);
+    if (selectedAction) {
+      target.querySelectorAll('button, input, select').forEach(control => { control.disabled = true; });
+      const loadingSubmit = target.querySelector('.loading-options button');
+      if (loadingSubmit) {
+        loadingSubmit.classList.remove('primary');
+        loadingSubmit.setAttribute('aria-pressed', String(selectedAction === 'accept_loading'));
+      }
+    }
+    return target;
   }
   function renderHandoff() {
     const target = $('#handoff');
@@ -199,38 +250,7 @@
     const key = JSON.stringify(pending || null) + (session.messages?.length || 0);
     if (key === handoffKey) { target.hidden = !target.hasChildNodes(); return; }
     handoffKey = key; target.replaceChildren();
-    if (pending) {
-      target.append(element('p', 'handoff-prompt', pending.prompt));
-      if (pending.kind === 'loading' && pending.loading) target.append(loadingCard(pending));
-      if (pending.kind === 'validation' && pending.validation) target.append(validationCard(pending));
-      if (pending.kind === 'secret') {
-        const form = element('form', 'inline-secret');
-        const nameLabel = element('label', '', 'Secret name');
-        const name = element('input'); name.value = pending.secret_name || ''; name.required = true; name.maxLength = 200; name.autocomplete = 'off'; nameLabel.append(name);
-        const valueLabel = element('label', '', 'Key');
-        const value = element('input'); value.type = 'password'; value.required = true; value.maxLength = 16000; value.autocomplete = 'new-password'; valueLabel.append(value);
-        const save = element('button', '', 'Save key & retry'); save.type = 'submit';
-        const error = element('p', 'secret-error'); error.setAttribute('role', 'alert');
-        form.append(nameLabel, valueLabel, save, error);
-        form.addEventListener('submit', async (event) => {
-          event.preventDefault(); save.disabled = true; error.textContent = '';
-          try {
-            const response = await fetch(`/chat/${root.dataset.id}/secret`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: name.value, value: value.value, handoff_id: pending.id})});
-            if (!response.ok) throw new Error(await response.text());
-            value.value = '';
-            await submit({action_id: 'retry_secret', handoff_id: pending.id});
-          } catch (err) { error.textContent = err.message; }
-          finally { save.disabled = false; }
-        });
-        target.append(form);
-      }
-      const actions = element('div', 'quick-actions');
-      for (const action of pending.actions) {
-        if (pending.kind === 'loading' && pending.loading && action.id === 'accept_loading') continue;
-        actions.append(button(action.label, () => submit({action_id: action.id, handoff_id: pending.id})));
-      }
-      if (actions.hasChildNodes()) target.append(actions);
-    }
+    if (pending) target.append(handoffCard(pending));
     target.hidden = !target.hasChildNodes();
   }
   function render() {
@@ -268,6 +288,7 @@
     if (event.type === 'message') {
       session.messages ||= [];
       session.messages.push(event.message);
+      if (event.message.selection?.handoff.id === session.pending?.id) session.pending = null;
       if (event.message.role === 'user') $('#message').value = '';
     }
     if (event.type === 'tool_start') { activeCall = event.call.id; $('#working').textContent = `RUNNING · ${toolNames[event.call.function.name] || event.call.function.name}`; }

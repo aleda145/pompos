@@ -20,6 +20,10 @@ type Action struct {
 	Label   string `json:"label"`
 	Message string `json:"message"`
 }
+type Selection struct {
+	Handoff  Handoff `json:"handoff"`
+	ActionID string  `json:"action_id"`
+}
 type Handoff struct {
 	Validation *ValidationProposal `json:"validation,omitempty"`
 	Loading    *Loading            `json:"loading,omitempty"`

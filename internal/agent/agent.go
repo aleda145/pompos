@@ -59,10 +59,11 @@ type Call struct {
 	} `json:"function"`
 }
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-	Calls   []Call `json:"tool_calls,omitempty"`
-	CallID  string `json:"tool_call_id,omitempty"`
+	Selection *Selection `json:"selection,omitempty"`
+	Role      string     `json:"role"`
+	Content   string     `json:"content"`
+	Calls     []Call     `json:"tool_calls,omitempty"`
+	CallID    string     `json:"tool_call_id,omitempty"`
 }
 type Draft struct {
 	Python       string   `json:"python,omitempty"`
@@ -372,8 +373,14 @@ func (s *Service) turnWithEvents(ctx context.Context, id string, input Input, em
 			previousHandoff = nil
 		}
 	}
-	v.Pending = nil
 	userMessage := Message{Role: "user", Content: input.Message}
+	if input.ActionID != "" && v.Pending != nil {
+		userMessage.Selection = &Selection{Handoff: *v.Pending, ActionID: input.ActionID}
+		if v.Pending.Kind == "validation" {
+			userMessage.Selection.Handoff.Loading = v.Loading
+		}
+	}
+	v.Pending = nil
 	v.Messages = append(v.Messages, userMessage)
 	if e = s.save(v); e != nil {
 		return v, e
@@ -451,7 +458,12 @@ func (s *Service) complete(ctx context.Context, cfg Settings, messages []Message
 	if requireTool {
 		toolChoice = "required"
 	}
-	payload, _ := json.Marshal(map[string]any{"model": cfg.Model, "messages": messages, "tools": toolsDefinition(), "tool_choice": toolChoice})
+	modelMessages := make([]Message, len(messages))
+	for i, message := range messages {
+		modelMessages[i] = message
+		modelMessages[i].Selection = nil
+	}
+	payload, _ := json.Marshal(map[string]any{"model": cfg.Model, "messages": modelMessages, "tools": toolsDefinition(), "tool_choice": toolChoice})
 	endpoint := cfg.Endpoint
 	if !strings.HasSuffix(endpoint, "/chat/completions") {
 		endpoint += "/chat/completions"

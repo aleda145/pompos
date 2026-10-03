@@ -73,6 +73,11 @@ func TestAthleteProfileQuestionIsRepairedBeforePausing(t *testing.T) {
 					}
 					args, _ = json.Marshal(map[string]any{"kind": "choice", "prompt": "Which set of athletes should the Wikipedia profiles cover? We can choose fields next.", "options": options})
 				case 2:
+					for _, message := range payload.Messages {
+						if message.Selection != nil {
+							t.Fatal("UI selection metadata leaked to model")
+						}
+					}
 					if payload.Messages[len(payload.Messages)-1].Content != selected.Message {
 						t.Fatal("button did not send its precise answer")
 					}
@@ -97,8 +102,25 @@ func TestAthleteProfileQuestionIsRepairedBeforePausing(t *testing.T) {
 			if v.Pending.Actions[i].Label != selected.Label {
 				t.Fatal("incorrect button label")
 			}
-			if _, err := s.TurnWithEvents(context.Background(), v.ID, Input{ActionID: v.Pending.Actions[i].ID, HandoffID: v.Pending.ID}, nil); err != nil || requests != 3 {
+			pending := *v.Pending
+			var streamed *Selection
+			if _, err := s.TurnWithEvents(context.Background(), v.ID, Input{ActionID: pending.Actions[i].ID, HandoffID: pending.ID}, func(event Event) {
+				if event.Message != nil && event.Message.Selection != nil {
+					streamed = event.Message.Selection
+				}
+			}); err != nil || requests != 3 {
 				t.Fatalf("button could not resume the conversation: %v", err)
+			}
+			if streamed == nil || streamed.Handoff.ID != pending.ID || streamed.ActionID != pending.Actions[i].ID {
+				t.Fatalf("selection was not streamed: %#v", streamed)
+			}
+			saved, err := s.Load(v.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selection := saved.Messages[len(v.Messages)].Selection
+			if selection == nil || selection.ActionID != pending.Actions[i].ID || selection.Handoff.Prompt != pending.Prompt || len(selection.Handoff.Actions) != len(pending.Actions) || selection.Handoff.Actions[i].Label != selected.Label {
+				t.Fatalf("selected options did not persist: %#v", selection)
 			}
 		})
 	}
