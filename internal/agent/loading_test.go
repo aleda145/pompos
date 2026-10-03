@@ -147,3 +147,97 @@ func TestRevisedLoadingProposalNeedsFreshConfirmation(t *testing.T) {
 		t.Fatal("revised settings reused prior confirmation")
 	}
 }
+
+func TestConfirmedLoadingProposalPreservesState(t *testing.T) {
+	for _, loading := range []Loading{
+		{Cron: "0 6 * * 1", Strategy: "replace"},
+		{Strategy: "merge", PrimaryKey: []string{"id"}},
+	} {
+		t.Run(loading.Strategy, func(t *testing.T) {
+			validation := &Validation{Fingerprint: "validated"}
+			pending := &Handoff{ID: "validation", Kind: "validation"}
+			v := Session{Ready: true, Probed: true, Loading: &loading, Validation: validation, Pending: pending}
+			args, err := json.Marshal(struct {
+				Loading
+				Reason string `json:"reason"`
+			}{loading, "Confirmed by user."})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := proposeLoading(&v, string(args))
+			if err != nil || !strings.Contains(result, "already confirmed") {
+				t.Fatalf("duplicate proposal did not acknowledge approval: %q, %v", result, err)
+			}
+			if !v.Ready || !v.Probed || v.Loading != &loading || v.Validation != validation || v.Pending != pending {
+				t.Fatal("duplicate proposal changed approved state")
+			}
+		})
+	}
+}
+
+func TestLoadingApprovalContinuesWithoutReconfirmation(t *testing.T) {
+	for _, modelFailure := range []bool{false, true} {
+		name := "repeated proposal"
+		if modelFailure {
+			name = "model failure"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, runner, v := validationFixture(t)
+			v.Loading = nil
+			if _, err := proposeLoading(&v, `{"cron":"0 6 * * *","strategy":"replace","primary_key":[],"reason":"Daily snapshot."}`); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.save(v); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			s.Client = &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if modelFailure {
+					return &http.Response{StatusCode: 500, Body: io.NopCloser(strings.NewReader("model unavailable")), Header: make(http.Header)}, nil
+				}
+				call := Call{ID: "repeat", Type: "function"}
+				switch calls {
+				case 1:
+					call.Function.Name = "propose_loading"
+					call.Function.Arguments = `{"cron":"0 6 * * 1","strategy":"replace","primary_key":[],"reason":"Confirmed by user: weekly full replace on Monday 06:00 UTC."}`
+				case 2:
+					call.Function.Name = "propose_validation"
+					call.Function.Arguments = `{"limit":500}`
+				default:
+					t.Fatal("unexpected extra model request")
+				}
+				body, err := json.Marshal(map[string]any{"choices": []any{map[string]any{"message": Message{Role: "assistant", Calls: []Call{call}}}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
+			})}
+			approval := Input{ActionID: "accept_loading", HandoffID: v.Pending.ID, Loading: &Loading{Cron: "0 6 * * 1", Strategy: "replace"}}
+			_, err := s.TurnWithEvents(context.Background(), v.ID, approval, nil)
+			if (err != nil) != modelFailure {
+				t.Fatalf("unexpected turn error: %v", err)
+			}
+			v, err = s.Load(v.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v.Loading == nil || v.Loading.Cron != "0 6 * * 1" || v.Draft.Schedule != "0 6 * * 1" || !v.Probed {
+				t.Fatal("user-edited settings or source probe lost")
+			}
+			if modelFailure {
+				if v.Pending != nil {
+					t.Fatal("model failure restored consumed loading confirmation")
+				}
+			} else if calls != 2 || v.Pending == nil || v.Pending.Kind != "validation" || v.Pending.Validation.Limit != 500 {
+				t.Fatal("approval did not advance directly to validation proposal")
+			}
+			if runner.calls != 0 {
+				t.Fatal("loading approval ran validation without separate approval")
+			}
+			if _, err := s.TurnWithEvents(context.Background(), v.ID, approval, nil); err == nil {
+				t.Fatal("consumed loading approval could be replayed")
+			}
+		})
+	}
+}

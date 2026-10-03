@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"pompos/internal/scheduler"
@@ -51,6 +52,9 @@ func proposeLoading(v *Session, arguments string) (string, error) {
 	}
 	if strings.TrimSpace(request.Reason) == "" || len(request.Reason) > 1500 {
 		return "", errors.New("explain the proposed cadence and loading strategy briefly")
+	}
+	if v.Loading != nil && v.Loading.Cron == request.Cron && v.Loading.Strategy == request.Strategy && slices.Equal(v.Loading.PrimaryKey, request.PrimaryKey) {
+		return "These loading settings are already confirmed. Continue with the current draft; after a successful source probe, call propose_validation if validation is still needed.", nil
 	}
 	v.Ready = false
 	v.Validation = nil
