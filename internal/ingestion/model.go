@@ -1,6 +1,9 @@
 package ingestion
 
-import "time"
+import (
+	"pompos/internal/destination"
+	"time"
+)
 
 const (
 	StatusPending   = "pending"
@@ -12,6 +15,7 @@ const (
 type Ingestion struct {
 	ID              string
 	Name            string
+	Data            string
 	Source          Source
 	Destination     Destination
 	Materialization Materialization
@@ -38,9 +42,10 @@ type Run struct {
 }
 
 type Source struct {
-	Type  string
-	URL   string
-	Table string
+	Type       string
+	URL        string
+	Table      string
+	Collection string
 }
 
 func (s Source) DisplayLocation() string { return s.URL }
@@ -51,6 +56,8 @@ type Destination struct {
 	Path   string
 	Table  string
 }
+
+func (d Destination) CatalogPath() string { return destination.CatalogPath(d.Type, d.Path) }
 
 type Runtime struct {
 	Python       string

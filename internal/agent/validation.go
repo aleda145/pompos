@@ -13,13 +13,49 @@ import (
 )
 
 type ValidationProposal struct {
-	Limit       int    `json:"limit"`
-	Fingerprint string `json:"fingerprint"`
+	Limit          int    `json:"limit"`
+	MaxBytes       int64  `json:"max_bytes,omitempty"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+	Fingerprint    string `json:"fingerprint"`
+}
+
+func validationRequest(v *Session, arguments string) (ValidationProposal, error) {
+	request := ValidationProposal{Limit: 100}
+	files := v.Draft != nil && v.Draft.Data == "files"
+	if files {
+		request.Limit = 3
+	}
+	if err := json.Unmarshal([]byte(arguments), &request); err != nil {
+		return request, err
+	}
+	if request.Limit < 1 || request.Limit > 1000 {
+		return request, errors.New("validation limit must be between 1 and 1000")
+	}
+	if files {
+		if request.Limit > 10 {
+			return request, errors.New("object validation supports 1–10 files")
+		}
+		var err error
+		request.MaxBytes, request.TimeoutSeconds, err = runnerpython.ObjectValidationBudget(request.MaxBytes, request.TimeoutSeconds)
+		return request, err
+	}
+	if request.MaxBytes != 0 || request.TimeoutSeconds != 0 {
+		return request, errors.New("max_bytes and timeout_seconds apply only to file validation")
+	}
+	return request, nil
 }
 
 type Validation struct {
 	Fingerprint string                        `json:"fingerprint"`
 	Result      runnerpython.ValidationResult `json:"result"`
+}
+
+func validationProperties() map[string]any {
+	return map[string]any{
+		"limit":           map[string]any{"type": "integer", "minimum": 1, "maximum": 1000},
+		"max_bytes":       map[string]any{"type": "integer", "minimum": 1, "maximum": int64(10 * 1024 * 1024 * 1024), "description": "File validation only: total bytes across both sample loads; default 50 MiB."},
+		"timeout_seconds": map[string]any{"type": "integer", "minimum": 1, "maximum": 1800, "description": "File validation only: execution timeout; default 90 seconds."},
+	}
 }
 
 // Bind approval and success to the current script, settings, and destination.
@@ -42,12 +78,17 @@ func (s *Service) validationPlan(ctx context.Context, v *Session) (compiler.Exec
 	if err != nil {
 		return plan, "", err
 	}
-	if dest.Type != "duckdb" {
-		return plan, "", errors.New("validation supports DuckDB destinations")
+	if (dest.Type == "objects") != (v.Draft.Data == "files") {
+		return plan, "", errors.New("destination type changed; rewrite and probe the script")
+	}
+	if err := v.Loading.ValidateDraft(v.Draft); err != nil {
+		return plan, "", err
 	}
 	applyLoading(v)
 	plan = compiler.ExecutionPlan{Engine: "python", Script: s.scriptPath(v.ID),
-		Python: v.Draft.Python, Dependencies: v.Draft.Dependencies,
+		// Draft JSON omits empty dependencies. Canonicalize [] and nil so saving
+		// and reloading a session cannot change its validation fingerprint.
+		Python: v.Draft.Python, Dependencies: append([]string(nil), v.Draft.Dependencies...),
 		SecretRefs: v.Draft.SecretRefs, DestinationType: dest.Type, DestinationPath: dest.Path,
 		DestinationSchema: destination.SchemaName(v.Draft.Schema), DestinationObject: v.Draft.Table, Strategy: v.Loading.Strategy, PrimaryKey: v.Loading.PrimaryKey}
 	data, err := json.Marshal(struct {
@@ -57,15 +98,24 @@ func (s *Service) validationPlan(ctx context.Context, v *Session) (compiler.Exec
 	return plan, spec.Digest(data), err
 }
 
-func (s *Service) proposeValidation(ctx context.Context, v *Session, arguments string) (string, error) {
-	request := struct {
-		Limit int `json:"limit"`
-	}{Limit: 100}
-	if err := json.Unmarshal([]byte(arguments), &request); err != nil {
-		return "", err
+// A stale approval never runs a changed draft. Replace its handoff so the user
+// can review and confirm again without sending a message to the model.
+func (s *Service) refreshValidation(ctx context.Context, v *Session) error {
+	arguments, err := json.Marshal(v.Pending.Validation)
+	if err != nil {
+		return err
 	}
-	if request.Limit < 1 || request.Limit > 1000 {
-		return "", errors.New("validation limit must be between 1 and 1000 rows")
+	v.Messages = append(v.Messages, Message{Role: "assistant", Content: "Draft changed. Review the updated validation settings, then choose Run validation."})
+	if _, err := s.proposeValidation(ctx, v, string(arguments)); err != nil {
+		return err
+	}
+	return s.save(*v)
+}
+
+func (s *Service) proposeValidation(ctx context.Context, v *Session, arguments string) (string, error) {
+	request, err := validationRequest(v, arguments)
+	if err != nil {
+		return "", err
 	}
 	_, fingerprint, err := s.validationPlan(ctx, v)
 	if err != nil {
@@ -73,14 +123,18 @@ func (s *Service) proposeValidation(ctx context.Context, v *Session, arguments s
 	}
 	v.Ready = false
 	v.Validation = nil
+	request.Fingerprint = fingerprint
 	v.Pending = &Handoff{ID: fmt.Sprint(len(v.Messages)), Kind: "validation",
 		Prompt:     "Validate a sample before saving this ingestion?",
-		Validation: &ValidationProposal{Limit: request.Limit, Fingerprint: fingerprint},
+		Validation: &request,
 		Actions: []Action{
 			{ID: "accept_validation", Label: "Run validation", Message: fmt.Sprintf("Validate up to %d source rows in a temporary database using the confirmed loading strategy.", request.Limit)},
 			{ID: "explain", Label: "Tell me more", Message: "Explain the validation sample and what will be checked. Keep validation awaiting my confirmation."},
 			{ID: "defer_validation", Label: "Not now", Message: "Do not run validation yet. Keep the draft; I will decide when to validate."},
 		}}
+	if v.Draft.Data == "files" {
+		v.Pending.Actions[0].Message = fmt.Sprintf("Validate up to %d files with two sample loads in a temporary folder and object catalog (%d bytes total, %d seconds).", request.Limit, request.MaxBytes, request.TimeoutSeconds)
+	}
 	return "Waiting for explicit user confirmation. The card shows the validation row limit and temporary loading checks. Validation has not run.", nil
 }
 
@@ -107,10 +161,11 @@ func (s *Service) runValidation(ctx context.Context, v *Session, proposal *Valid
 	if fingerprint != proposal.Fingerprint {
 		return errors.New("draft changed; request fresh validation confirmation")
 	}
+	plan.ValidationMaxBytes, plan.ValidationTimeoutSeconds = proposal.MaxBytes, proposal.TimeoutSeconds
 	v.Validation = nil
 	call := Call{ID: fmt.Sprintf("validation_%d", len(v.Messages)), Type: "function"}
 	call.Function.Name = "validate_ingestion"
-	args, _ := json.Marshal(map[string]any{"limit": proposal.Limit, "strategy": plan.Strategy, "destination": "temporary DuckDB"})
+	args, _ := json.Marshal(map[string]any{"limit": proposal.Limit, "max_bytes": proposal.MaxBytes, "timeout_seconds": proposal.TimeoutSeconds, "strategy": plan.Strategy, "destination": "temporary DuckDB"})
 	call.Function.Arguments = string(args)
 	message := Message{Role: "assistant", Calls: []Call{call}}
 	v.Messages = append(v.Messages, message)

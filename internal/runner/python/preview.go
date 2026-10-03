@@ -43,10 +43,11 @@ func (r Runner) Preview(ctx context.Context, plan compiler.ExecutionPlan) (Table
 	if !previewTableName.MatchString(plan.DestinationObject) {
 		return result, fmt.Errorf("invalid preview table name")
 	}
-	if plan.DestinationType != "" && plan.DestinationType != "duckdb" {
+	if plan.DestinationType != "" && plan.DestinationType != "duckdb" && plan.DestinationType != "objects" {
 		return result, fmt.Errorf("preview requires a DuckDB destination")
 	}
-	if _, err := os.Stat(plan.DestinationPath); err != nil {
+	catalogPath := destination.CatalogPath(plan.DestinationType, plan.DestinationPath)
+	if _, err := os.Stat(catalogPath); err != nil {
 		return result, err
 	}
 	plan, err := r.Prepare(ctx, plan)
@@ -56,7 +57,7 @@ func (r Runner) Preview(ctx context.Context, plan compiler.ExecutionPlan) (Table
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	binary := plan.PythonBinary
-	cmd := exec.CommandContext(ctx, binary, "-I", "-c", previewScript, plan.DestinationPath, schema, plan.DestinationObject)
+	cmd := exec.CommandContext(ctx, binary, "-I", "-c", previewScript, catalogPath, schema, plan.DestinationObject, plan.DestinationType)
 	cmd.Env = []string{"DLT_TELEMETRY=0"}
 	for _, key := range []string{"PATH", "LANG", "SYSTEMROOT", "TMPDIR"} {
 		if value, ok := os.LookupEnv(key); ok {

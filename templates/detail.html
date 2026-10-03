@@ -13,7 +13,7 @@
 
 <div class="panel details">
   <section class="half-section connection"><h2>Source</h2><p class="url mono">{{.Ingestion.Source.DisplayLocation}}</p></section>
-  <section class="half-section connection"><h2>Destination</h2><p class="url mono">{{.Ingestion.Destination.Path}} / {{.Ingestion.Destination.Schema}}.{{.Ingestion.Destination.Table}}</p></section>
+  <section class="half-section connection"><h2>Destination</h2><p class="url mono">{{.Ingestion.Destination.CatalogPath}} / {{.Ingestion.Destination.Schema}}.{{.Ingestion.Destination.Table}}</p>{{if eq .Ingestion.Destination.Type "objects"}}<p class="url mono">{{.Ingestion.Destination.Path}}/files/{{.Ingestion.Destination.Schema}}</p>{{end}}</section>
   <section class="half-section">
     <h2>Loading</h2>
     <dl>
@@ -42,7 +42,7 @@
   </section>
   {{if .Ingestion.LastError}}<section><h2>Latest error</h2><pre class="error">{{.Ingestion.LastError}}</pre></section>{{end}}
   {{if not .Ingestion.LoadError}}<section class="results-preview" aria-label="Destination table preview" data-preview-url="/ingestions/{{.Ingestion.ID}}/preview">
-    <h2>Table preview</h2>
+    <h2>{{if eq .Ingestion.Destination.Type "objects"}}Object catalog{{else}}Table preview{{end}}</h2>
     <p class="hint" role="status">Loading preview…</p>
     <noscript><p class="hint">Enable JavaScript to load the table preview.</p></noscript>
   </section>

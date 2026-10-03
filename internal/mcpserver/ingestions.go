@@ -53,7 +53,7 @@ func addIngestionTools(server *mcp.Server, service *agent.Service, ops Operation
 			item, err := ops.Get(ctx, input.IngestionID)
 			return nil, map[string]any{"ingestion": item}, err
 		})
-	mcp.AddTool(server, &mcp.Tool{Name: "run_ingestion", Description: "Queue a full production load for a saved ingestion. Use only when the user authorizes a full run. This makes source requests and writes the configured destination using replace/append/merge; replace overwrites the table and append can duplicate rows. Returns queued, not completed. Retrying can enqueue another run.", Annotations: &mcp.ToolAnnotations{DestructiveHint: &yes, OpenWorldHint: &yes}},
+	mcp.AddTool(server, &mcp.Tool{Name: "run_ingestion", Description: "Queue a full production load for a saved ingestion. Use only when the user authorizes a full run. Row ingestions use replace/append/merge; replace overwrites the table and append can duplicate rows. Object ingestions download files and update their DuckDB catalog using update/skip, retaining missing source files. Returns queued, not completed. Retrying can enqueue another run.", Annotations: &mcp.ToolAnnotations{DestructiveHint: &yes, OpenWorldHint: &yes}},
 		func(ctx context.Context, req *mcp.CallToolRequest, input ingestionInput) (*mcp.CallToolResult, any, error) {
 			if err := ops.Run(ctx, input.IngestionID); err != nil {
 				return nil, nil, err

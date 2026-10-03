@@ -5,9 +5,10 @@ import sys
 import duckdb
 from dlt.common.normalizers.naming.snake_case import NamingConvention
 
-path, schema, table = sys.argv[1:]
-schema = NamingConvention().normalize_identifier(schema)
-table = NamingConvention().normalize_table_identifier(table)
+path, schema, table, kind = sys.argv[1:]
+if kind != "objects":
+    schema = NamingConvention().normalize_identifier(schema)
+    table = NamingConvention().normalize_table_identifier(table)
 with duckdb.connect(path, read_only=True, config={"enable_external_access": False}) as db:
     # Only loaded base tables, never views that could execute arbitrary expressions.
     exists = db.execute(
@@ -17,7 +18,8 @@ with duckdb.connect(path, read_only=True, config={"enable_external_access": Fals
     ).fetchone()
     if not exists:
         raise ValueError("No loaded table")
-    target = '"' + schema.replace('"', '""') + '"."' + table.replace('"', '""') + '"'
+    database = db.execute("SELECT current_database()").fetchone()[0]
+    target = ".".join('"' + name.replace('"', '""') + '"' for name in (database, schema, table))
     db.execute("BEGIN TRANSACTION")
     total_rows = db.execute("SELECT count(*) FROM " + target).fetchone()[0]
     cursor = db.execute("SELECT * FROM " + target + " LIMIT 10")

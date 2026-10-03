@@ -41,6 +41,16 @@ func (r Runner) Validate(ctx context.Context, plan compiler.ExecutionPlan, limit
 	if limit < 1 || limit > 1000 {
 		return result, "", fmt.Errorf("validation limit must be between 1 and 1000")
 	}
+	if plan.DestinationType == "objects" && limit > 10 {
+		return result, "", fmt.Errorf("object validation limit must be between 1 and 10 files")
+	}
+	if plan.DestinationType == "objects" {
+		var err error
+		plan.ValidationMaxBytes, plan.ValidationTimeoutSeconds, err = ObjectValidationBudget(plan.ValidationMaxBytes, plan.ValidationTimeoutSeconds)
+		if err != nil {
+			return result, "", err
+		}
+	}
 	plan, err := r.Prepare(ctx, plan)
 	if err != nil {
 		return result, "", err
@@ -59,6 +69,9 @@ func (r Runner) Validate(ctx context.Context, plan compiler.ExecutionPlan, limit
 		return result, "", err
 	}
 	plan.DestinationPath = filepath.Join(directory, "sample.duckdb")
+	if plan.DestinationType == "objects" {
+		plan.DestinationPath = filepath.Join(directory, "objects")
+	}
 	output, err := r.execute(ctx, plan, false, limit)
 	if err != nil {
 		return result, output, err
@@ -83,11 +96,13 @@ func (r Runner) Validate(ctx context.Context, plan compiler.ExecutionPlan, limit
 }
 
 type ValidationResult struct {
-	SampleCount    int           `json:"sample_count"`
-	FirstLoadRows  int           `json:"first_load_rows"`
-	SecondLoadRows int           `json:"second_load_rows"`
-	Preview        *TablePreview `json:"preview,omitempty"`
-	PreviewError   string        `json:"preview_error,omitempty"`
+	Data            string        `json:"data,omitempty"`
+	DownloadedBytes int64         `json:"downloaded_bytes,omitempty"`
+	SampleCount     int           `json:"sample_count"`
+	FirstLoadRows   int           `json:"first_load_rows"`
+	SecondLoadRows  int           `json:"second_load_rows"`
+	Preview         *TablePreview `json:"preview,omitempty"`
+	PreviewError    string        `json:"preview_error,omitempty"`
 }
 type ProbeResult struct {
 	Rows  []map[string]any `json:"rows"`
@@ -117,10 +132,13 @@ func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 		values[ref] = string(value)
 	}
 	payload, _ := json.Marshal(values)
-	config, _ := json.Marshal(map[string]any{"destination": plan.DestinationPath, "schema": destination.SchemaName(plan.DestinationSchema), "table": plan.DestinationObject, "strategy": plan.Strategy, "primary_key": plan.PrimaryKey, "validation_limit": validationLimit})
+	config, _ := json.Marshal(map[string]any{"destination_type": plan.DestinationType, "destination": plan.DestinationPath, "schema": destination.SchemaName(plan.DestinationSchema), "table": plan.DestinationObject, "strategy": plan.Strategy, "primary_key": plan.PrimaryKey, "validation_limit": validationLimit, "validation_max_bytes": plan.ValidationMaxBytes})
 	timeout := 30 * time.Minute
 	if validationLimit > 0 {
 		timeout = 90 * time.Second
+		if plan.DestinationType == "objects" && plan.ValidationTimeoutSeconds > 0 {
+			timeout = time.Duration(plan.ValidationTimeoutSeconds) * time.Second
+		}
 	}
 	if probe {
 		timeout = 45 * time.Second
@@ -144,7 +162,7 @@ func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 		cmd.Env = append(cmd.Env, "POMPOS_PROBE=1")
 	}
 	cmd.WaitDelay = 2 * time.Second
-	var output cappedOutput
+	output := cappedOutput{tail: plan.DestinationType == "objects"}
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	err = cmd.Run()
@@ -170,6 +188,14 @@ func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 	if !probeValid {
 		return result, fmt.Errorf("Python exited without a valid nonempty probe sample; ensure fetch yields dictionaries and does not exit early")
 	}
+	if plan.DestinationType == "objects" && !probe && validationLimit == 0 {
+		var summary struct {
+			Objects int `json:"objects"`
+		}
+		if err := ReadResult(result, "POMPOS_OBJECTS_RESULT=", &summary); err != nil {
+			return result, err
+		}
+	}
 	return result, nil
 }
 
@@ -177,6 +203,7 @@ type cappedOutput struct {
 	sync.Mutex
 	data  []byte
 	limit int
+	tail  bool
 }
 
 func (b *cappedOutput) Write(p []byte) (int, error) {
@@ -186,6 +213,17 @@ func (b *cappedOutput) Write(p []byte) (int, error) {
 	limit := b.limit
 	if limit == 0 {
 		limit = 16384
+	}
+	if b.tail {
+		if len(p) >= limit {
+			b.data = append(b.data[:0], p[len(p)-limit:]...)
+		} else {
+			if extra := len(b.data) + len(p) - limit; extra > 0 {
+				b.data = b.data[extra:]
+			}
+			b.data = append(b.data, p...)
+		}
+		return n, nil
 	}
 	remaining := limit - len(b.data)
 	if remaining > 0 {
@@ -216,6 +254,8 @@ if __name__ == "__main__":
         return _secrets[name]
     _probe = os.environ.get("POMPOS_PROBE") == "1"
     _config = json.loads(os.environ.get("POMPOS_CONFIG", "{}"))
+    if _config.get("destination_type") not in (None, "", "duckdb"):
+        raise ValueError("Row ingestion requires a DuckDB destination")
     _validation_limit = _config.get("validation_limit", 0)
     _limit = 5 if _probe else (_validation_limit or None)
     def _rows():

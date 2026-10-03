@@ -22,10 +22,24 @@ func (o Loading) Validate() error {
 	if err := scheduler.ValidateCron(o.Cron); err != nil {
 		return err
 	}
-	if o.Strategy != "replace" && o.Strategy != "append" && o.Strategy != "merge" {
-		return errors.New("choose replace, append, or merge")
+	if o.Strategy == "" {
+		return errors.New("choose a loading strategy")
+	}
+	if o.Strategy == "update" || o.Strategy == "skip" {
+		return (spec.Materialization{Strategy: o.Strategy, PrimaryKey: o.PrimaryKey}).ValidateFor("objects")
 	}
 	return (spec.Materialization{Strategy: o.Strategy, PrimaryKey: o.PrimaryKey}).Validate()
+}
+
+func (o Loading) ValidateDraft(draft *Draft) error {
+	if err := o.Validate(); err != nil {
+		return err
+	}
+	kind := "duckdb"
+	if draft != nil && draft.Data == "files" {
+		kind = "objects"
+	}
+	return (spec.Materialization{Strategy: o.Strategy, PrimaryKey: o.PrimaryKey}).ValidateFor(kind)
 }
 func (o Loading) description() string {
 	schedule := "manual runs only"
@@ -47,7 +61,7 @@ func proposeLoading(v *Session, arguments string) (string, error) {
 		return "", err
 	}
 	request.Cron = strings.TrimSpace(request.Cron)
-	if err := request.Loading.Validate(); err != nil {
+	if err := request.Loading.ValidateDraft(v.Draft); err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(request.Reason) == "" || len(request.Reason) > 1500 {

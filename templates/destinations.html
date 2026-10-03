@@ -12,8 +12,9 @@
   <label for="destination_type">Type</label>
   <select id="destination_type" name="type" required>
     <option value="duckdb" {{if eq .Type "duckdb"}}selected{{end}}>DuckDB</option>
+    <option value="objects" {{if eq .Type "objects"}}selected{{end}}>Objects · files + DuckDB catalog</option>
   </select>
-  <label for="destination_path">DuckDB path</label>
+  <label for="destination_path">Path · database file or objects directory</label>
   <input id="destination_path" name="path" value="{{.Path}}" placeholder="data/analytics.duckdb" required>
   <button class="primary" type="submit">Save destination</button>
 </form>

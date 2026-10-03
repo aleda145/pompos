@@ -26,6 +26,7 @@ const (
 type Ingestion struct {
 	APIVersion      string          `yaml:"apiVersion"`
 	Kind            string          `yaml:"kind"`
+	Data            string          `yaml:"data,omitempty"`
 	Metadata        Metadata        `yaml:"metadata"`
 	Source          Source          `yaml:"source"`
 	Destination     Destination     `yaml:"destination"`
@@ -39,9 +40,10 @@ type Metadata struct {
 	Owner string `yaml:"owner,omitempty"`
 }
 type Source struct {
-	Type  string `yaml:"type"`
-	URL   string `yaml:"url"`
-	Table string `yaml:"table"`
+	Type       string `yaml:"type"`
+	URL        string `yaml:"url"`
+	Table      string `yaml:"table,omitempty"`
+	Collection string `yaml:"collection,omitempty"`
 }
 type Destination struct {
 	Schema string `yaml:"schema,omitempty"`
@@ -121,7 +123,20 @@ func (s Ingestion) Validate() error {
 	if s.Source.Type != "python" {
 		return errors.New("spec.source.type: must be python")
 	}
-	if strings.TrimSpace(s.Source.URL) == "" || strings.TrimSpace(s.Source.Table) == "" {
+	if strings.TrimSpace(s.Source.URL) == "" {
+		return errors.New("spec.source.url: is required")
+	}
+	if s.Destination.Type == "objects" {
+		if s.Data != "files" || strings.TrimSpace(s.Source.Collection) == "" || s.Source.Table != "" {
+			return errors.New("objects require data: files and one source.collection, without source.table")
+		}
+		schema := strings.ToLower(s.Destination.Schema)
+		if schema == "" || schema == "main" || schema == "information_schema" || schema == "pg_catalog" || s.Destination.Object != "objects" {
+			return errors.New("objects require a dedicated destination.schema and destination.object: objects")
+		}
+	} else if s.Data != "" && s.Data != "rows" {
+		return errors.New("DuckDB table ingestions require data: rows")
+	} else if strings.TrimSpace(s.Source.Table) == "" || s.Source.Collection != "" {
 		return errors.New("spec.source: a source URL or identifier and one source table are required")
 	}
 	if s.Runtime.Engine != "python" {
@@ -136,8 +151,8 @@ func (s Ingestion) Validate() error {
 	if s.Runtime.Orchestrator != "" && s.Runtime.Orchestrator != "direct" {
 		return errors.New("spec.runtime.orchestrator: must be direct")
 	}
-	if s.Destination.Type != "duckdb" {
-		return errors.New("spec.destination.type: must be duckdb")
+	if s.Destination.Type != "duckdb" && s.Destination.Type != "objects" {
+		return errors.New("spec.destination.type: must be duckdb or objects")
 	}
 	if strings.TrimSpace(s.Destination.Path) == "" || strings.ContainsRune(s.Destination.Path, '\x00') {
 		return errors.New("spec.destination.path: a valid path is required")
@@ -151,10 +166,30 @@ func (s Ingestion) Validate() error {
 	if !objectName.MatchString(s.Destination.Object) {
 		return errors.New("spec.destination.object: must start with a letter or underscore and contain only letters, numbers, and underscores")
 	}
-	if err := s.Materialization.Validate(); err != nil {
+	if err := s.Materialization.ValidateFor(s.Destination.Type); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (m Materialization) ValidateFor(kind string) error {
+	if kind == "objects" {
+		if m.Strategy != "" && m.Strategy != "update" && m.Strategy != "skip" {
+			return errors.New("objects strategy must be update or skip")
+		}
+		if len(m.PrimaryKey) != 0 {
+			return errors.New("objects use object_id; primaryKey must be empty")
+		}
+		return nil
+	}
+	return m.Validate()
+}
+
+func (s Ingestion) Strategy() string {
+	if s.Materialization.Strategy == "" && s.Destination.Type == "objects" {
+		return "update"
+	}
+	return defaultStrategy(s.Materialization.Strategy)
 }
 
 func (m Materialization) Validate() error {
@@ -191,11 +226,16 @@ func Digest(data []byte) string {
 // FromIngestion serializes the file-derived ingestion fields, excluding run state.
 func FromIngestion(item ingestion.Ingestion) Ingestion {
 	document := Ingestion{APIVersion: APIVersion, Kind: Kind, Metadata: Metadata{Name: item.Name},
-		Source:          Source{Type: item.Source.Type, URL: item.Source.URL, Table: item.Source.Table},
+		Data:            item.Data,
+		Source:          Source{Type: item.Source.Type, URL: item.Source.URL, Table: item.Source.Table, Collection: item.Source.Collection},
 		Destination:     Destination{Schema: item.Destination.Schema, Type: item.Destination.Type, Path: item.Destination.Path, Object: item.Destination.Table},
-		Materialization: Materialization{Strategy: defaultStrategy(item.Materialization.Strategy), PrimaryKey: item.Materialization.PrimaryKey},
+		Materialization: Materialization{Strategy: item.Materialization.Strategy, PrimaryKey: item.Materialization.PrimaryKey},
 		Runtime:         Runtime{Engine: item.Runtime.Engine, Orchestrator: item.Runtime.Orchestrator, Script: item.Runtime.Script, SecretRefs: item.Runtime.SecretRefs, Python: item.Runtime.Python, Dependencies: item.Runtime.Dependencies},
 	}
+	if item.Destination.Type == "objects" {
+		document.Data = "files"
+	}
+	document.Materialization.Strategy = document.Strategy()
 	if item.Schedule != "" {
 		document.Schedule = &Schedule{Cron: item.Schedule, Timezone: "UTC"}
 	}
@@ -204,9 +244,10 @@ func FromIngestion(item ingestion.Ingestion) Ingestion {
 
 func ToProjection(document Ingestion, id, path, digest string) ingestion.Ingestion {
 	item := ingestion.Ingestion{ID: id, Name: document.Metadata.Name, Status: ingestion.StatusPending,
-		Source:          ingestion.Source{Type: document.Source.Type, URL: document.Source.URL, Table: document.Source.Table},
+		Data:            document.Data,
+		Source:          ingestion.Source{Type: document.Source.Type, URL: document.Source.URL, Table: document.Source.Table, Collection: document.Source.Collection},
 		Destination:     ingestion.Destination{Schema: destination.SchemaName(document.Destination.Schema), Type: document.Destination.Type, Path: document.Destination.Path, Table: document.Destination.Object},
-		Materialization: ingestion.Materialization{Strategy: defaultStrategy(document.Materialization.Strategy), PrimaryKey: document.Materialization.PrimaryKey},
+		Materialization: ingestion.Materialization{Strategy: document.Strategy(), PrimaryKey: document.Materialization.PrimaryKey},
 		Runtime:         ingestion.Runtime{Engine: document.Runtime.Engine, Orchestrator: document.Runtime.Orchestrator, Script: document.Runtime.Script, SecretRefs: document.Runtime.SecretRefs, Python: document.Runtime.Python, Dependencies: document.Runtime.Dependencies}, SpecPath: path, SpecDigest: digest,
 	}
 	if document.Schedule != nil {

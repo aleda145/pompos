@@ -154,6 +154,7 @@
   }
   function loadingCard(pending) {
     const options = pending.loading;
+    const files = ['update', 'skip'].includes(options.strategy);
     const form = element('form', 'loading-options');
     const presetLabel = element('label', '', 'Frequency');
     const preset = element('select');
@@ -167,7 +168,8 @@
     cron.addEventListener('input', () => { preset.value = presets.some(([value]) => value === cron.value) ? cron.value : 'custom'; });
     const strategyLabel = element('label', '', 'Loading strategy');
     const strategy = element('select');
-    for (const [value, label] of [['replace', 'Replace — current snapshot'], ['append', 'Append — keep previous rows'], ['merge', 'Merge — update matching keys']]) { const option = element('option', '', label); option.value = value; strategy.append(option); }
+    const strategies = files ? [['update', 'Update changed files'], ['skip', 'Skip existing files']] : [['replace', 'Replace — current snapshot'], ['append', 'Append — keep previous rows'], ['merge', 'Merge — update matching keys']];
+    for (const [value, label] of strategies) { const option = element('option', '', label); option.value = value; strategy.append(option); }
     strategy.value = options.strategy; strategyLabel.append(strategy);
     const keysLabel = element('label', '', 'Row keys · comma-separated');
     const keys = element('input'); keys.value = options.primary_key?.join(', ') || ''; keys.placeholder = 'e.g. id'; keys.maxLength = 500; keysLabel.append(keys);
@@ -176,10 +178,13 @@
     };
     strategy.addEventListener('change', updateStrategy); updateStrategy();
     const submitButton = element('button', 'primary', 'Use these settings'); submitButton.type = 'submit';
-    form.append(presetLabel, cronLabel, strategyLabel, keysLabel, submitButton);
+    form.append(presetLabel, cronLabel, strategyLabel);
+    if (!files) form.append(keysLabel);
+    if (files) form.append(element('p', 'hint', 'Files missing from the source are retained. Without a source version, Update downloads again.'));
+    form.append(submitButton);
     form.addEventListener('submit', event => {
       event.preventDefault();
-      submit({action_id: 'accept_loading', handoff_id: pending.id, loading: {cron: cron.value.trim(), strategy: strategy.value, primary_key: keys.value.split(',').map(value => value.trim()).filter(Boolean)}});
+      submit({action_id: 'accept_loading', handoff_id: pending.id, loading: {cron: cron.value.trim(), strategy: strategy.value, primary_key: files ? [] : keys.value.split(',').map(value => value.trim()).filter(Boolean)}});
     });
     return form;
   }
@@ -188,10 +193,13 @@
     const summary = element('dl', 'loading-summary');
     const limit = pending.validation.limit;
     const strategy = (pending.loading || session.loading)?.strategy;
+    const files = ['update', 'skip'].includes(strategy);
+    const bytes = pending.validation.max_bytes || 50 * 1024 * 1024;
+    const seconds = pending.validation.timeout_seconds || 90;
     for (const [label, text] of [
-      ['Validation sample', `Up to ${limit.toLocaleString('en-US')} rows`],
+      ['Validation sample', `Up to ${limit.toLocaleString('en-US')} ${files ? `files · ${(bytes / 1024 / 1024).toLocaleString('en-US')} MiB total · ${seconds}s` : 'rows'}`],
       ['Loading check', `${strategy} · 2 sample loads`],
-      ['Test destination', 'Temporary DuckDB'],
+      ['Test destination', files ? 'Temporary files + DuckDB catalog' : 'Temporary DuckDB'],
     ]) {
       const row = element('div'); row.append(element('dt', '', label), element('dd', '', text)); summary.append(row);
     }
@@ -265,7 +273,8 @@
     $('#validation-result').hidden = !session.validation || !!session.published_id;
     if (session.validation) {
       const result = session.validation.result;
-      $('#validation-result').textContent = `Validation passed · ${result.sample_count} source rows · loads: ${result.first_load_rows} → ${result.second_load_rows} rows`;
+      const unit = result.data === 'files' ? 'objects' : 'rows';
+      $('#validation-result').textContent = `Validation passed · ${result.sample_count} source ${unit} · loads: ${result.first_load_rows} → ${result.second_load_rows} ${unit}`;
     }
     $('#publish').hidden = busy || !session.ready || !!session.published_id;
     $('#publish-status').textContent = session.loading?.cron ? `Schedule on save: ${session.loading.cron} · UTC` : 'Manual';

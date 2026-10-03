@@ -3,6 +3,7 @@ package destination
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -29,16 +30,24 @@ func (c Config) Validate() error {
 	if !validName.MatchString(c.Name) {
 		return errors.New("destination name must start with a letter or number and contain only letters, numbers, underscores, and hyphens")
 	}
-	if c.Type != "duckdb" {
+	if c.Type != "duckdb" && c.Type != "objects" {
 		return fmt.Errorf("unsupported destination type %q", c.Type)
 	}
 	if strings.TrimSpace(c.Path) == "" {
-		return errors.New("DuckDB path is required")
+		return errors.New("destination path is required")
 	}
 	if strings.ContainsRune(c.Path, '\x00') {
-		return errors.New("DuckDB path contains an invalid null character")
+		return errors.New("destination path contains an invalid null character")
 	}
 	return nil
+}
+
+// Objects destinations own a directory with a catalog and a files subtree.
+func CatalogPath(kind, path string) string {
+	if kind == "objects" {
+		return filepath.Join(path, "objects.duckdb")
+	}
+	return path
 }
 
 // SchemaName returns the destination schema, defaulting to DuckDB's main schema.

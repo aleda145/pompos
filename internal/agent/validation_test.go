@@ -278,7 +278,7 @@ func TestPublicationScopesTablesByDestinationAndSchema(t *testing.T) {
 }
 
 func TestValidationApprovalRejectsChangedDraftAndSettings(t *testing.T) {
-	for _, change := range []string{"loading", "destination", "schema"} {
+	for _, change := range []string{"loading", "destination", "schema", "dependencies", "code"} {
 		t.Run(change, func(t *testing.T) {
 			s, runner, v := validationFixture(t)
 			switch change {
@@ -288,15 +288,76 @@ func TestValidationApprovalRejectsChangedDraftAndSettings(t *testing.T) {
 				v.Draft.Table = "different"
 			case "schema":
 				v.Draft.Schema = "raw"
+			case "dependencies":
+				v.Draft.Dependencies = []string{"pyarrow"}
+			case "code":
+				v.Draft.Code += "\n# changed source code"
 			}
 			if err := s.save(v); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.TurnWithEvents(context.Background(), v.ID, Input{ActionID: "accept_validation", HandoffID: v.Pending.ID}, nil); err == nil {
-				t.Fatal("stale approval accepted")
+			approval := Input{ActionID: "accept_validation", HandoffID: v.Pending.ID}
+			updated, err := s.TurnWithEvents(context.Background(), v.ID, approval, nil)
+			if err != nil {
+				t.Fatalf("couldn't refresh stale approval: %v", err)
 			}
 			if runner.calls != 0 {
 				t.Fatal("stale approval ran validation")
+			}
+			if updated.Pending == nil || updated.Pending.Kind != "validation" || updated.Pending.ID == approval.HandoffID || updated.Ready || updated.Validation != nil {
+				t.Fatal("stale approval did not produce a fresh confirmation")
+			}
+			if updated.Pending.Validation.Limit != v.Pending.Validation.Limit {
+				t.Fatal("refresh changed the validation sample")
+			}
+			if _, err := s.TurnWithEvents(context.Background(), v.ID, approval, nil); err == nil || runner.calls != 0 {
+				t.Fatal("old approval could be replayed after refresh")
+			}
+			// The replacement is persisted and usable without another chat message.
+			updated, err = s.Load(v.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			updated, err = s.TurnWithEvents(context.Background(), v.ID, Input{ActionID: "accept_validation", HandoffID: updated.Pending.ID}, nil)
+			if err != nil || runner.calls != 1 || updated.Validation == nil {
+				t.Fatalf("fresh confirmation failed: calls=%d, err=%v", runner.calls, err)
+			}
+		})
+	}
+}
+
+func TestValidationApprovalSurvivesEmptyDependenciesRoundTrip(t *testing.T) {
+	for _, kind := range []string{"duckdb", "objects"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx := context.Background()
+			s, runner, v := validationFixture(t)
+			if kind == "objects" {
+				if err := s.Destinations.(*store.SQLite).PutDestination(ctx, destination.Config{Name: "files", Type: "objects", Path: t.TempDir()}); err != nil {
+					t.Fatal(err)
+				}
+				v.Draft.Data, v.Draft.Destination, v.Draft.Schema, v.Draft.Table = "files", "files", "reports", "objects"
+				v.Loading.Strategy = "update"
+			}
+			// Models commonly emit dependencies: []; session JSON omits that field.
+			v.Draft.Dependencies = []string{}
+			v.Draft.SecretRefs = []string{}
+			v.Loading.PrimaryKey = []string{}
+			if _, err := s.proposeValidation(ctx, &v, `{"limit":2}`); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.save(v); err != nil {
+				t.Fatal(err)
+			}
+			updated, err := s.TurnWithEvents(ctx, v.ID, Input{ActionID: "accept_validation", HandoffID: v.Pending.ID}, nil)
+			if err != nil || runner.calls != 1 || updated.Validation == nil {
+				t.Fatalf("unchanged draft rejected after reload: calls=%d, err=%v", runner.calls, err)
+			}
+			reloaded, err := s.Load(v.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.requireValidation(ctx, &reloaded); err != nil {
+				t.Fatalf("successful validation lost after reload: %v", err)
 			}
 		})
 	}
