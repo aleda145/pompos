@@ -103,7 +103,7 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": m}}})
 	}))
 	defer server.Close()
-	if e = service.SaveSettings(Settings{Endpoint: server.URL + "/v1", Model: "test"}); e != nil {
+	if e = service.SaveSettings(Settings{Endpoint: server.URL + "/v1", Model: "test", ManualValidation: true}); e != nil {
 		t.Fatal(e)
 	}
 	v, e := service.Turn(ctx, "session1", "ingest stars")

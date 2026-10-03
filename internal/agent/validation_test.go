@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -43,6 +44,11 @@ func (r *validationRunner) Validate(ctx context.Context, plan compiler.Execution
 
 func validationFixture(t *testing.T) (*Service, *validationRunner, Session) {
 	t.Helper()
+	return validationFixtureWithApproval(t, true)
+}
+
+func validationFixtureWithApproval(t *testing.T, manual bool) (*Service, *validationRunner, Session) {
+	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
 	db, err := store.Open(ctx, filepath.Join(dir, "metadata.sqlite"), filepath.Join(dir, "out.duckdb"))
@@ -52,7 +58,7 @@ func validationFixture(t *testing.T) (*Service, *validationRunner, Session) {
 	t.Cleanup(func() { db.Close() })
 	runner := &validationRunner{Runner: runnerpython.Runner{Binary: "python3", Secrets: db.Secrets()}}
 	s := &Service{Dir: filepath.Join(dir, "agent"), Destinations: db, Secrets: db.Secrets(), Python: runner}
-	if err = s.SaveSettings(Settings{Endpoint: "http://model.test", Model: "test"}); err != nil {
+	if err = s.SaveSettings(Settings{Endpoint: "http://model.test", Model: "test", ManualValidation: manual}); err != nil {
 		t.Fatal(err)
 	}
 	v := Session{ID: "validation", Messages: []Message{{Role: "system", Content: prompt}}, Draft: &Draft{Name: "Rows", Source: "fixture", Table: "rows", Destination: "local-duckdb", Strategy: "replace", Code: "def fetch(secret, limit):\n    yield {'id': 1}\n"}, Loading: &Loading{Strategy: "replace"}}
@@ -61,8 +67,10 @@ func validationFixture(t *testing.T) (*Service, *validationRunner, Session) {
 		t.Fatal(err)
 	}
 	v.Probed = true
-	if _, err = s.proposeValidation(ctx, &v, `{"limit":25}`); err != nil {
-		t.Fatal(err)
+	if manual {
+		if _, err = s.proposeValidation(ctx, &v, `{"limit":25}`); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err = s.save(v); err != nil {
 		t.Fatal(err)
@@ -71,6 +79,127 @@ func validationFixture(t *testing.T) (*Service, *validationRunner, Session) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"role":"assistant","content":"Review the validation."}}]}`)), Header: make(http.Header)}, nil
 	})}
 	return s, runner, v
+}
+
+func TestAutomaticValidationContinuesWithoutApproval(t *testing.T) {
+	for _, retry := range []bool{false, true} {
+		t.Run(fmt.Sprint("retry=", retry), func(t *testing.T) {
+			ctx := context.Background()
+			s, runner, v := validationFixtureWithApproval(t, false)
+			if retry {
+				runner.err = errors.New("sample load failed")
+			}
+			step := 0
+			s.Client = &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				var request struct{ Messages []Message }
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(request.Messages[0].Content, "Validation approval is disabled") {
+					t.Fatal("model was not told validation runs automatically")
+				}
+				last := request.Messages[len(request.Messages)-1].Content
+				name := "propose_validation"
+				if step > 0 {
+					if retry && step == 1 {
+						if !strings.Contains(last, "Error: sample load failed") {
+							t.Fatalf("failure did not reach model: %s", last)
+						}
+						runner.err = nil
+					} else if strings.HasPrefix(last, "POMPOS_VALIDATION_RESULT=") {
+						name = "finish"
+					} else {
+						name = ""
+					}
+				}
+				step++
+				message := Message{Role: "assistant", Content: "Validation complete."}
+				if name != "" {
+					call := Call{ID: fmt.Sprint(step), Type: "function"}
+					call.Function.Name, call.Function.Arguments = name, `{"limit":25}`
+					message.Calls = []Call{call}
+				}
+				data, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"message": message}}})
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(data)))}, nil
+			})}
+			v, err := s.Turn(ctx, v.ID, "Continue")
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantCalls := 1
+			if retry {
+				wantCalls = 2
+			}
+			if !v.Ready || v.Pending != nil || v.Validation == nil || runner.calls != wantCalls || runner.limit != 25 {
+				t.Fatalf("automatic validation stalled: calls=%d session=%+v", runner.calls, v)
+			}
+			reloaded, err := s.Load(v.ID)
+			if err != nil || reloaded.Validation == nil || reloaded.Validation.Result.Preview == nil {
+				t.Fatalf("validation result not persisted: %v", err)
+			}
+			if err := s.requireValidation(ctx, &reloaded); err != nil {
+				t.Fatal(err)
+			}
+			reloaded.Draft.Code += "\n# changed"
+			if err := s.requireValidation(ctx, &reloaded); err == nil {
+				t.Fatal("changed draft reused validation")
+			}
+		})
+	}
+}
+
+func TestAutomaticValidationFailureBlocksFinishAndSave(t *testing.T) {
+	ctx := context.Background()
+	s, runner, v := validationFixtureWithApproval(t, false)
+	if _, err := s.proposeValidation(ctx, &v, `{"limit":1001}`); err == nil || runner.calls != 0 {
+		t.Fatal("automatic validation bypassed sample limits")
+	}
+	runner.err = errors.New("sample load failed")
+	if _, err := s.proposeValidation(ctx, &v, `{"limit":25}`); err == nil {
+		t.Fatal("validation failure lost")
+	}
+	finish := Call{}
+	finish.Function.Name = "finish"
+	if _, err := s.execute(ctx, &v, finish); err == nil || v.Ready || v.Validation != nil || v.Pending != nil {
+		t.Fatal("failed validation was accepted or asked for approval")
+	}
+	v.Ready = true
+	if err := s.save(v); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Publish(ctx, v.ID, t.TempDir(), func(string, spec.Ingestion) error {
+		t.Fatal("published failed validation")
+		return nil
+	}); err == nil {
+		t.Fatal("publish bypassed failed validation")
+	}
+}
+
+func TestDisableApprovalResumesPendingValidation(t *testing.T) {
+	s, runner, v := validationFixture(t)
+	if err := s.SetManualValidation(false); err != nil {
+		t.Fatal(err)
+	}
+	v.Draft.Code += "\n# updated draft"
+	if err := s.save(v); err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.TurnWithEvents(context.Background(), v.ID, Input{ActionID: "accept_validation", HandoffID: v.Pending.ID}, nil)
+	if err != nil || runner.calls != 1 || v.Pending != nil || v.Validation == nil {
+		t.Fatalf("pending validation did not resume: calls=%d session=%+v err=%v", runner.calls, v, err)
+	}
+	if err := s.requireValidation(context.Background(), &v); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, message := range v.Messages {
+		if message.Role == "tool" && strings.HasPrefix(message.Content, "POMPOS_VALIDATION_RESULT=") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("resumed validation result missing from conversation")
+	}
 }
 
 func TestValidationRequiresUserActionAndCannotBeReplayed(t *testing.T) {

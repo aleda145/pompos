@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"pompos/internal/compiler"
 	"pompos/internal/destination"
@@ -17,6 +18,17 @@ type ValidationProposal struct {
 	MaxBytes       int64  `json:"max_bytes,omitempty"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
 	Fingerprint    string `json:"fingerprint"`
+}
+
+func (s *Service) SetManualValidation(enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cfg, err := s.settings()
+	if err != nil {
+		return err
+	}
+	cfg.ManualValidation = enabled
+	return writeJSON(filepath.Join(s.Dir, "settings.json"), cfg)
 }
 
 func validationRequest(v *Session, arguments string) (ValidationProposal, error) {
@@ -113,17 +125,25 @@ func (s *Service) refreshValidation(ctx context.Context, v *Session) error {
 }
 
 func (s *Service) proposeValidation(ctx context.Context, v *Session, arguments string) (string, error) {
+	cfg, err := s.settings()
+	if err != nil {
+		return "", err
+	}
 	request, err := validationRequest(v, arguments)
 	if err != nil {
 		return "", err
 	}
-	_, fingerprint, err := s.validationPlan(ctx, v)
+	plan, fingerprint, err := s.validationPlan(ctx, v)
 	if err != nil {
 		return "", err
 	}
 	v.Ready = false
 	v.Validation = nil
 	request.Fingerprint = fingerprint
+	if !cfg.ManualValidation {
+		v.Pending = nil
+		return s.validateSample(ctx, v, plan, &request)
+	}
 	v.Pending = &Handoff{ID: fmt.Sprint(len(v.Messages)), Kind: "validation",
 		Prompt:     "Validate a sample before saving this ingestion?",
 		Validation: &request,
@@ -147,7 +167,7 @@ func (s *Service) requireValidation(ctx context.Context, v *Session) error {
 		if v.External {
 			return errors.New("call validate_ingestion successfully for the current script and loading settings before saving")
 		}
-		return errors.New("call propose_validation and wait for the user to approve a successful validation before finishing or saving")
+		return errors.New("call propose_validation successfully for the current script and loading settings before finishing or saving; if approval is enabled, wait for the user's Run validation action")
 	}
 	return nil
 }
@@ -161,7 +181,6 @@ func (s *Service) runValidation(ctx context.Context, v *Session, proposal *Valid
 	if fingerprint != proposal.Fingerprint {
 		return errors.New("draft changed; request fresh validation confirmation")
 	}
-	plan.ValidationMaxBytes, plan.ValidationTimeoutSeconds = proposal.MaxBytes, proposal.TimeoutSeconds
 	v.Validation = nil
 	call := Call{ID: fmt.Sprintf("validation_%d", len(v.Messages)), Type: "function"}
 	call.Function.Name = "validate_ingestion"
@@ -171,16 +190,23 @@ func (s *Service) runValidation(ctx context.Context, v *Session, proposal *Valid
 	v.Messages = append(v.Messages, message)
 	send(Event{Type: "message", Message: &message})
 	send(Event{Type: "tool_start", Call: &call})
-	result, output, runErr := s.Python.Validate(ctx, plan, proposal.Limit)
+	output, runErr := s.validateSample(ctx, v, plan, proposal)
 	if runErr != nil {
 		output = "Error: " + runErr.Error()
-	} else {
-		v.Validation = &Validation{Fingerprint: fingerprint, Result: result}
-		data, _ := json.Marshal(result)
-		output = "POMPOS_VALIDATION_RESULT=" + string(data)
 	}
 	message = Message{Role: "tool", CallID: call.ID, Content: output}
 	v.Messages = append(v.Messages, message)
 	send(Event{Type: "message", Message: &message})
 	return s.save(*v)
+}
+
+func (s *Service) validateSample(ctx context.Context, v *Session, plan compiler.ExecutionPlan, proposal *ValidationProposal) (string, error) {
+	plan.ValidationMaxBytes, plan.ValidationTimeoutSeconds = proposal.MaxBytes, proposal.TimeoutSeconds
+	result, _, err := s.Python.Validate(ctx, plan, proposal.Limit)
+	if err != nil {
+		return "", err
+	}
+	v.Validation = &Validation{Fingerprint: proposal.Fingerprint, Result: result}
+	data, err := json.Marshal(result)
+	return "POMPOS_VALIDATION_RESULT=" + string(data), err
 }

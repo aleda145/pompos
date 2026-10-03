@@ -99,7 +99,9 @@
         if (name === 'read_webpage' && args.url) { try { title += ` · ${new URL(args.url).hostname}`; } catch {} }
         if (name === 'write_script' && args.table) title += ` · ${args.table}`;
         if (name === 'ask_user' && args.kind === 'secret') title = `Request key · ${args.secret_name || 'source credential'}`;
-        if ((name === 'test_script' || name === 'validate_ingestion') && result && !failed) {
+        const isValidation = name === 'validate_ingestion' || name === 'propose_validation';
+        if (isValidation && result && validationResult(result.content)) title = 'Validate sample load';
+        if ((name === 'test_script' || isValidation) && result && !failed) {
           const match = result.content.match(/"sample_count"\s*:\s*(\d+)/);
           if (match) title += ` · ${match[1]} sample rows`;
         }
@@ -132,7 +134,7 @@
         }
         const row = disclosure(`tool-${index}-${callIndex}`, title, status, content);
         fragment.append(row);
-        if (name === 'validate_ingestion' && result && !failed) {
+        if (isValidation && result && !failed) {
           const validation = validationResult(result.content);
           if (validation?.preview || validation?.preview_error) fragment.append(validationPreview(validation));
         }

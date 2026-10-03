@@ -1,0 +1,10 @@
+{{define "content"}}
+{{template "settings-nav" .}}
+{{if .Saved}}<p class="notice notice-success" role="status">Settings saved.</p>{{end}}
+<form method="post" class="panel settings-section" aria-labelledby="validation-heading">
+ <h2 id="validation-heading">Chat validation</h2>
+ <label class="settings-checkbox" for="manual_validation"><input id="manual_validation" name="manual_validation" type="checkbox" {{if .Settings.ManualValidation}}checked{{end}} aria-describedby="validation-help">Require approval before validation</label>
+ <p id="validation-help" class="hint">When off, the agent runs sample validation automatically.</p>
+ <div class="settings-actions settings-save"><button class="primary" type="submit">Save</button></div>
+</form>
+{{end}}

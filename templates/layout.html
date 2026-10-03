@@ -18,11 +18,17 @@
       <a href="/chat">Chat</a>
       <a href="/destinations">Destinations</a>
       <a href="/secrets">Secrets</a>
-      <a href="/settings/agent">Agent settings</a>
+      <a href="/settings">Settings</a>
     </nav>
   </header>
   <main id="main">{{template "content" .}}</main>
 </body>
 </html>
+{{end}}
+{{define "settings-nav"}}
+<nav class="settings-tabs" aria-label="Settings">
+ <a href="/settings" {{if eq .Title "Settings"}}aria-current="page"{{end}}>General</a>
+ <a href="/settings/agent" {{if eq .Title "Agent settings"}}aria-current="page"{{end}}>Agent</a>
+</nav>
 {{end}}
 {{define "status"}}<span class="status status-{{.}}">{{if eq . "succeeded"}}SUCCESS{{else if eq . "running"}}RUNNING{{else if eq . "failed"}}FAILED{{else if eq . "cancelled"}}CANCELLED{{else if or (eq . "pending") (eq . "")}}IDLE{{else}}{{.}}{{end}}</span>{{end}}

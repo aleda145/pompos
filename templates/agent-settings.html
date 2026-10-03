@@ -1,4 +1,5 @@
 {{define "content"}}
+{{template "settings-nav" .}}
 {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}{{if .Saved}}<p class="notice notice-success" role="status">Settings saved.</p>{{end}}
 <div class="settings-form">
  <form method="post" class="panel settings-section" aria-labelledby="agent-heading">

@@ -84,7 +84,7 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 	if binary := os.Getenv("POMPOS_TEST_PYTHON"); binary != "" {
 		service.Python = runnerpython.Runner{Binary: binary, Secrets: db.Secrets()}
 	}
-	if e = service.SaveSettings(agent.Settings{Mode: "mcp", MCPEnabled: true, Endpoint: model.URL, Model: "test", ExaSkipped: true}); e != nil {
+	if e = service.SaveSettings(agent.Settings{Mode: "mcp", MCPEnabled: true, Endpoint: model.URL, Model: "test", ExaSkipped: true, ManualValidation: true}); e != nil {
 		t.Fatal(e)
 	}
 	schedules := &scheduleManagerStub{enqueue: func(ctx context.Context, id string) error { return db.EnqueueRun(ctx, id, time.Now()) }}
