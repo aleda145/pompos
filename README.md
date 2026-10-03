@@ -6,13 +6,10 @@ Tell pompos what you want to ingest and it will figure it out.
 
 Anything
 
-|               |                        |
-| ------------- | ---------------------- |
-| **ROWS**      | APIs, databases, CSV   |
-| **FILES**     | SFTP, S3, local files  |
-| **EVENTS**    | Kafka, queues, streams |
-| **DOCUMENTS** | PDF, DOCX, PPTX        |
-| **MEDIA**     | Images, audio, video   |
+|           |                                     |
+| --------- | ----------------------------------- |
+| **ROWS**  | APIs, databases, CSV, JSON, streams |
+| **FILES** | documents, images, audio, video     |
 
 That's the goal. We'll see how it goes
 
