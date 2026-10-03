@@ -6,9 +6,8 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/pompos ./cmd/pompos
 
 FROM python:3.12-slim-bookworm
-COPY requirements-local.txt /tmp/requirements-local.txt
-RUN pip install --no-cache-dir -r /tmp/requirements-local.txt \
-    && useradd --create-home --uid 10001 pompos \
+COPY --from=ghcr.io/astral-sh/uv:0.8.13 /uv /usr/local/bin/uv
+RUN useradd --create-home --uid 10001 pompos \
     && mkdir -p /data/ingestions \
     && chown -R pompos:pompos /data
 COPY --from=build /out/pompos /usr/local/bin/pompos

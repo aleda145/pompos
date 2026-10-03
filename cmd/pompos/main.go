@@ -57,7 +57,7 @@ func runServer() {
 		logger.Fatal(err)
 	}
 
-	ingestionRunner := runnerpython.Runner{Binary: cfg.PythonBinary, Secrets: metadata.Secrets()}
+	ingestionRunner := runnerpython.Runner{Binary: cfg.PythonBinary, Secrets: metadata.Secrets(), Environments: &runnerpython.Environments{Dir: filepath.Join(cfg.DataDir, "environments"), UVBinary: cfg.UVBinary}}
 	secretStore := metadata.Secrets()
 	executor, err := execution.New(execution.Service{
 		Store: metadata, Runner: ingestionRunner,
@@ -198,7 +198,7 @@ func runCommandIO(args []string, stdout io.Writer) error {
 			return err
 		}
 		defer metadata.Close()
-		python := runnerpython.Runner{Binary: cfg.PythonBinary, Secrets: metadata.Secrets()}
+		python := runnerpython.Runner{Binary: cfg.PythonBinary, Secrets: metadata.Secrets(), Environments: &runnerpython.Environments{Dir: filepath.Join(cfg.DataDir, "environments"), UVBinary: cfg.UVBinary}}
 		started := time.Now()
 		fmt.Fprintf(stdout, "Running %s\n", document.Metadata.Name)
 		if err := python.Run(ctx, plan); err != nil {

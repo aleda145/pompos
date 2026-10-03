@@ -7,6 +7,7 @@ import (
 )
 
 type Config struct {
+	UVBinary     string
 	PythonBinary string
 	Address      string
 	DataDir      string
@@ -23,6 +24,7 @@ func Load() Config {
 	dataDir := env("POMPOS_DATA_DIR", "./data")
 	destinationPath := env("POMPOS_DESTINATION_PATH", joinDataPath(dataDir, "pompos.duckdb"))
 	return Config{
+		UVBinary:     env("POMPOS_UV_BINARY", "uv"),
 		PythonBinary: env("POMPOS_PYTHON_BINARY", "python3"),
 		Address:      env("POMPOS_ADDRESS", "127.0.0.1:8080"),
 		DataDir:      dataDir,

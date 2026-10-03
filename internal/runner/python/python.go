@@ -20,8 +20,9 @@ import (
 )
 
 type Runner struct {
-	Binary  string
-	Secrets secrets.Store
+	Environments *Environments
+	Binary       string
+	Secrets      secrets.Store
 }
 
 func (r Runner) Run(ctx context.Context, plan compiler.ExecutionPlan) error {
@@ -40,6 +41,10 @@ func (r Runner) Validate(ctx context.Context, plan compiler.ExecutionPlan, limit
 	var result ValidationResult
 	if limit < 1 || limit > 1000 {
 		return result, "", fmt.Errorf("validation limit must be between 1 and 1000")
+	}
+	plan, err := r.Prepare(ctx, plan)
+	if err != nil {
+		return result, "", err
 	}
 	directory, err := os.MkdirTemp("", "pompos-validation-*")
 	if err != nil {
@@ -107,6 +112,10 @@ func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 	if spec.Digest(data) != plan.ScriptDigest {
 		return "", fmt.Errorf("Python script changed since it was tested; test and save it again")
 	}
+	plan, err = r.Prepare(ctx, plan)
+	if err != nil {
+		return "", err
+	}
 	values := map[string]string{}
 	for _, ref := range plan.SecretRefs {
 		value, err := r.Secrets.Get(ctx, ref)
@@ -126,15 +135,12 @@ func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	binary := r.Binary
-	if binary == "" {
-		binary = "python3"
-	}
+	binary := plan.PythonBinary
 	script, err := filepath.Abs(plan.Script)
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.CommandContext(ctx, binary, "-u", script)
+	cmd := exec.CommandContext(ctx, binary, "-I", "-u", script)
 	// Do not inherit provider keys or unrelated service credentials.
 	for _, key := range []string{"PATH", "HOME", "LANG", "SYSTEMROOT", "TMPDIR"} {
 		if value, ok := os.LookupEnv(key); ok {

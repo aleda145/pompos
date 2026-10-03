@@ -49,13 +49,14 @@ func (r Runner) Preview(ctx context.Context, plan compiler.ExecutionPlan) (Table
 	if _, err := os.Stat(plan.DestinationPath); err != nil {
 		return result, err
 	}
+	plan, err := r.Prepare(ctx, plan)
+	if err != nil {
+		return result, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	binary := r.Binary
-	if binary == "" {
-		binary = "python3"
-	}
-	cmd := exec.CommandContext(ctx, binary, "-c", previewScript, plan.DestinationPath, schema, plan.DestinationObject)
+	binary := plan.PythonBinary
+	cmd := exec.CommandContext(ctx, binary, "-I", "-c", previewScript, plan.DestinationPath, schema, plan.DestinationObject)
 	cmd.Env = []string{"DLT_TELEMETRY=0"}
 	for _, key := range []string{"PATH", "LANG", "SYSTEMROOT", "TMPDIR"} {
 		if value, ok := os.LookupEnv(key); ok {

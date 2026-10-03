@@ -1,13 +1,16 @@
 BINARY ?= bin/pompos
 UV ?= uv
 VENV ?= .venv
-LOCAL_PYTHON := $(abspath $(VENV)/bin/python)
 
-.PHONY: setup build run test vet docker-build docker-up docker-down
+.PHONY: setup setup-test-python build run test vet docker-build docker-up docker-down
 
-setup: $(VENV)/.pompos-deps
+setup:
+	$(UV) --version
+	$(UV) python find python3
 
-$(VENV)/.pompos-deps: requirements-local.txt
+setup-test-python: $(VENV)/.pompos-deps
+
+$(VENV)/.pompos-deps: requirements-local.txt internal/runner/python/requirements.txt
 	$(UV) venv --allow-existing --no-project $(VENV)
 	$(UV) pip install --python $(VENV)/bin/python -r requirements-local.txt
 	touch $@
@@ -17,7 +20,7 @@ build:
 	go build -o $(BINARY) ./cmd/pompos
 
 run: setup
-	POMPOS_PYTHON_BINARY="$(LOCAL_PYTHON)" go run ./cmd/pompos
+	POMPOS_UV_BINARY="$(UV)" go run ./cmd/pompos
 
 test:
 	go test ./...

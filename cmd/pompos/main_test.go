@@ -12,6 +12,7 @@ import (
 	"pompos/internal/ingestion"
 	"pompos/internal/spec"
 	"pompos/internal/store"
+	"pompos/internal/testutil"
 )
 
 func commandFixture(t *testing.T, code string) string {
@@ -25,6 +26,7 @@ func commandFixture(t *testing.T, code string) string {
 	t.Setenv("POMPOS_METADATA_PATH", filepath.Join(dir, "metadata.sqlite"))
 	t.Setenv("POMPOS_DESTINATION_PATH", filepath.Join(dir, "out.duckdb"))
 	t.Setenv("POMPOS_PYTHON_BINARY", python)
+	t.Setenv("POMPOS_UV_BINARY", testutil.FakeUV(t))
 	document, _, err := spec.Read("../../internal/spec/testdata/customers.yaml")
 	if err != nil {
 		t.Fatal(err)

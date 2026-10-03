@@ -101,7 +101,7 @@ func localPort(host string) string {
 }
 
 func (a *App) previewIngestion(ctx context.Context, id string) (runnerpython.TablePreview, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, runnerpython.EnvironmentPreparationTimeout+10*time.Second)
 	defer cancel()
 	item, err := a.getIngestion(ctx, id)
 	if err != nil {
@@ -114,6 +114,7 @@ func (a *App) previewIngestion(ctx context.Context, id string) (runnerpython.Tab
 		return runnerpython.TablePreview{}, errors.New(runnerpython.PreviewUnavailable)
 	}
 	return a.Previewer.Preview(ctx, compiler.ExecutionPlan{
+		Python: item.Runtime.Python, Dependencies: item.Runtime.Dependencies, DependencyLock: item.Runtime.DependencyLock,
 		DestinationType: item.Destination.Type, DestinationPath: item.Destination.Path,
 		DestinationSchema: item.Destination.Schema, DestinationObject: item.Destination.Table, SecretRefs: item.Runtime.SecretRefs,
 	})

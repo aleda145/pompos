@@ -52,12 +52,23 @@ type Destination struct {
 	Table  string
 }
 
+// DependencyLock records the environment that passed the source probe.
+type DependencyLock struct {
+	InputDigest  string `json:"input_digest" yaml:"inputDigest"`
+	Python       string `json:"python" yaml:"python"`
+	Platform     string `json:"platform" yaml:"platform"`
+	Requirements string `json:"requirements" yaml:"requirements"`
+}
+
 type Runtime struct {
-	Script       string
-	ScriptDigest string
-	SecretRefs   []string
-	Engine       string
-	Orchestrator string
+	Python         string
+	Dependencies   []string
+	DependencyLock *DependencyLock
+	Script         string
+	ScriptDigest   string
+	SecretRefs     []string
+	Engine         string
+	Orchestrator   string
 }
 
 type Materialization struct {

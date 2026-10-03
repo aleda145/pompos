@@ -144,7 +144,7 @@ func TestIngestionPreviewUsesRequestCancellationAndTimeout(t *testing.T) {
 	app.Previewer = previewFunc(func(previewCtx context.Context, _ compiler.ExecutionPlan) (runnerpython.TablePreview, error) {
 		called = true
 		deadline, ok := previewCtx.Deadline()
-		if !ok || time.Until(deadline) > 10*time.Second {
+		if !ok || time.Until(deadline) > runnerpython.EnvironmentPreparationTimeout+10*time.Second {
 			t.Fatal("preview must have a bounded deadline")
 		}
 		cancel()
