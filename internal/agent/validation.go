@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"strings"
 
 	"pompos/internal/compiler"
 	"pompos/internal/destination"
@@ -36,20 +34,8 @@ func (s *Service) validationPlan(ctx context.Context, v *Session) (compiler.Exec
 	if err := v.Loading.Validate(); err != nil {
 		return plan, "", err
 	}
-	data, err := os.ReadFile(s.scriptPath(v.ID))
-	if err != nil {
-		return plan, "", err
-	}
-	if v.TestedDigest == "" || spec.Digest(data) != v.TestedDigest {
+	if !v.Probed {
 		return plan, "", errors.New("the current script must pass test_script first")
-	}
-	if !strings.HasPrefix(string(data), runnerpython.ScriptMetadata(v.Draft.Python, v.Draft.Dependencies)) {
-		return plan, "", errors.New("Python dependencies changed; run write_script and test_script again")
-	}
-	if v.Draft.LockDigest != "" {
-		if _, err := runnerpython.ReadScriptLock(s.scriptPath(v.ID), v.Draft.LockDigest); err != nil {
-			return plan, "", err
-		}
 	}
 
 	dest, err := s.Destinations.GetDestination(ctx, v.Draft.Destination)
@@ -60,11 +46,11 @@ func (s *Service) validationPlan(ctx context.Context, v *Session) (compiler.Exec
 		return plan, "", errors.New("validation supports DuckDB destinations")
 	}
 	applyLoading(v)
-	plan = compiler.ExecutionPlan{Engine: "python", Script: s.scriptPath(v.ID), ScriptDigest: v.TestedDigest,
-		Python: v.Draft.Python, Dependencies: v.Draft.Dependencies, LockDigest: v.Draft.LockDigest,
+	plan = compiler.ExecutionPlan{Engine: "python", Script: s.scriptPath(v.ID),
+		Python: v.Draft.Python, Dependencies: v.Draft.Dependencies,
 		SecretRefs: v.Draft.SecretRefs, DestinationType: dest.Type, DestinationPath: dest.Path,
 		DestinationSchema: destination.SchemaName(v.Draft.Schema), DestinationObject: v.Draft.Table, Strategy: v.Loading.Strategy, PrimaryKey: v.Loading.PrimaryKey}
-	data, err = json.Marshal(struct {
+	data, err := json.Marshal(struct {
 		Draft *Draft
 		Plan  compiler.ExecutionPlan
 	}{v.Draft, plan})

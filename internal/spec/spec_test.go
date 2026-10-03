@@ -64,10 +64,7 @@ func TestMaterializationAndRuntimeRequirements(t *testing.T) {
 	if err := doc.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	doc.Runtime.ScriptDigest = "sha256:invalid"
-	if err := doc.Validate(); err == nil {
-		t.Fatal("invalid script digest accepted")
-	}
+
 }
 func TestProjectionPreservesPythonSettings(t *testing.T) {
 	doc, _, err := Read("testdata/customers.yaml")
@@ -77,7 +74,7 @@ func TestProjectionPreservesPythonSettings(t *testing.T) {
 	doc.Schedule = &Schedule{Cron: "0 6 * * *", Timezone: "UTC"}
 	item := ToProjection(doc, "customers", "customers.yaml", "digest")
 	roundtrip := FromIngestion(item)
-	if roundtrip.Runtime.ScriptDigest != doc.Runtime.ScriptDigest || roundtrip.Runtime.SecretRefs[0] != "source-key" || roundtrip.Destination.Path != doc.Destination.Path || roundtrip.Schedule.Cron != doc.Schedule.Cron {
+	if roundtrip.Runtime.Script != doc.Runtime.Script || roundtrip.Runtime.SecretRefs[0] != "source-key" || roundtrip.Destination.Path != doc.Destination.Path || roundtrip.Schedule.Cron != doc.Schedule.Cron {
 		t.Fatalf("settings lost: %#v", roundtrip)
 	}
 }

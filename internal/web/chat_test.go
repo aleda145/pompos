@@ -175,7 +175,7 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 	if e != nil {
 		t.Fatal(e)
 	}
-	if doc.Destination.Schema != "raw" || doc.Runtime.Engine != "python" || doc.Runtime.Script == "" || doc.Runtime.ScriptDigest == "" || doc.Schedule.Cron != "0 6 * * *" {
+	if doc.Destination.Schema != "raw" || doc.Runtime.Engine != "python" || doc.Runtime.Script == "" || doc.Schedule.Cron != "0 6 * * *" {
 		t.Fatalf("lost Python spec fields: %#v", doc)
 	}
 	w = request("POST", detail+"/run", "", "")

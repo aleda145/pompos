@@ -16,7 +16,6 @@ import (
 	"pompos/internal/compiler"
 	"pompos/internal/destination"
 	"pompos/internal/secrets"
-	"pompos/internal/spec"
 )
 
 type Runner struct {
@@ -105,14 +104,7 @@ func ReadResult(output, marker string, result any) error {
 }
 
 func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe bool, validationLimit int) (string, error) {
-	data, err := os.ReadFile(plan.Script)
-	if err != nil {
-		return "", err
-	}
-	if spec.Digest(data) != plan.ScriptDigest {
-		return "", fmt.Errorf("Python script changed since it was tested; test and save it again")
-	}
-	plan, err = r.Prepare(ctx, plan)
+	plan, err := r.Prepare(ctx, plan)
 	if err != nil {
 		return "", err
 	}

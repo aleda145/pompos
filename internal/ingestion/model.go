@@ -55,9 +55,7 @@ type Destination struct {
 type Runtime struct {
 	Python       string
 	Dependencies []string
-	LockDigest   string
 	Script       string
-	ScriptDigest string
 	SecretRefs   []string
 	Engine       string
 	Orchestrator string

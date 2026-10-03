@@ -41,7 +41,7 @@ func newPreviewTestApp(t *testing.T) (*App, string) {
 	}
 	item := ingestion.Ingestion{ID: "rows", Name: "Rows", Source: ingestion.Source{Type: "python", URL: "fixture", Table: "rows"},
 		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "rows"},
-		Runtime:     ingestion.Runtime{Engine: "python", Script: script, ScriptDigest: spec.Digest([]byte("fixture"))}}
+		Runtime:     ingestion.Runtime{Engine: "python", Script: script}}
 	path, err := spec.Write(dir, item)
 	if err != nil {
 		t.Fatal(err)

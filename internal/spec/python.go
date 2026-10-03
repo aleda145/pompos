@@ -10,7 +10,7 @@ import (
 var pythonVersion = regexp.MustCompile(`^3\.[0-9]+(\.[0-9]+)?$`)
 var requirement = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*(\[[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*\])?([ ]*(==|!=|~=|>=|<=|>|<)[ ]*[A-Za-z0-9.*+!_-]+([ ]*,[ ]*(==|!=|~=|>=|<=|>|<)[ ]*[A-Za-z0-9.*+!_-]+)*)?$`)
 
-func ValidatePythonRuntime(python string, dependencies []string, lockDigest string) error {
+func ValidatePythonRuntime(python string, dependencies []string) error {
 	if python != "" && !pythonVersion.MatchString(python) {
 		return fmt.Errorf("runtime.python: use a Python 3 version such as 3.12")
 	}
@@ -22,8 +22,6 @@ func ValidatePythonRuntime(python string, dependencies []string, lockDigest stri
 			return fmt.Errorf("runtime.dependencies: invalid registry requirement %q", dep)
 		}
 	}
-	if lockDigest != "" && !scriptDigest.MatchString(lockDigest) {
-		return fmt.Errorf("runtime.lockDigest: must be a SHA-256 digest")
-	}
+
 	return nil
 }

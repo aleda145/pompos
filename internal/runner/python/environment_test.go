@@ -2,7 +2,6 @@ package python
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,7 +11,6 @@ import (
 	"time"
 
 	"pompos/internal/compiler"
-	"pompos/internal/spec"
 	"pompos/internal/testutil"
 )
 
@@ -25,7 +23,7 @@ func environmentFixture(t *testing.T) (Runner, compiler.ExecutionPlan) {
 	if err := os.WriteFile(script, code, 0600); err != nil {
 		t.Fatal(err)
 	}
-	return r, compiler.ExecutionPlan{Engine: "python", Script: script, ScriptDigest: spec.Digest(code), DestinationPath: filepath.Join(dir, "data.duckdb"), DestinationObject: "customers", Dependencies: []string{"fixture-package==1.0"}}
+	return r, compiler.ExecutionPlan{Engine: "python", Script: script, DestinationPath: filepath.Join(dir, "data.duckdb"), DestinationObject: "customers", Dependencies: []string{"fixture-package==1.0"}}
 }
 
 func TestEnvironmentsIsolateReuseAndLockVersions(t *testing.T) {
@@ -52,6 +50,17 @@ func TestEnvironmentsIsolateReuseAndLockVersions(t *testing.T) {
 	if string(before) != string(after) {
 		t.Fatal("cached environment invoked uv again")
 	}
+	code, err := os.ReadFile(plan.Script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code = []byte(strings.Replace(string(code), "'version': fixture_package.VERSION", "'edited': True, 'version': fixture_package.VERSION", 1))
+	if err := os.WriteFile(plan.Script, code, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := r.Execute(ctx, plan, true); err != nil || !strings.Contains(out, `"edited": true`) {
+		t.Fatalf("manual script edit was not executed: %s %v", out, err)
+	}
 	// Publishing changes the script path but retains the destination identity.
 	original := plan.Script
 	plan.Script = filepath.Join(t.TempDir(), "published.py")
@@ -64,7 +73,6 @@ func TestEnvironmentsIsolateReuseAndLockVersions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	plan.LockDigest = prepared.LockDigest
 	published, err := r.Prepare(ctx, plan)
 	if err != nil || published.PythonBinary != prepared.PythonBinary {
 		t.Fatalf("published ingestion lost its environment: %v", err)
@@ -75,19 +83,6 @@ func TestEnvironmentsIsolateReuseAndLockVersions(t *testing.T) {
 		t.Fatalf("ingestions shared an environment: %v", err)
 	}
 	plan.Dependencies = []string{"fixture-package==2.0"}
-	if _, err := r.Prepare(ctx, plan); err == nil || !strings.Contains(err.Error(), "metadata") {
-		t.Fatalf("changed dependencies reused the old lock: %v", err)
-	}
-	plan.LockDigest = ""
-	updatedCode, err := os.ReadFile(plan.Script)
-	if err != nil {
-		t.Fatal(err)
-	}
-	updatedCode = []byte(strings.Replace(string(updatedCode), "fixture-package==1.0", "fixture-package==2.0", 1))
-	if err := os.WriteFile(plan.Script, updatedCode, 0600); err != nil {
-		t.Fatal(err)
-	}
-	plan.ScriptDigest = spec.Digest(updatedCode)
 	updated, err := r.Prepare(ctx, plan)
 	if err != nil || updated.PythonBinary == other.PythonBinary {
 		t.Fatalf("dependency change mutated the old environment: %v", err)
@@ -161,29 +156,27 @@ func TestEnvironmentLockWaitIsCancellable(t *testing.T) {
 	}
 }
 
-func TestSavedEnvironmentRejectsMissingOrChangedLock(t *testing.T) {
+func TestEnvironmentAcceptsEditedAndMissingLock(t *testing.T) {
 	r, plan := environmentFixture(t)
-	prepared, err := r.Prepare(context.Background(), plan)
+	ctx := context.Background()
+	if _, err := r.Prepare(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := ReadScriptLock(plan.Script)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan.LockDigest = prepared.LockDigest
-	r.Environments.UVBinary = "/uv-must-not-relock-a-saved-ingestion"
-	lock, err := ReadScriptLock(plan.Script, plan.LockDigest)
-	if err != nil {
+	if err := os.WriteFile(plan.Script+".lock", append(lock, []byte("# edited by operator\n")...), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(plan.Script+".lock", append(lock, []byte("# changed\n")...), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.Prepare(context.Background(), plan); err == nil || !strings.Contains(err.Error(), "changed") {
-		t.Fatalf("cached environment accepted changed lock: %v", err)
+	if _, err := r.Prepare(ctx, plan); err != nil {
+		t.Fatalf("manual lock edit rejected: %v", err)
 	}
 	if err := os.Remove(plan.Script + ".lock"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Prepare(context.Background(), plan); err == nil || !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("saved execution regenerated missing lock: %v", err)
+	if _, err := r.Prepare(ctx, plan); err != nil {
+		t.Fatalf("could not recreate lock: %v", err)
 	}
 }
 
@@ -200,13 +193,13 @@ func TestUVIntegration(t *testing.T) {
 	if err := os.WriteFile(script, code, 0600); err != nil {
 		t.Fatal(err)
 	}
-	plan := compiler.ExecutionPlan{Engine: "python", Script: script, ScriptDigest: spec.Digest(code), DestinationPath: filepath.Join(dir, "out.duckdb"), DestinationObject: "customers", Strategy: "replace", Dependencies: []string{"psycopg2-binary"}}
+	plan := compiler.ExecutionPlan{Engine: "python", Script: script, DestinationPath: filepath.Join(dir, "out.duckdb"), DestinationObject: "customers", Strategy: "replace", Dependencies: []string{"psycopg2-binary"}}
 	ctx := context.Background()
 	prepared, err := r.Prepare(ctx, plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lock, err := ReadScriptLock(script, prepared.LockDigest)
+	lock, err := ReadScriptLock(script)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +220,6 @@ func TestUVIntegration(t *testing.T) {
 		t.Fatalf("preview: %#v %v", preview, err)
 	}
 	// A fresh runner and saved lock can recover the same environment.
-	plan.LockDigest = prepared.LockDigest
 	r.Environments.UVBinary = "/uv-must-not-be-needed-again"
 	if _, err := r.Execute(ctx, plan, true); err != nil {
 		t.Fatal(err)

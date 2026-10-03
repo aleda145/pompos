@@ -30,7 +30,7 @@ func TestUpdateSchedulePersistsAndRegisters(t *testing.T) {
 	item := ingestion.Ingestion{
 		ID: "scheduled", Name: "customers", Status: ingestion.StatusSucceeded,
 		Source:      ingestion.Source{Type: "python", URL: "https://example.com/customers.csv", Table: "customers"},
-		Runtime:     ingestion.Runtime{Engine: "python", Script: "customers.py", ScriptDigest: spec.Digest([]byte("fixture"))},
+		Runtime:     ingestion.Runtime{Engine: "python", Script: "customers.py"},
 		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "customers"},
 	}
 	path, err := spec.Write(filepath.Join(dataDir, "ingestions"), item)
@@ -120,7 +120,7 @@ func TestRunAgainOnlyEnqueuesDurableWork(t *testing.T) {
 	item := ingestion.Ingestion{
 		ID: "rerun", Name: "customers", Status: ingestion.StatusSucceeded,
 		Source:      ingestion.Source{Type: "python", URL: "https://example.com/customers.csv", Table: "customers"},
-		Runtime:     ingestion.Runtime{Engine: "python", Script: "customers.py", ScriptDigest: spec.Digest([]byte("fixture"))},
+		Runtime:     ingestion.Runtime{Engine: "python", Script: "customers.py"},
 		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "customers"},
 	}
 	path, err := spec.Write(filepath.Join(dataDir, "ingestions"), item)
@@ -194,7 +194,7 @@ func TestSecretsPageAddsAndListsNamesWithoutValues(t *testing.T) {
 	secretItem := ingestion.Ingestion{
 		ID: "uses-secret", Name: "Codex issues", Status: ingestion.StatusSucceeded,
 		Source:      ingestion.Source{Type: "python", URL: "https://github.com/openai/codex", Table: "issues"},
-		Runtime:     ingestion.Runtime{Engine: "python", Script: "issues.py", ScriptDigest: spec.Digest([]byte("fixture")), SecretRefs: []string{"github-production"}},
+		Runtime:     ingestion.Runtime{Engine: "python", Script: "issues.py", SecretRefs: []string{"github-production"}},
 		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "codex_issues"},
 	}
 	secretPath, err := spec.Write(filepath.Join(dataDir, "ingestions"), secretItem)

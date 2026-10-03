@@ -124,7 +124,7 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if !v.Ready || v.TestedDigest == "" || step != 12 {
+	if !v.Ready || !v.Probed || step != 12 {
 		t.Fatalf("not ready: %#v, steps %d", v, step)
 	}
 	restarted := &Service{Dir: service.Dir, Secrets: db.Secrets(), Destinations: db}
@@ -149,8 +149,8 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 		if roundtrip.Schedule == nil || roundtrip.Schedule.Cron != "0 6 * * *" || roundtrip.Schedule.Timezone != "UTC" || roundtrip.Materialization.Strategy != "replace" {
 			t.Fatal("confirmed loading settings lost in YAML")
 		}
-		if roundtrip.Runtime.ScriptDigest != v.TestedDigest {
-			t.Fatal("lost script digest")
+		if roundtrip.Runtime.Script != doc.Runtime.Script {
+			t.Fatal("lost script path")
 		}
 		return nil
 	}
@@ -166,7 +166,7 @@ func TestLoopRepairsFailedProbeAndPersistsTestedArtifact(t *testing.T) {
 		t.Fatal("duplicate publish")
 	}
 	data, e := os.ReadFile(spec.ArtifactPath(artifactDir, savedID, ".py"))
-	if e != nil || spec.Digest(data) != v.TestedDigest {
+	if e != nil || string(data) != runnerpython.Wrap(v.Draft.Code) {
 		t.Fatal("published different code")
 	}
 }

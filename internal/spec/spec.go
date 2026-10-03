@@ -56,9 +56,7 @@ type Materialization struct {
 type Runtime struct {
 	Python       string   `yaml:"python,omitempty"`
 	Dependencies []string `yaml:"dependencies,omitempty"`
-	LockDigest   string   `yaml:"lockDigest,omitempty"`
 	Script       string   `yaml:"script"`
-	ScriptDigest string   `yaml:"scriptDigest"`
 	SecretRefs   []string `yaml:"secretRefs,omitempty"`
 	Engine       string   `yaml:"engine"`
 	Orchestrator string   `yaml:"orchestrator,omitempty"`
@@ -69,7 +67,6 @@ type Schedule struct {
 }
 
 var objectName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-var scriptDigest = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 func Parse(data []byte) (Ingestion, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
@@ -133,10 +130,7 @@ func (s Ingestion) Validate() error {
 	if s.Runtime.Script == "" || !strings.HasSuffix(s.Runtime.Script, ".py") {
 		return errors.New("spec.runtime.script: must name a Python file")
 	}
-	if !scriptDigest.MatchString(s.Runtime.ScriptDigest) {
-		return errors.New("spec.runtime.scriptDigest: must be a SHA-256 digest")
-	}
-	if err := ValidatePythonRuntime(s.Runtime.Python, s.Runtime.Dependencies, s.Runtime.LockDigest); err != nil {
+	if err := ValidatePythonRuntime(s.Runtime.Python, s.Runtime.Dependencies); err != nil {
 		return err
 	}
 	if s.Runtime.Orchestrator != "" && s.Runtime.Orchestrator != "direct" {
@@ -200,7 +194,7 @@ func FromIngestion(item ingestion.Ingestion) Ingestion {
 		Source:          Source{Type: item.Source.Type, URL: item.Source.URL, Table: item.Source.Table},
 		Destination:     Destination{Schema: item.Destination.Schema, Type: item.Destination.Type, Path: item.Destination.Path, Object: item.Destination.Table},
 		Materialization: Materialization{Strategy: defaultStrategy(item.Materialization.Strategy), PrimaryKey: item.Materialization.PrimaryKey},
-		Runtime:         Runtime{Engine: item.Runtime.Engine, Orchestrator: item.Runtime.Orchestrator, Script: item.Runtime.Script, ScriptDigest: item.Runtime.ScriptDigest, SecretRefs: item.Runtime.SecretRefs, Python: item.Runtime.Python, Dependencies: item.Runtime.Dependencies, LockDigest: item.Runtime.LockDigest},
+		Runtime:         Runtime{Engine: item.Runtime.Engine, Orchestrator: item.Runtime.Orchestrator, Script: item.Runtime.Script, SecretRefs: item.Runtime.SecretRefs, Python: item.Runtime.Python, Dependencies: item.Runtime.Dependencies},
 	}
 	if item.Schedule != "" {
 		document.Schedule = &Schedule{Cron: item.Schedule, Timezone: "UTC"}
@@ -213,7 +207,7 @@ func ToProjection(document Ingestion, id, path, digest string) ingestion.Ingesti
 		Source:          ingestion.Source{Type: document.Source.Type, URL: document.Source.URL, Table: document.Source.Table},
 		Destination:     ingestion.Destination{Schema: destination.SchemaName(document.Destination.Schema), Type: document.Destination.Type, Path: document.Destination.Path, Table: document.Destination.Object},
 		Materialization: ingestion.Materialization{Strategy: defaultStrategy(document.Materialization.Strategy), PrimaryKey: document.Materialization.PrimaryKey},
-		Runtime:         ingestion.Runtime{Engine: document.Runtime.Engine, Orchestrator: document.Runtime.Orchestrator, Script: document.Runtime.Script, ScriptDigest: document.Runtime.ScriptDigest, SecretRefs: document.Runtime.SecretRefs, Python: document.Runtime.Python, Dependencies: document.Runtime.Dependencies, LockDigest: document.Runtime.LockDigest}, SpecPath: path, SpecDigest: digest,
+		Runtime:         ingestion.Runtime{Engine: document.Runtime.Engine, Orchestrator: document.Runtime.Orchestrator, Script: document.Runtime.Script, SecretRefs: document.Runtime.SecretRefs, Python: document.Runtime.Python, Dependencies: document.Runtime.Dependencies}, SpecPath: path, SpecDigest: digest,
 	}
 	if document.Schedule != nil {
 		item.Schedule = document.Schedule.Cron

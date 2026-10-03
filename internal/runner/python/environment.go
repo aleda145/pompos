@@ -58,9 +58,8 @@ func ScriptMetadata(python string, dependencies []string) string {
 	return out.String()
 }
 
-// ReadScriptLock binds validation and scheduled execution to the tested bytes.
-// The contents remain an opaque uv-native lock; uv validates its semantics.
-func ReadScriptLock(script, digest string) ([]byte, error) {
+// ReadScriptLock reads uv-native data; uv validates its semantics.
+func ReadScriptLock(script string) ([]byte, error) {
 	data, err := os.ReadFile(script + ".lock")
 	if err != nil {
 		return nil, fmt.Errorf("read Python script lock: %w", err)
@@ -68,23 +67,21 @@ func ReadScriptLock(script, digest string) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("Python script lock is empty; probe again")
 	}
-	if digest != "" && spec.Digest(data) != digest {
-		return nil, fmt.Errorf("Python script lock changed since it was tested; probe and validate again")
-	}
+
 	return data, nil
 }
 
 // Prepare installs from the native script lock before execution timeouts start.
 // A nil manager supports callers supplying an already provisioned interpreter.
 func (r Runner) Prepare(ctx context.Context, plan compiler.ExecutionPlan) (compiler.ExecutionPlan, error) {
-	if err := spec.ValidatePythonRuntime(plan.Python, plan.Dependencies, plan.LockDigest); err != nil {
+	if err := spec.ValidatePythonRuntime(plan.Python, plan.Dependencies); err != nil {
 		return plan, err
 	}
 	if plan.PythonBinary != "" {
 		return plan, nil
 	}
 	if r.Environments == nil {
-		if plan.Python != "" || len(plan.Dependencies) > 0 || plan.LockDigest != "" {
+		if plan.Python != "" || len(plan.Dependencies) > 0 {
 			return plan, fmt.Errorf("Python dependencies require a uv environment manager")
 		}
 		plan.PythonBinary = r.Binary
@@ -93,23 +90,14 @@ func (r Runner) Prepare(ctx context.Context, plan compiler.ExecutionPlan) (compi
 		}
 		return plan, nil
 	}
-	code, err := os.ReadFile(plan.Script)
-	if err != nil {
-		return plan, err
-	}
-	if spec.Digest(code) != plan.ScriptDigest {
-		return plan, fmt.Errorf("Python script changed since it was tested; test and save it again")
-	}
 	metadata := ScriptMetadata(plan.Python, plan.Dependencies)
-	if !strings.HasPrefix(string(code), metadata) {
-		return plan, fmt.Errorf("Python script metadata does not match its runtime declarations; rewrite and probe the script")
-	}
 	ctx, cancel := context.WithTimeout(ctx, EnvironmentPreparationTimeout)
 	defer cancel()
 	manager := *r.Environments
 	if manager.Dir == "" {
 		return plan, fmt.Errorf("Python environment directory is required")
 	}
+	var err error
 	manager.Dir, err = filepath.Abs(manager.Dir)
 	if err != nil {
 		return plan, err
@@ -138,6 +126,22 @@ func (r Runner) Prepare(ctx context.Context, plan compiler.ExecutionPlan) (compi
 		return plan, err
 	}
 	defer guard.Close()
+	code, err := os.ReadFile(script)
+	if err != nil {
+		return plan, err
+	}
+	body := string(code)
+	if strings.HasPrefix(body, "# /// script\n") {
+		if end := strings.Index(body[len("# /// script\n"):], "# ///\n"); end >= 0 {
+			body = body[len("# /// script\n")+end+len("# ///\n"):]
+			body = strings.TrimPrefix(body, "\n")
+		}
+	}
+	if updated := metadata + body; updated != string(code) {
+		if err := os.WriteFile(script, []byte(updated), 0600); err != nil {
+			return plan, err
+		}
+	}
 
 	selector := plan.Python
 	if selector == "" {
@@ -152,8 +156,8 @@ func (r Runner) Prepare(ctx context.Context, plan compiler.ExecutionPlan) (compi
 		key := metadata + "\x00" + selector + "\x00" + runtime.GOOS + "/" + runtime.GOARCH + "\x00" + string(lock)
 		return filepath.Join(directory, hashName([]byte(key)))
 	}
-	lock, err := ReadScriptLock(script, plan.LockDigest)
-	if err != nil && (plan.LockDigest != "" || !errors.Is(err, os.ErrNotExist)) {
+	lock, err := ReadScriptLock(script)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return plan, err
 	}
 	if len(lock) > 0 {
@@ -163,22 +167,19 @@ func (r Runner) Prepare(ctx context.Context, plan compiler.ExecutionPlan) (compi
 			if _, err := os.Stat(plan.PythonBinary); err != nil {
 				return plan, fmt.Errorf("incomplete Python environment: %w", err)
 			}
-			plan.LockDigest = spec.Digest(lock)
 			return plan, nil
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return plan, err
 		}
 	}
-	if plan.LockDigest == "" {
-		// Draft probes may update a lock. Saved executions always use --locked.
-		if _, err := manager.run(ctx, "lock", "--script", script, "--python", selector); err != nil {
-			return plan, err
-		}
-		lock, err = ReadScriptLock(script, "")
-		if err != nil {
-			return plan, err
-		}
+	if _, err := manager.run(ctx, "lock", "--script", script, "--python", selector); err != nil {
+		return plan, err
 	}
+	lock, err = ReadScriptLock(script)
+	if err != nil {
+		return plan, err
+	}
+
 	environment := environmentPath(lock)
 	binary := filepath.Join(environment, "bin", "python")
 	if _, err := os.Stat(filepath.Join(environment, ".ready")); errors.Is(err, os.ErrNotExist) {
@@ -192,9 +193,7 @@ func (r Runner) Prepare(ctx context.Context, plan compiler.ExecutionPlan) (compi
 		if _, err := manager.runInEnvironment(ctx, environment, "sync", "--active", "--locked", "--script", script, "--python", binary); err != nil {
 			return plan, err
 		}
-		if _, err := ReadScriptLock(script, spec.Digest(lock)); err != nil {
-			return plan, err
-		}
+
 		if err := os.WriteFile(filepath.Join(environment, ".ready"), []byte("ready\n"), 0600); err != nil {
 			return plan, err
 		}
@@ -205,7 +204,6 @@ func (r Runner) Prepare(ctx context.Context, plan compiler.ExecutionPlan) (compi
 		return plan, fmt.Errorf("incomplete Python environment: %w", err)
 	}
 
-	plan.LockDigest = spec.Digest(lock)
 	plan.PythonBinary = binary
 	return plan, nil
 }

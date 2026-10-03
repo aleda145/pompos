@@ -9,11 +9,10 @@ import (
 	"testing"
 
 	"pompos/internal/compiler"
-	"pompos/internal/spec"
 	"pompos/internal/store"
 )
 
-func TestProbeRedactsSecretsAndRejectsChangedScript(t *testing.T) {
+func TestProbeRedactsSecretsAndAcceptsManualEdits(t *testing.T) {
 	binary, e := exec.LookPath("python3")
 	if e != nil {
 		t.Skip("python3 unavailable")
@@ -30,15 +29,15 @@ func TestProbeRedactsSecretsAndRejectsChangedScript(t *testing.T) {
 	data := []byte(Wrap("def fetch(secret, limit):\n    yield {'id': 1, 'value': secret('token')}\n"))
 	path := filepath.Join(dir, "test.py")
 	os.WriteFile(path, data, 0600)
-	plan := compiler.ExecutionPlan{Script: path, ScriptDigest: spec.Digest(data), SecretRefs: []string{"token"}}
+	plan := compiler.ExecutionPlan{Script: path, SecretRefs: []string{"token"}}
 	r := Runner{Binary: binary, Secrets: db.Secrets()}
 	out, e := r.Execute(context.Background(), plan, true)
 	if e != nil || strings.Contains(out, "private-token") || !strings.Contains(out, "[REDACTED]") {
 		t.Fatalf("output %s, error %v", out, e)
 	}
 	os.WriteFile(path, append(data, '\n'), 0600)
-	if _, e = r.Execute(context.Background(), plan, true); e == nil {
-		t.Fatal("changed script accepted")
+	if _, e = r.Execute(context.Background(), plan, true); e != nil {
+		t.Fatalf("manual edit rejected: %v", e)
 	}
 }
 func TestDLTLoadKeepsNestedRowsInOneTable(t *testing.T) {
@@ -51,7 +50,7 @@ func TestDLTLoadKeepsNestedRowsInOneTable(t *testing.T) {
 	data := []byte(Wrap("def fetch(secret, limit):\n    yield {'id': 1, 'nested': [{'value': 2}]}\n"))
 	os.WriteFile(path, data, 0600)
 	destination := filepath.Join(dir, "out.duckdb")
-	plan := compiler.ExecutionPlan{Engine: "python", Script: path, ScriptDigest: spec.Digest(data), DestinationPath: destination, DestinationObject: "stars", Strategy: "replace"}
+	plan := compiler.ExecutionPlan{Engine: "python", Script: path, DestinationPath: destination, DestinationObject: "stars", Strategy: "replace"}
 	r := Runner{Binary: binary}
 	if _, e := r.Execute(context.Background(), plan, true); e != nil {
 		t.Fatal(e)
@@ -79,7 +78,7 @@ func TestProbeRequiresActualSample(t *testing.T) {
 		path := filepath.Join(dir, "probe.py")
 		data := []byte(Wrap(code))
 		os.WriteFile(path, data, 0600)
-		_, err := (Runner{Binary: "python3"}).Execute(context.Background(), compiler.ExecutionPlan{Script: path, ScriptDigest: spec.Digest(data)}, true)
+		_, err := (Runner{Binary: "python3"}).Execute(context.Background(), compiler.ExecutionPlan{Script: path}, true)
 		if err == nil {
 			t.Fatal("probe accepted without sample")
 		}
@@ -103,7 +102,7 @@ func TestDLTLoadsAndPreviewsSeparateSchemas(t *testing.T) {
 		if err := os.WriteFile(path, data, 0600); err != nil {
 			t.Fatal(err)
 		}
-		plan := compiler.ExecutionPlan{Engine: "python", Script: path, ScriptDigest: spec.Digest(data), DestinationPath: filepath.Join(dir, "out.duckdb"), DestinationSchema: schema, DestinationObject: "customers", Strategy: "replace"}
+		plan := compiler.ExecutionPlan{Engine: "python", Script: path, DestinationPath: filepath.Join(dir, "out.duckdb"), DestinationSchema: schema, DestinationObject: "customers", Strategy: "replace"}
 		result, output, err := r.Validate(ctx, plan, 5)
 		if err != nil || result.Preview == nil || result.Preview.Rows[0][1] != schema {
 			t.Fatalf("validate %s: %#v, %v, %s", schema, result, err, output)
@@ -133,7 +132,7 @@ def estimate(secret):
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	output, err := (Runner{Binary: "python3"}).Execute(context.Background(), compiler.ExecutionPlan{Script: path, ScriptDigest: spec.Digest(data)}, true)
+	output, err := (Runner{Binary: "python3"}).Execute(context.Background(), compiler.ExecutionPlan{Script: path}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +165,7 @@ func TestDLTValidationLoadsBoundedSampleTwice(t *testing.T) {
 			if err := os.WriteFile(destination, []byte("do not touch"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			plan := compiler.ExecutionPlan{Script: path, ScriptDigest: spec.Digest(data), DestinationPath: destination, DestinationObject: "stars", Strategy: strategy}
+			plan := compiler.ExecutionPlan{Script: path, DestinationPath: destination, DestinationObject: "stars", Strategy: strategy}
 			if strategy == "merge" {
 				plan.PrimaryKey = []string{"id"}
 			}
@@ -209,7 +208,7 @@ func TestDLTValidationRejectsBadKeys(t *testing.T) {
 		if err := os.WriteFile(path, data, 0600); err != nil {
 			t.Fatal(err)
 		}
-		_, _, err := (Runner{Binary: binary}).Validate(context.Background(), compiler.ExecutionPlan{Script: path, ScriptDigest: spec.Digest(data), DestinationObject: "stars", Strategy: "merge", PrimaryKey: []string{"id"}}, 10)
+		_, _, err := (Runner{Binary: binary}).Validate(context.Background(), compiler.ExecutionPlan{Script: path, DestinationObject: "stars", Strategy: "merge", PrimaryKey: []string{"id"}}, 10)
 		if err == nil {
 			t.Fatalf("accepted bad keys: %s", rows)
 		}

@@ -114,8 +114,8 @@ func (a *App) previewIngestion(ctx context.Context, id string) (runnerpython.Tab
 		return runnerpython.TablePreview{}, errors.New(runnerpython.PreviewUnavailable)
 	}
 	return a.Previewer.Preview(ctx, compiler.ExecutionPlan{
-		Script: item.Runtime.Script, ScriptDigest: item.Runtime.ScriptDigest,
-		Python: item.Runtime.Python, Dependencies: item.Runtime.Dependencies, LockDigest: item.Runtime.LockDigest,
+		Script: item.Runtime.Script,
+		Python: item.Runtime.Python, Dependencies: item.Runtime.Dependencies,
 		DestinationType: item.Destination.Type, DestinationPath: item.Destination.Path,
 		DestinationSchema: item.Destination.Schema, DestinationObject: item.Destination.Table, SecretRefs: item.Runtime.SecretRefs,
 	})

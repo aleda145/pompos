@@ -137,7 +137,7 @@ func TestWorkerRunsManualQueuePersistedBeforeStartup(t *testing.T) {
 func persistSpec(t *testing.T, directory string, item *ingestion.Ingestion) {
 	t.Helper()
 	item.Source.Table = item.Destination.Table
-	item.Runtime = ingestion.Runtime{Engine: "python", Script: "customers.py", ScriptDigest: spec.Digest([]byte("fixture"))}
+	item.Runtime = ingestion.Runtime{Engine: "python", Script: "customers.py"}
 	path, err := spec.Write(filepath.Join(directory, "ingestions"), *item)
 	if err != nil {
 		t.Fatal(err)

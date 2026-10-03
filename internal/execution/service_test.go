@@ -29,7 +29,7 @@ func TestRunPersistsRunnerFailure(t *testing.T) {
 		Source:      ingestion.Source{Type: "python", URL: "https://example.com/customers.csv", Table: "customers"},
 		Destination: ingestion.Destination{Type: "duckdb", Path: destination, Table: "customers"},
 	}
-	item.Runtime = ingestion.Runtime{Engine: "python", Script: "customers.py", ScriptDigest: spec.Digest([]byte("fixture"))}
+	item.Runtime = ingestion.Runtime{Engine: "python", Script: "customers.py"}
 	document := spec.FromIngestion(item)
 	data, err := spec.Marshal(document)
 	if err != nil {
@@ -45,7 +45,10 @@ func TestRunPersistsRunnerFailure(t *testing.T) {
 	}
 	service, err := New(Service{
 		Store: metadata,
-		Runner: runnerFunc(func(context.Context, compiler.ExecutionPlan) error {
+		Runner: runnerFunc(func(_ context.Context, plan compiler.ExecutionPlan) error {
+			if plan.Strategy != "append" {
+				t.Fatalf("runner did not use the edited YAML: %#v", plan)
+			}
 			return errors.New("Python failed")
 		}),
 		Logger: log.New(io.Discard, "", 0),
@@ -54,6 +57,15 @@ func TestRunPersistsRunnerFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	queued := ingestion.Run{IngestionID: item.ID, SpecPath: item.SpecPath, SpecDigest: item.SpecDigest}
+	// The queued digest must not prevent manual edits before execution.
+	document.Materialization.Strategy = "append"
+	data, err = spec.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(item.SpecPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.Run(ctx, queued); err == nil || err.Error() != "ingestion failed: Python failed" {
 		t.Fatalf("run error = %v", err)
 	}

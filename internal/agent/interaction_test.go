@@ -368,7 +368,7 @@ func TestLegacyPublishedChatCanContinueWithFreshDraftState(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy := Session{
-		ID: "old_chat", PublishedID: "old_chat", Ready: true, TestedDigest: "previous-digest",
+		ID: "old_chat", PublishedID: "old_chat", Ready: true, Probed: true,
 		Draft:   &Draft{Name: "Men's records", Source: "fixture/men", Table: "men_records", Destination: "local-duckdb", Code: "previous extractor"},
 		Loading: &Loading{Strategy: "replace"}, Validation: &Validation{Fingerprint: "previous-validation"},
 		Messages: []Message{{Role: "system", Content: "old instructions"}, {Role: "user", Content: "Ingest men's records"}},
@@ -392,7 +392,7 @@ func TestLegacyPublishedChatCanContinueWithFreshDraftState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Draft != nil || v.Loading != nil || v.Validation != nil || v.TestedDigest != "" || v.Ready || v.PublishedID != "" || v.DraftID != "" || v.Pending == nil {
+	if v.Draft != nil || v.Loading != nil || v.Validation != nil || v.Probed || v.Ready || v.PublishedID != "" || v.DraftID != "" || v.Pending == nil {
 		t.Fatal("saved draft state leaked into the new ingestion")
 	}
 	restarted := &Service{Dir: s.Dir}

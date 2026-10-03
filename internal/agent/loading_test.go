@@ -57,7 +57,7 @@ func TestLoadingEditsAreConfirmedPersistedAndAuthoritative(t *testing.T) {
 	if err = WriteFile(s.scriptPath(v.ID), data); err != nil {
 		t.Fatal(err)
 	}
-	v.TestedDigest = spec.Digest(data)
+	v.Probed = true
 	if _, err = proposeLoading(&v, `{"cron":"0 6 * * *","strategy":"replace","primary_key":[],"reason":"Daily refresh of the current list."}`); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestLoadingEditsAreConfirmedPersistedAndAuthoritative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Loading == nil || v.Draft.Schedule != "" || v.Draft.Strategy != "merge" || v.TestedDigest != spec.Digest(data) {
+	if v.Loading == nil || v.Draft.Schedule != "" || v.Draft.Strategy != "merge" || !v.Probed {
 		t.Fatal("settings were not applied or unnecessarily discarded probe")
 	}
 	loaded, err := s.Load(v.ID)
@@ -102,7 +102,7 @@ func TestLoadingEditsAreConfirmedPersistedAndAuthoritative(t *testing.T) {
 		t.Fatal("model overrode confirmed settings")
 	}
 	data, _ = os.ReadFile(s.scriptPath(v.ID))
-	v.TestedDigest = spec.Digest(data)
+	v.Probed = true
 	// This unit test focuses on settings persistence; the approval flow is tested separately.
 	_, fingerprint, err := s.validationPlan(ctx, &v)
 	if err != nil {

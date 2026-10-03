@@ -96,7 +96,7 @@ func New(service *agent.Service, operations Operations) *mcp.Server {
 func chatResult(v agent.Session) map[string]any {
 	return map[string]any{
 		"session_id": v.ID,
-		"state":      map[string]any{"tested": v.TestedDigest != "", "loading": v.Loading, "validated": v.Validation != nil, "ready": v.Ready, "published_id": v.PublishedID},
+		"state":      map[string]any{"tested": v.Probed, "loading": v.Loading, "validated": v.Validation != nil, "ready": v.Ready, "published_id": v.PublishedID},
 	}
 }
 

@@ -233,9 +233,9 @@ func TestMCPClientCompletesWorkflowWithoutWebApprovalsOrModel(t *testing.T) {
 	if err := os.WriteFile(scriptPath, append(original, '\n'), 0600); err != nil {
 		t.Fatal(err)
 	}
-	call("validate_ingestion", validationArgs, true) // Script changed after the probe.
-	if tracker.validations != 0 {
-		t.Fatal("unprobed script executed validation")
+	call("validate_ingestion", validationArgs, false) // Manual edits after the probe are accepted.
+	if tracker.validations != 1 {
+		t.Fatal("edited script did not execute validation")
 	}
 	if err := os.WriteFile(scriptPath, original, 0600); err != nil {
 		t.Fatal(err)
@@ -248,7 +248,7 @@ func TestMCPClientCompletesWorkflowWithoutWebApprovalsOrModel(t *testing.T) {
 	if _, ok := validation["result"].(map[string]any); !ok {
 		t.Fatal("validation must return structured checks and preview")
 	}
-	if tracker.validations != 2 {
+	if tracker.validations != 3 {
 		t.Fatal("validation executed more than once per call")
 	}
 	state := call("get_chat", args(), false)["session"].(map[string]any)
@@ -290,7 +290,7 @@ func TestMCPClientCompletesWorkflowWithoutWebApprovalsOrModel(t *testing.T) {
 	call("set_schedule", map[string]any{"ingestion_id": ingestionID, "cron": "not cron"}, true)
 	call("set_schedule", map[string]any{"ingestion_id": ingestionID, "cron": ""}, false)
 	after, _, err := spec.Read(spec.ArtifactPath(app.SpecDir, ingestionID, ".yaml"))
-	if err != nil || after.Schedule != nil || after.Runtime.ScriptDigest != before.Runtime.ScriptDigest {
+	if err != nil || after.Schedule != nil || after.Runtime.Script != before.Runtime.Script {
 		t.Fatal("schedule update changed code or failed to disable schedule", err)
 	}
 	if result := call("run_ingestion", ingestionArgs, false); result["queued"] != true {

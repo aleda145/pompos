@@ -34,7 +34,6 @@ func commandFixture(t *testing.T, code string) string {
 	}
 	document.Runtime.Script = filepath.Join(dir, "customers.py")
 	code = runnerpython.ScriptMetadata("", nil) + code
-	document.Runtime.ScriptDigest = spec.Digest([]byte(code))
 	if err = os.WriteFile(document.Runtime.Script, []byte(code), 0600); err != nil {
 		t.Fatal(err)
 	}

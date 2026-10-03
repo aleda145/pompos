@@ -12,11 +12,9 @@ type ExecutionPlan struct {
 	PythonBinary      string   `yaml:"-"`
 	Python            string   `yaml:"python,omitempty"`
 	Dependencies      []string `yaml:"dependencies,omitempty"`
-	LockDigest        string   `yaml:"lockDigest,omitempty"`
 	DestinationSchema string   `yaml:"destinationSchema"`
 	Engine            string   `yaml:"engine"`
 	Script            string   `yaml:"script"`
-	ScriptDigest      string   `yaml:"scriptDigest"`
 	SecretRefs        []string `yaml:"secretRefs,omitempty"`
 	SourceURI         string   `yaml:"sourceUri"`
 	SourceTable       string   `yaml:"sourceTable"`
@@ -36,7 +34,7 @@ func Compile(document spec.Ingestion) (ExecutionPlan, error) {
 		strategy = "replace"
 	}
 	return ExecutionPlan{
-		Engine: "python", Script: document.Runtime.Script, ScriptDigest: document.Runtime.ScriptDigest, SecretRefs: document.Runtime.SecretRefs, Python: document.Runtime.Python, Dependencies: document.Runtime.Dependencies, LockDigest: document.Runtime.LockDigest,
+		Engine: "python", Script: document.Runtime.Script, SecretRefs: document.Runtime.SecretRefs, Python: document.Runtime.Python, Dependencies: document.Runtime.Dependencies,
 		SourceURI: document.Source.URL, SourceTable: document.Source.Table,
 		DestinationSchema: destination.SchemaName(document.Destination.Schema), DestinationType: document.Destination.Type, DestinationPath: document.Destination.Path, DestinationObject: document.Destination.Object,
 		Strategy: strategy, PrimaryKey: document.Materialization.PrimaryKey,

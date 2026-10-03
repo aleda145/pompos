@@ -73,15 +73,12 @@ func (s *Service) execute(ctx context.Context, item ingestion.Ingestion) error {
 		return ctx.Err()
 	}
 	started := time.Now()
-	document, data, err := spec.Read(item.SpecPath)
+	document, _, err := spec.Read(item.SpecPath)
 	if err != nil {
 		s.Logger.Printf("spec load failed ingestion_id=%s spec_path=%s error=%q", item.ID, item.SpecPath, err)
 		return s.finish(item.ID, ingestion.StatusFailed, err.Error())
 	}
-	if digest := spec.Digest(data); item.SpecDigest != "" && digest != item.SpecDigest {
-		err := fmt.Errorf("spec digest changed: queued %s, found %s", item.SpecDigest, digest)
-		return s.finish(item.ID, ingestion.StatusFailed, err.Error())
-	}
+
 	plan, err := compiler.Compile(document)
 	if err != nil {
 		return s.finish(item.ID, ingestion.StatusFailed, err.Error())

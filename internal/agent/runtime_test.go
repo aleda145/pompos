@@ -33,31 +33,24 @@ func TestDependencyProbeValidationAndPublication(t *testing.T) {
 	draft.Code = "def fetch(secret, limit):\n    import fixture_package\n    yield {'id': 1, 'version': fixture_package.VERSION}\n"
 	call("write_script", draft)
 	call("test_script", nil)
-	if v.Draft.LockDigest == "" {
+	if !v.Probed {
 		t.Fatal("successful probe did not save its environment lock")
 	}
-	lock, err := runnerpython.ReadScriptLock(s.scriptPath(v.ID), v.Draft.LockDigest)
+	lock, err := runnerpython.ReadScriptLock(s.scriptPath(v.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Editing only source code preserves resolved package versions.
 	draft.Code += "\n"
 	call("write_script", draft)
-	afterEdit, err := runnerpython.ReadScriptLock(s.scriptPath(v.ID), "")
-	if err != nil || string(afterEdit) != string(lock) || v.Draft.LockDigest != "" || v.TestedDigest != "" || v.Validation != nil {
+	afterEdit, err := runnerpython.ReadScriptLock(s.scriptPath(v.ID))
+	if err != nil || string(afterEdit) != string(lock) || v.Probed || v.Validation != nil {
 		t.Fatal("editing source lost the lock or kept stale validation")
 	}
 	call("test_script", nil)
-	// Even an out-of-band dependency edit cannot reuse a successful probe.
-	v.Draft.Dependencies = []string{"fixture-package==2.0"}
-	if _, _, err := s.validationPlan(ctx, &v); err == nil {
-		t.Fatal("validation accepted dependencies that were not probed")
-	}
 	draft.Dependencies = []string{"fixture-package==2.0"}
-	// Restore the previous request so write_script sees an actual change.
-	v.Draft.Dependencies = []string{"fixture-package==1.0"}
 	call("write_script", draft)
-	if v.Draft.LockDigest != "" || v.TestedDigest != "" || v.Validation != nil {
+	if v.Probed || v.Validation != nil {
 		t.Fatal("dependency edit retained a stale lock or test")
 	}
 	call("test_script", nil)
@@ -72,17 +65,16 @@ func TestDependencyProbeValidationAndPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	artifactDir := t.TempDir()
-	testedLock, err := runnerpython.ReadScriptLock(s.scriptPath(v.ID), v.Draft.LockDigest)
+	testedLock, err := runnerpython.ReadScriptLock(s.scriptPath(v.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(s.scriptPath(v.ID)+".lock", append(append([]byte(nil), testedLock...), []byte("# changed\n")...), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Publish(ctx, v.ID, artifactDir, func(string, spec.Ingestion) error { t.Fatal("published changed lock"); return nil }); err == nil {
-		t.Fatal("changed lock accepted")
-	}
-	if err := os.WriteFile(s.scriptPath(v.ID)+".lock", testedLock, 0600); err != nil {
+	// A manual lock edit after validation is accepted at publication.
+	testedLock, err = runnerpython.ReadScriptLock(s.scriptPath(v.ID))
+	if err != nil {
 		t.Fatal(err)
 	}
 	published := false
@@ -91,7 +83,7 @@ func TestDependencyProbeValidationAndPublication(t *testing.T) {
 		if doc.Runtime.Script != spec.ArtifactPath(artifactDir, id, ".py") {
 			t.Fatalf("wrong artifact path: %s", doc.Runtime.Script)
 		}
-		copied, err := runnerpython.ReadScriptLock(doc.Runtime.Script, doc.Runtime.LockDigest)
+		copied, err := runnerpython.ReadScriptLock(doc.Runtime.Script)
 		if err != nil || string(copied) != string(testedLock) {
 			t.Fatalf("publication changed the native lock: %v", err)
 		}
@@ -100,7 +92,7 @@ func TestDependencyProbeValidationAndPublication(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if strings.Contains(string(data), "dependencyLock:") {
+		if strings.Contains(string(data), "dependencyLock:") || strings.Contains(string(data), "scriptDigest:") || strings.Contains(string(data), "lockDigest:") {
 			t.Fatal("YAML embeds the old lock")
 		}
 		if err := WriteFile(spec.ArtifactPath(artifactDir, id, ".yaml"), data); err != nil {
@@ -114,7 +106,7 @@ func TestDependencyProbeValidationAndPublication(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if plan.LockDigest != v.Draft.LockDigest || !reflect.DeepEqual(plan.Dependencies, draft.Dependencies) {
+		if !reflect.DeepEqual(plan.Dependencies, draft.Dependencies) {
 			t.Fatal("publication lost the tested environment")
 		}
 		_, err = runner.Execute(ctx, plan, true)

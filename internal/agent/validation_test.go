@@ -60,7 +60,7 @@ func validationFixture(t *testing.T) (*Service, *validationRunner, Session) {
 	if err = WriteFile(s.scriptPath(v.ID), data); err != nil {
 		t.Fatal(err)
 	}
-	v.TestedDigest = spec.Digest(data)
+	v.Probed = true
 	if _, err = s.proposeValidation(ctx, &v, `{"limit":25}`); err != nil {
 		t.Fatal(err)
 	}
@@ -278,14 +278,10 @@ func TestPublicationScopesTablesByDestinationAndSchema(t *testing.T) {
 }
 
 func TestValidationApprovalRejectsChangedDraftAndSettings(t *testing.T) {
-	for _, change := range []string{"script", "loading", "destination", "schema"} {
+	for _, change := range []string{"loading", "destination", "schema"} {
 		t.Run(change, func(t *testing.T) {
 			s, runner, v := validationFixture(t)
 			switch change {
-			case "script":
-				if err := os.WriteFile(s.scriptPath(v.ID), []byte("changed"), 0600); err != nil {
-					t.Fatal(err)
-				}
 			case "loading":
 				v.Loading.Strategy = "append"
 			case "destination":
