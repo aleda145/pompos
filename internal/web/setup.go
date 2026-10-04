@@ -266,7 +266,7 @@ func (a *App) setupMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if mode == "mcp" {
-		http.Redirect(w, r, "/settings/agent#mcp", http.StatusSeeOther)
+		http.Redirect(w, r, "/settings#mcp", http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, "/setup", http.StatusSeeOther)

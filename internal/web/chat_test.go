@@ -185,7 +185,7 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 	if w.Code != 303 || len(schedules.enqueued) != 1 {
 		t.Fatalf("run: %d %s", w.Code, w.Body)
 	}
-	w = request("GET", "/settings/agent", "", "")
+	w = request("GET", "/settings", "", "")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), model.URL) {
 		t.Fatalf("settings: %d %s", w.Code, w.Body)
 	}
@@ -504,7 +504,7 @@ func TestExaSettingsPersistSecretReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := url.Values{"section": {"search"}, "exa_api_key_ref": {"exa_key"}}.Encode()
-	request := httptest.NewRequest("POST", "/settings/agent", strings.NewReader(body))
+	request := httptest.NewRequest("POST", "/settings", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
 	app.Handler().ServeHTTP(response, request)
@@ -519,12 +519,12 @@ func TestExaSettingsPersistSecretReference(t *testing.T) {
 	if settings.Endpoint != "https://model.example/v1" || settings.Model != "test" || settings.APIKeyRef != "model_key" || settings.Mode != "agent" {
 		t.Fatalf("saving search changed agent settings: %+v", settings)
 	}
-	response = setupRequest(app, "POST", "/settings/agent", url.Values{"section": {"agent"}, "endpoint": {settings.Endpoint}, "model": {"updated"}, "api_key_ref": {settings.APIKeyRef}})
+	response = setupRequest(app, "POST", "/settings", url.Values{"section": {"agent"}, "endpoint": {settings.Endpoint}, "model": {"updated"}, "api_key_ref": {settings.APIKeyRef}})
 	settings, err = restarted.Settings()
 	if response.Code != 200 || err != nil || settings.Model != "updated" || settings.ExaAPIKeyRef != "exa_key" {
 		t.Fatalf("saving agent changed search settings: %+v %v", settings, err)
 	}
-	response = setupRequest(app, "POST", "/settings/agent", url.Values{"section": {"invalid"}})
+	response = setupRequest(app, "POST", "/settings", url.Values{"section": {"invalid"}})
 	if response.Code != http.StatusBadRequest {
 		t.Fatal("unknown settings section accepted")
 	}

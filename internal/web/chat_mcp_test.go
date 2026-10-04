@@ -91,6 +91,6 @@ func TestWebChatRequiresProviderEvenWhenMCPSetupIsComplete(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"/ingestions/new", "/chat/existing"} {
-		assertRedirect(t, setupRequest(app, "GET", path, nil), "/settings/agent")
+		assertRedirect(t, setupRequest(app, "GET", path, nil), "/settings")
 	}
 }

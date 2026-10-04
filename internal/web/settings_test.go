@@ -26,7 +26,7 @@ func TestManualValidationSettingPersistsWithoutChangingProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, enabled := range []bool{false, true} {
-		values := url.Values{}
+		values := url.Values{"section": {"general"}}
 		if enabled {
 			values.Set("manual_validation", "on")
 		}

@@ -1,10 +1,41 @@
 {{define "content"}}
-{{template "settings-nav" .}}
-{{if .Saved}}<p class="notice notice-success" role="status">Settings saved.</p>{{end}}
-<form method="post" class="panel settings-section" aria-labelledby="validation-heading">
- <h2 id="validation-heading">Chat validation</h2>
+<div class="page-heading">
+ <h1>Settings</h1>
+</div>
+{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}{{if .Saved}}<p class="notice notice-success" role="status">Settings saved.</p>{{end}}
+<div class="settings-form">
+ <form method="post" class="panel settings-section" aria-labelledby="general-heading">
+ <input type="hidden" name="section" value="general">
+ <h2 id="general-heading">General</h2>
  <label class="settings-checkbox" for="manual_validation"><input id="manual_validation" name="manual_validation" type="checkbox" {{if .Settings.ManualValidation}}checked{{end}} aria-describedby="validation-help">Require approval before validation</label>
  <p id="validation-help" class="hint">When off, the agent runs sample validation automatically.</p>
  <div class="settings-actions settings-save"><button class="primary" type="submit">Save</button></div>
-</form>
+ </form>
+ <form method="post" class="panel settings-section" aria-labelledby="agent-heading">
+ <input type="hidden" name="section" value="agent">
+ <h2 id="agent-heading">Agent</h2>
+ <label for="endpoint">OpenAI-compatible base URL</label><input id="endpoint" name="endpoint" type="url" required value="{{.Settings.Endpoint}}" placeholder="https://api.openai.com/v1">
+ <label for="model">Model ID · tool calling required</label><input id="model" name="model" required value="{{.Settings.Model}}">
+ <label for="api_key_ref">API key secret</label><select name="api_key_ref" id="api_key_ref"><option value="">No authentication</option>{{range .Secrets}}<option value="{{.}}" {{if eq . $.Settings.APIKeyRef}}selected{{end}}>{{.}}</option>{{end}}</select>
+ <div class="settings-actions settings-save"><button class="primary" type="submit">Save</button></div>
+ </form>
+ <form method="post" class="panel settings-section" aria-labelledby="search-heading">
+ <input type="hidden" name="section" value="search">
+ <h2 id="search-heading">Web search</h2>
+ <label for="exa_api_key_ref">Exa API key secret</label><select name="exa_api_key_ref" id="exa_api_key_ref"><option value="">Search not configured</option>{{range .Secrets}}<option value="{{.}}" {{if eq . $.Settings.ExaAPIKeyRef}}selected{{end}}>{{.}}</option>{{end}}</select>
+ <a href="https://dashboard.exa.ai/" target="_blank" rel="noopener noreferrer">Get Exa key</a>
+ <div class="settings-actions settings-save"><button class="primary" type="submit">Save</button></div>
+ </form>
+</div>
+<section id="mcp" class="panel settings-section" aria-labelledby="mcp-heading">
+ <h2 id="mcp-heading">MCP</h2>
+ <dl>
+ <div><dt>Status</dt><dd><strong class="mcp-state">{{if .Settings.MCPEnabled}}Enabled{{else}}Disabled{{end}}</strong></dd></div>
+ <div><dt>Endpoint</dt><dd><code>{{.MCPEndpoint}}</code></dd></div></dl>
+ <div class="mcp-command"><span id="codex-command-label">Codex CLI</span><code tabindex="0" aria-labelledby="codex-command-label">codex mcp add pompos --url {{.MCPEndpoint}}</code></div>
+ <div class="mcp-command"><span id="claude-command-label">Claude Code</span><code tabindex="0" aria-labelledby="claude-command-label">claude mcp add --transport http pompos {{.MCPEndpoint}}</code></div>
+ <form method="post" action="/settings/mcp" class="settings-actions settings-save">
+  {{if .Settings.MCPEnabled}}<button class="primary" type="submit" name="enabled" value="" aria-label="Disable MCP">Disable</button>{{else}}<button class="primary" type="submit" name="enabled" value="on" aria-label="Enable MCP">Enable</button>{{end}}
+ </form>
+</section>
 {{end}}

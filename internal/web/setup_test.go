@@ -79,7 +79,7 @@ func TestSetupRequiresAgentAndRemembersOptionalSearchSkip(t *testing.T) {
 		t.Fatalf("onboarded home: %d", w.Code)
 	}
 	// Editing agent settings must preserve the explicit skip choice.
-	settings := setupRequest(app, "POST", "/settings/agent", url.Values{"section": {"agent"}, "endpoint": {cfg.Endpoint}, "model": {"updated-model"}})
+	settings := setupRequest(app, "POST", "/settings", url.Values{"section": {"agent"}, "endpoint": {cfg.Endpoint}, "model": {"updated-model"}})
 	if settings.Code != 200 {
 		t.Fatal("settings update failed")
 	}
@@ -123,7 +123,7 @@ func TestSetupStoresKeysWithoutExposingOrOverwritingSecrets(t *testing.T) {
 	if err = json.Unmarshal(bytes, &stored); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/setup", "/settings/agent", "/secrets"} {
+	for _, path := range []string{"/setup", "/settings", "/secrets"} {
 		page := setupRequest(app, "GET", path, nil)
 		if strings.Contains(page.Body.String(), "private-model-key") || strings.Contains(page.Body.String(), "private-exa-key") {
 			t.Fatal("key value in HTML")

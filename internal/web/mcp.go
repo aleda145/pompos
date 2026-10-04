@@ -87,7 +87,7 @@ func (a *App) toggleMCP(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, err)
 		return
 	}
-	http.Redirect(w, r, "/settings/agent#mcp", http.StatusSeeOther)
+	http.Redirect(w, r, "/settings#mcp", http.StatusSeeOther)
 }
 
 func localPort(host string) string {

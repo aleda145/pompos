@@ -83,7 +83,7 @@ func New(app App) (*App, error) {
 		app.Destinations = catalog
 	}
 	app.templates = make(map[string]*template.Template, 5)
-	for _, page := range []string{"home", "detail", "secrets", "destinations", "chats", "chat", "settings", "agent-settings", "setup"} {
+	for _, page := range []string{"home", "detail", "secrets", "destinations", "chats", "chat", "settings", "setup"} {
 		parsed, err := template.New(page).ParseFS(templatefiles.FS, "layout.html", page+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s template: %w", page, err)
@@ -99,7 +99,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /setup", a.setupPage)
 	mux.HandleFunc("POST /setup/mode", a.setupMode)
 	mux.HandleFunc("GET /settings/mcp", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/settings/agent#mcp", http.StatusSeeOther)
+		http.Redirect(w, r, "/settings#mcp", http.StatusSeeOther)
 	})
 	if a.Agent != nil {
 		mux.Handle("/mcp", a.mcpHandler())
@@ -114,8 +114,11 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /chat/{id}/secret", a.chatSecret)
 	mux.HandleFunc("GET /settings", a.settings)
 	mux.HandleFunc("POST /settings", a.settings)
-	mux.HandleFunc("GET /settings/agent", a.agentSettings)
-	mux.HandleFunc("POST /settings/agent", a.agentSettings)
+	mux.HandleFunc("GET /settings/agent", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/settings", http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /settings/agent", a.settings)
+	mux.HandleFunc("POST /settings/mcp", a.toggleMCP)
 	mux.HandleFunc("POST /settings/agent/mcp", a.toggleMCP)
 	mux.HandleFunc("GET /ingestions/{id}", a.ingestionDetail)
 	mux.HandleFunc("GET /ingestions/{id}/preview", a.ingestionPreview)

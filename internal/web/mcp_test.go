@@ -25,7 +25,7 @@ import (
 
 func TestMCPSetupPersistsWithoutCredentials(t *testing.T) {
 	app, service, db := setupFixture(t)
-	assertRedirect(t, setupRequest(app, "POST", "/setup/mode", url.Values{"mode": {"mcp"}}), "/settings/agent#mcp")
+	assertRedirect(t, setupRequest(app, "POST", "/setup/mode", url.Values{"mode": {"mcp"}}), "/settings#mcp")
 	cfg, _ := service.Settings()
 	if cfg.Mode != "mcp" || cfg.Endpoint != "" || cfg.APIKeyRef != "" || cfg.MCPEnabled {
 		t.Fatalf("unexpected config: %+v", cfg)
@@ -35,12 +35,12 @@ func TestMCPSetupPersistsWithoutCredentials(t *testing.T) {
 		t.Fatal("MCP setup created credentials")
 	}
 	app.Agent = &agent.Service{Dir: service.Dir, Secrets: db.Secrets(), Destinations: db}
-	for _, path := range []string{"/", "/settings/agent"} {
+	for _, path := range []string{"/", "/settings"} {
 		if w := setupRequest(app, "GET", path, nil); w.Code != 200 {
 			t.Fatalf("page %s: %d", path, w.Code)
 		}
 	}
-	connection := setupRequest(app, "GET", "/settings/agent", nil)
+	connection := setupRequest(app, "GET", "/settings", nil)
 	for _, want := range []string{`id="mcp"`, `<strong class="mcp-state">Disabled</strong>`, `aria-label="Enable MCP">Enable</button>`, "http://127.0.0.1:8080/mcp", "codex mcp add pompos --url", "claude mcp add --transport http pompos"} {
 		if !strings.Contains(connection.Body.String(), want) {
 			t.Fatalf("missing MCP setting: %s", want)
@@ -51,23 +51,21 @@ func TestMCPSetupPersistsWithoutCredentials(t *testing.T) {
 			t.Fatalf("obsolete MCP UI: %s", removed)
 		}
 	}
-	assertRedirect(t, setupRequest(app, "GET", "/settings/mcp", nil), "/settings/agent#mcp")
-	if w := setupRequest(app, "POST", "/settings/mcp", url.Values{"action": {"create"}}); w.Code != http.StatusMethodNotAllowed {
-		t.Fatal("removed token endpoint accepted a request", w.Code)
-	}
+	assertRedirect(t, setupRequest(app, "GET", "/settings/mcp", nil), "/settings#mcp")
+
 	assertRedirect(t, setupRequest(app, "GET", "/setup", nil), "/")
-	assertRedirect(t, setupRequest(app, "POST", "/settings/agent/mcp", url.Values{"enabled": {"on"}}), "/settings/agent#mcp")
+	assertRedirect(t, setupRequest(app, "POST", "/settings/mcp", url.Values{"enabled": {"on"}}), "/settings#mcp")
 	restarted := &agent.Service{Dir: service.Dir}
 	cfg, err := restarted.Settings()
 	if err != nil || !cfg.MCPEnabled || cfg.Mode != "mcp" {
 		t.Fatal("MCP switch did not persist", err)
 	}
-	connection = setupRequest(app, "GET", "/settings/agent", nil)
+	connection = setupRequest(app, "GET", "/settings", nil)
 	if !strings.Contains(connection.Body.String(), `<strong class="mcp-state">Enabled</strong>`) || !strings.Contains(connection.Body.String(), `aria-label="Disable MCP">Disable</button>`) {
 		t.Fatal("enabled status and disable action missing on reload")
 	}
 	assertRedirect(t, setupRequest(app, "POST", "/setup/mode", url.Values{"mode": {"agent"}}), "/setup")
-	page := setupRequest(app, "GET", "/settings/agent", nil)
+	page := setupRequest(app, "GET", "/settings", nil)
 	if !strings.Contains(page.Body.String(), `<strong class="mcp-state">Disabled</strong>`) || !strings.Contains(page.Body.String(), `aria-label="Enable MCP">Enable</button>`) {
 		t.Fatal("switching to agent mode did not show disabled status and enable action")
 	}
@@ -96,7 +94,7 @@ func TestMCPLocalhostWithoutAuthenticationAndDisable(t *testing.T) {
 	if got := request("localhost:8080", "", "", ""); got != 503 {
 		t.Fatal("MCP should be off by default, even in MCP mode", got)
 	}
-	assertRedirect(t, setupRequest(app, "POST", "/settings/agent/mcp", url.Values{"enabled": {"on"}}), "/settings/agent#mcp")
+	assertRedirect(t, setupRequest(app, "POST", "/settings/mcp", url.Values{"enabled": {"on"}}), "/settings#mcp")
 	for _, tc := range []struct {
 		host, origin, fetchSite, authorization string
 		status                                 int
@@ -115,14 +113,14 @@ func TestMCPLocalhostWithoutAuthenticationAndDisable(t *testing.T) {
 			t.Fatalf("%+v: got %d", tc, got)
 		}
 	}
-	if invalid := setupRequest(app, "POST", "/settings/agent/mcp", url.Values{"enabled": {"invalid"}}); invalid.Code != http.StatusBadRequest {
+	if invalid := setupRequest(app, "POST", "/settings/mcp", url.Values{"enabled": {"invalid"}}); invalid.Code != http.StatusBadRequest {
 		t.Fatal("invalid switch state accepted")
 	}
-	assertRedirect(t, setupRequest(app, "POST", "/settings/agent/mcp", url.Values{}), "/settings/agent#mcp")
+	assertRedirect(t, setupRequest(app, "POST", "/settings/mcp", url.Values{}), "/settings#mcp")
 	if got := request("localhost:8080", "", "", ""); got != 503 {
 		t.Fatal("disabled endpoint remained usable", got)
 	}
-	r := httptest.NewRequest("POST", "/settings/agent/mcp", strings.NewReader("enabled=on"))
+	r := httptest.NewRequest("POST", "/settings/mcp", strings.NewReader("enabled=on"))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.Header.Set("Origin", "https://evil.example")
 	w := httptest.NewRecorder()

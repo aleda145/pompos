@@ -43,7 +43,7 @@ func (a *App) chatPage(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if cfg.ValidateAgent() != nil {
-		http.Redirect(w, r, "/settings/agent", http.StatusSeeOther)
+		http.Redirect(w, r, "/settings", http.StatusSeeOther)
 		return
 	}
 	if id == "" {
@@ -179,61 +179,4 @@ func (a *App) requireWebChat(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	return true
-}
-func (a *App) agentSettings(w http.ResponseWriter, r *http.Request) {
-	if a.Agent == nil {
-		http.Error(w, "Agent is not configured", 503)
-		return
-	}
-	cfg, e := a.Agent.Settings()
-	if e != nil {
-		a.serverError(w, e)
-		return
-	}
-	message := ""
-	saved := false
-	if r.Method == "POST" {
-		r.Body = http.MaxBytesReader(w, r.Body, 16000)
-		if e = r.ParseForm(); e != nil {
-			http.Error(w, "Invalid settings", 400)
-			return
-		}
-		switch r.FormValue("section") {
-		case "agent":
-			cfg.Endpoint = r.FormValue("endpoint")
-			cfg.Model = r.FormValue("model")
-			cfg.APIKeyRef = r.FormValue("api_key_ref")
-			e = cfg.ValidateAgent()
-		case "search":
-			cfg.ExaAPIKeyRef = r.FormValue("exa_api_key_ref")
-		default:
-			http.Error(w, "Unknown settings section", http.StatusBadRequest)
-			return
-		}
-		if e == nil {
-			e = a.Agent.SaveSettings(cfg)
-		}
-		if e != nil {
-			message = e.Error()
-		} else {
-			saved = true
-		}
-	}
-	entries, e := a.Secrets.List(r.Context())
-	if e != nil {
-		a.serverError(w, e)
-		return
-	}
-	names := []string{}
-	for _, entry := range entries {
-		names = append(names, entry.Key)
-	}
-	a.render(w, 200, "agent-settings", struct {
-		Title       string
-		Settings    agent.Settings
-		Error       string
-		Saved       bool
-		Secrets     []string
-		MCPEndpoint string
-	}{"Agent settings", cfg, message, saved, names, mcpEndpoint(r.Host)})
 }
