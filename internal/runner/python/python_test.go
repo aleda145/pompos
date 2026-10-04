@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"pompos/internal/compiler"
 	"pompos/internal/store"
@@ -194,6 +195,48 @@ func TestDLTValidationLoadsBoundedSampleTwice(t *testing.T) {
 				t.Fatal("validation left pipeline state with the draft")
 			}
 		})
+	}
+}
+
+func TestDLTValidationSupportsFullSourceAndLargeSamples(t *testing.T) {
+	binary := os.Getenv("POMPOS_TEST_PYTHON")
+	if binary == "" {
+		t.Skip("set POMPOS_TEST_PYTHON for dlt integration test")
+	}
+	dir := t.TempDir()
+	plan := compiler.ExecutionPlan{Script: filepath.Join(dir, "source.py"), DestinationPath: filepath.Join(dir, "production.duckdb"), DestinationObject: "rows", Strategy: "append"}
+	code := "def fetch(secret, limit):\n    for i in range(1002 if limit is None else min(limit, 1002)):\n        yield {'id': i}\n"
+	if err := os.WriteFile(plan.Script, []byte(Wrap(code)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, limit := range []int{1001, 0} {
+		result, output, err := (Runner{Binary: binary}).Validate(context.Background(), plan, limit)
+		want := limit
+		if limit == 0 {
+			want = 1002
+		}
+		if err != nil || result.SampleCount != want || result.FirstLoadRows != want || result.SecondLoadRows != 2*want {
+			t.Fatalf("validation limit %d: %+v %v %s", limit, result, err, output)
+		}
+	}
+	if _, err := os.Stat(plan.DestinationPath); !os.IsNotExist(err) {
+		t.Fatal("full-source validation wrote to production")
+	}
+}
+
+func TestUnrestrictedValidationHonorsCallerCancellation(t *testing.T) {
+	binary, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 unavailable")
+	}
+	path := filepath.Join(t.TempDir(), "wait.py")
+	if err := os.WriteFile(path, []byte("import time\ntime.sleep(30)\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, _, err := (Runner{Binary: binary}).Validate(ctx, compiler.ExecutionPlan{Script: path}, 0); err == nil || !strings.Contains(err.Error(), "cancelled") {
+		t.Fatalf("unrestricted validation ignored cancellation: %v", err)
 	}
 }
 

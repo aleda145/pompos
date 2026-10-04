@@ -24,6 +24,78 @@ func objectRunner(t *testing.T) Runner {
 	return Runner{Binary: binary}
 }
 
+func TestObjectValidationBudgetsHaveNoCeilings(t *testing.T) {
+	for _, budget := range []struct {
+		bytes   int64
+		seconds int
+	}{{0, 0}, {20 * 1024 * 1024 * 1024, 3601}} {
+		bytes, seconds, err := ObjectValidationBudget(budget.bytes, budget.seconds)
+		if err != nil || bytes != budget.bytes || seconds != budget.seconds {
+			t.Fatalf("budget changed: %d %d %v", bytes, seconds, err)
+		}
+	}
+}
+
+func TestObjectsValidationHasNoImplicitByteBudget(t *testing.T) {
+	r := objectRunner(t)
+	dir := t.TempDir()
+	plan := compiler.ExecutionPlan{Script: filepath.Join(dir, "source.py"), DestinationType: "objects", DestinationPath: filepath.Join(dir, "production"), DestinationSchema: "reports", DestinationObject: "objects", Strategy: "update"}
+	code := `def fetch(secret, limit):
+    assert limit is None
+    yield {'object_id': 'report', 'source_uri': 'fixture://report', 'filename': 'report.bin', 'source_version': '1'}
+def download(obj, target_path, secret):
+    with open(target_path, 'wb') as f:
+        f.truncate(51 * 1024 * 1024)
+`
+	if err := os.WriteFile(plan.Script, []byte(WrapObjectsWithRuntime(code, "", nil)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, output, err := r.Validate(context.Background(), plan, 0)
+	if err != nil || result.DownloadedBytes != 51*1024*1024 {
+		t.Fatalf("implicit download cap: %+v %v %s", result, err, output)
+	}
+	if _, err := os.Stat(plan.DestinationPath); !os.IsNotExist(err) {
+		t.Fatal("validation wrote to production")
+	}
+}
+
+func TestObjectsValidationBeyondTenDoesNotLimitProduction(t *testing.T) {
+	r := objectRunner(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	plan := compiler.ExecutionPlan{Engine: "python", Script: filepath.Join(dir, "files.py"), DestinationType: "objects", DestinationPath: filepath.Join(dir, "destination"), DestinationSchema: "reports", DestinationObject: "objects", Strategy: "update"}
+	code := `def fetch(secret, limit):
+    for i in range(21 if limit is None else min(limit, 21)):
+        yield {'object_id': str(i), 'source_uri': 'fixture://reports/' + str(i), 'filename': str(i) + '.txt', 'source_version': 'v1'}
+def download(obj, target_path, secret):
+    from pathlib import Path
+    Path(target_path).write_text(obj['object_id'])
+`
+	if err := os.WriteFile(plan.Script, []byte(WrapObjectsWithRuntime(code, "", nil)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, limit := range []int{3, 11, 21, 1001, 0} {
+		result, output, err := r.Validate(ctx, plan, limit)
+		expected := min(limit, 21)
+		if limit == 0 {
+			expected = 21
+		}
+		if err != nil || result.SampleCount != expected || result.FirstLoadRows != expected || result.SecondLoadRows != expected {
+			t.Fatalf("validation limit %d: %+v %v %s", limit, result, err, output)
+		}
+	}
+	if _, err := os.Stat(plan.DestinationPath); !os.IsNotExist(err) {
+		t.Fatal("validation wrote to production")
+	}
+	if err := r.Run(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := r.Preview(ctx, plan)
+	if err != nil || preview.TotalRows != 21 {
+		t.Fatalf("production did not load all 21 files: %+v %v", preview, err)
+	}
+}
+
 func objectRow(t *testing.T, r Runner, plan compiler.ExecutionPlan) map[string]string {
 	t.Helper()
 	preview, err := r.Preview(context.Background(), plan)
@@ -174,8 +246,8 @@ def download(obj, target_path, secret):
 	if err := os.WriteFile(plan.Script, []byte(WrapObjectsWithRuntime(code, "", nil)), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := r.Validate(ctx, plan, 11); err == nil {
-		t.Fatal("unbounded file validation accepted")
+	if _, _, err := r.Validate(ctx, plan, -1); err == nil {
+		t.Fatal("negative file validation limit accepted")
 	}
 	for _, schema := range []string{"pictures", "reports", "objects"} {
 		plan.DestinationSchema = schema
@@ -196,6 +268,7 @@ def download(obj, target_path, secret):
 	if err := r.Run(ctx, plan); err != nil {
 		t.Fatalf("downloader logs hid successful publication: %v", err)
 	}
+	plan.ValidationMaxBytes = 50 * 1024 * 1024
 	for _, bad := range []struct{ name, code string }{
 		{"traversal", strings.Replace(code, "one.png", "../../escape", 1)},
 		{"duplicate identity", strings.Replace(code, "def download", "    yield {'object_id': 'one', 'source_uri': 'bucket://images/two', 'filename': 'two.png'}\ndef download", 1)},

@@ -67,7 +67,7 @@ func TestMCPDirectValidationResumesLegacyPendingDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	updated, err = s.Load(v.ID)
-	if err != nil || !updated.Ready || updated.Validation == nil || updated.Pending != nil || runner.limit != 100 || runner.calls != 1 {
+	if err != nil || !updated.Ready || updated.Validation == nil || updated.Pending != nil || runner.limit != 0 || runner.calls != 1 {
 		t.Fatalf("direct default validation did not make the draft ready: %v", err)
 	}
 	if !strings.HasPrefix(updated.Messages[len(updated.Messages)-1].Content, "POMPOS_VALIDATION_RESULT=") {

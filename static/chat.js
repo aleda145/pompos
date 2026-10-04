@@ -196,14 +196,22 @@
     const limit = pending.validation.limit;
     const strategy = (pending.loading || session.loading)?.strategy;
     const files = ['update', 'skip'].includes(strategy);
-    const bytes = pending.validation.max_bytes || 50 * 1024 * 1024;
-    const seconds = pending.validation.timeout_seconds || 90;
+    const bytes = pending.validation.max_bytes || 0;
+    const seconds = pending.validation.timeout_seconds || 0;
+    const sample = `${limit ? `Up to ${limit.toLocaleString('en-US')}` : 'All'} ${files ? 'files' : 'rows'}`;
     for (const [label, text] of [
-      ['Validation sample', `Up to ${limit.toLocaleString('en-US')} ${files ? `files · ${(bytes / 1024 / 1024).toLocaleString('en-US')} MiB total · ${seconds}s` : 'rows'}`],
+      ['Validation sample', sample],
+      ...(files ? [['Download budget', bytes ? `${(bytes / 1024 / 1024).toLocaleString('en-US')} MiB total` : 'Unlimited']] : []),
+      ['Timeout', seconds ? `${seconds}s` : 'None'],
       ['Loading check', `${strategy} · 2 sample loads`],
       ['Test destination', files ? 'Temporary files + DuckDB catalog' : 'Temporary DuckDB'],
     ]) {
       const row = element('div'); row.append(element('dt', '', label), element('dd', '', text)); summary.append(row);
+    }
+    if (pending.validation.min_count) {
+      const row = element('div');
+      row.append(element('dt', '', 'Required sample'), element('dd', '', `At least ${pending.validation.min_count.toLocaleString('en-US')} ${files ? 'files' : 'rows'}`));
+      summary.append(row);
     }
     container.append(summary);
     if (strategy === 'append') container.append(element('p', 'hint', 'Append can duplicate rows on repeated runs.'));

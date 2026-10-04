@@ -22,24 +22,161 @@ import (
 // Source probes use real Python; unit tests control the destination validation result.
 type validationRunner struct {
 	runnerpython.Runner
-	calls int
-	limit int
-	err   error
+	calls       int
+	limit       int
+	count       int
+	err         error
+	plan        compiler.ExecutionPlan
+	hasDeadline bool
 }
 
 func (r *validationRunner) Validate(ctx context.Context, plan compiler.ExecutionPlan, limit int) (runnerpython.ValidationResult, string, error) {
 	r.calls++
 	r.limit = limit
+	r.plan = plan
+	_, r.hasDeadline = ctx.Deadline()
 	if r.err != nil {
 		return runnerpython.ValidationResult{}, "", r.err
 	}
-	result := runnerpython.ValidationResult{SampleCount: 1, FirstLoadRows: 1, SecondLoadRows: 1,
+	count := r.count
+	if count == 0 {
+		count = 1
+	}
+	result := runnerpython.ValidationResult{SampleCount: count, FirstLoadRows: count, SecondLoadRows: count,
 		Preview: &runnerpython.TablePreview{Columns: []string{"id"}, Rows: [][]string{{"1"}}}}
 	if plan.Strategy == "append" {
-		result.SecondLoadRows = 2
+		result.SecondLoadRows = 2 * count
 	}
 	b, _ := json.Marshal(result)
 	return result, "POMPOS_VALIDATION_RESULT=" + string(b), nil
+}
+
+func TestAdaptiveFileValidationBlocksTruncatedSamples(t *testing.T) {
+	for _, mode := range []string{"automatic", "manual", "mcp"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			s, runner, v := validationFixtureWithApproval(t, mode == "manual")
+			if err := s.Destinations.(*store.SQLite).PutDestination(ctx, destination.Config{Name: "files", Type: "objects", Path: t.TempDir()}); err != nil {
+				t.Fatal(err)
+			}
+			v.Draft.Data, v.Draft.Destination, v.Draft.Table = "files", "files", "objects"
+			v.Loading.Strategy, v.Pending = "update", nil
+			v.External = mode == "mcp"
+			validate := func(arguments string) string {
+				t.Helper()
+				var output string
+				var err error
+				if mode == "mcp" {
+					if err := s.save(v); err != nil {
+						t.Fatal(err)
+					}
+					output, err = s.MCPCall(ctx, v.ID, "validate_ingestion", json.RawMessage(arguments))
+					var loadErr error
+					v, loadErr = s.Load(v.ID)
+					if loadErr != nil {
+						t.Fatal(loadErr)
+					}
+				} else {
+					output, err = s.proposeValidation(ctx, &v, arguments)
+					if err == nil && mode == "manual" {
+						if err := s.save(v); err != nil {
+							t.Fatal(err)
+						}
+						v, err = s.TurnWithEvents(ctx, v.ID, Input{ActionID: "accept_validation", HandoffID: v.Pending.ID}, nil)
+						for _, message := range v.Messages {
+							if message.Role == "tool" {
+								output = message.Content
+							}
+						}
+					}
+				}
+				if err != nil {
+					return err.Error()
+				}
+				return output
+			}
+			runner.count = 3
+			if output := validate(`{"limit":3}`); v.Validation == nil || runner.limit != 3 {
+				t.Fatalf("default sample failed: %s", output)
+			}
+			runner.count = 10
+			output := validate(`{"limit":11,"min_count":11}`)
+			if v.Validation != nil || v.Ready || runner.limit != 11 || !strings.Contains(output, "fetched 10 items; expected at least 11") {
+				t.Fatalf("short sample passed: %s, session=%+v", output, v)
+			}
+			v.Ready = true // Earlier validation must not authorize saving after this failure.
+			if err := s.save(v); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Publish(ctx, v.ID, t.TempDir(), func(string, spec.Ingestion) error {
+				t.Fatal("published a truncated sample")
+				return nil
+			}); err == nil {
+				t.Fatal("save bypassed stronger validation")
+			}
+			runner.count = 11
+			if output := validate(`{"limit":11,"min_count":11}`); v.Validation == nil {
+				t.Fatalf("complete sample failed: %s", output)
+			}
+			if err := s.requireValidation(ctx, &v); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestValidationMinimumBounds(t *testing.T) {
+	v := &Session{Draft: &Draft{Data: "files"}}
+	for _, arguments := range []string{`{"limit":11,"min_count":12}`, `{"min_count":-1}`, `{"limit":-1}`, `{"limit":11,"max_bytes":-1}`} {
+		if _, err := validationRequest(v, arguments); err == nil {
+			t.Fatalf("invalid validation accepted: %s", arguments)
+		}
+	}
+	for _, arguments := range []string{`{}`, `{"limit":11,"min_count":11}`, `{"limit":10001,"min_count":10001,"max_bytes":21474836480,"timeout_seconds":3601}`, `{"limit":0,"min_count":10001}`} {
+		if _, err := validationRequest(v, arguments); err != nil {
+			t.Fatalf("valid sample rejected: %s: %v", arguments, err)
+		}
+	}
+}
+
+func TestAgentValidationBudgetsHaveNoCeilings(t *testing.T) {
+	for _, external := range []bool{false, true} {
+		t.Run(fmt.Sprint("mcp=", external), func(t *testing.T) {
+			ctx := context.Background()
+			s, runner, v := validationFixtureWithApproval(t, false)
+			if err := s.Destinations.(*store.SQLite).PutDestination(ctx, destination.Config{Name: "files", Type: "objects", Path: t.TempDir()}); err != nil {
+				t.Fatal(err)
+			}
+			v.Draft.Data, v.Draft.Destination, v.Draft.Table = "files", "files", "objects"
+			v.Loading.Strategy, v.External = "update", external
+			for _, arguments := range []string{`{"limit":10001,"max_bytes":21474836480,"timeout_seconds":3601}`, `{}`} {
+				if err := s.save(v); err != nil {
+					t.Fatal(err)
+				}
+				var err error
+				if external {
+					_, err = s.MCPCall(ctx, v.ID, "validate_ingestion", json.RawMessage(arguments))
+				} else {
+					_, err = s.proposeValidation(ctx, &v, arguments)
+				}
+				if err != nil || runner.hasDeadline {
+					t.Fatalf("validation capped by outer deadline: %v", err)
+				}
+				var want ValidationProposal
+				if err := json.Unmarshal([]byte(arguments), &want); err != nil {
+					t.Fatal(err)
+				}
+				if runner.limit != want.Limit || runner.plan.ValidationMaxBytes != want.MaxBytes || runner.plan.ValidationTimeoutSeconds != want.TimeoutSeconds {
+					t.Fatalf("agent's budgets changed: limit=%d plan=%+v", runner.limit, runner.plan)
+				}
+			}
+		})
+	}
+
+	request, err := validationRequest(&Session{Draft: &Draft{}}, `{"timeout_seconds":3601}`)
+	if err != nil || request.TimeoutSeconds != 3601 {
+		t.Fatalf("row validation cannot choose timeout: %+v %v", request, err)
+	}
 }
 
 func validationFixture(t *testing.T) (*Service, *validationRunner, Session) {
@@ -151,7 +288,7 @@ func TestAutomaticValidationContinuesWithoutApproval(t *testing.T) {
 func TestAutomaticValidationFailureBlocksFinishAndSave(t *testing.T) {
 	ctx := context.Background()
 	s, runner, v := validationFixtureWithApproval(t, false)
-	if _, err := s.proposeValidation(ctx, &v, `{"limit":1001}`); err == nil || runner.calls != 0 {
+	if _, err := s.proposeValidation(ctx, &v, `{"limit":-1}`); err == nil || runner.calls != 0 {
 		t.Fatal("automatic validation bypassed sample limits")
 	}
 	runner.err = errors.New("sample load failed")

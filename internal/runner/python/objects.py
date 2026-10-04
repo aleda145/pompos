@@ -26,8 +26,9 @@ def _pompos_objects():
     if config.get("destination_type") != "objects":
         raise ValueError("File ingestion requires an objects destination")
     validation_limit = config.get("validation_limit", 0)
+    validation = config.get("validation", bool(validation_limit))
     limit = 5 if probe else (validation_limit or None)
-    byte_budget = (config.get("validation_max_bytes") or 50 * 1024 * 1024) if validation_limit else None
+    byte_budget = (config.get("validation_max_bytes") or None) if validation else None
     downloaded_bytes = 0
 
     def timestamp(value):
@@ -212,7 +213,7 @@ def _pompos_objects():
                        "sha256 VARCHAR NOT NULL, source_version VARCHAR, source_modified_at TIMESTAMPTZ, "
                        "first_seen_at TIMESTAMPTZ NOT NULL, last_seen_at TIMESTAMPTZ NOT NULL, "
                        "downloaded_at TIMESTAMPTZ NOT NULL, metadata JSON NOT NULL)")
-            if validation_limit:
+            if validation:
                 sample = list(objects())
                 if not sample:
                     raise ValueError("Validation returned no objects")

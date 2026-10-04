@@ -222,7 +222,7 @@ func TestMCPClientCompletesWorkflowWithoutWebApprovalsOrModel(t *testing.T) {
 	call("configure_loading", loading, false)
 	call("save_ingestion", args(), true)
 	validationArgs := map[string]any{"session_id": id, "limit": 5}
-	for _, limit := range []int{0, 1001} {
+	for _, limit := range []int{-1, -10} {
 		call("validate_ingestion", map[string]any{"session_id": id, "limit": limit}, true)
 	}
 	scriptPath := filepath.Join(service.Dir, id+".py")

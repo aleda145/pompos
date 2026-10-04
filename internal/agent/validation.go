@@ -15,6 +15,7 @@ import (
 
 type ValidationProposal struct {
 	Limit          int    `json:"limit"`
+	MinCount       int    `json:"min_count,omitempty"`
 	MaxBytes       int64  `json:"max_bytes,omitempty"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
 	Fingerprint    string `json:"fingerprint"`
@@ -32,27 +33,22 @@ func (s *Service) SetManualValidation(enabled bool) error {
 }
 
 func validationRequest(v *Session, arguments string) (ValidationProposal, error) {
-	request := ValidationProposal{Limit: 100}
+	var request ValidationProposal
 	files := v.Draft != nil && v.Draft.Data == "files"
-	if files {
-		request.Limit = 3
-	}
 	if err := json.Unmarshal([]byte(arguments), &request); err != nil {
 		return request, err
 	}
-	if request.Limit < 1 || request.Limit > 1000 {
-		return request, errors.New("validation limit must be between 1 and 1000")
+	if request.Limit < 0 {
+		return request, errors.New("validation limit must be nonnegative; 0 means all items")
 	}
-	if files {
-		if request.Limit > 10 {
-			return request, errors.New("object validation supports 1–10 files")
-		}
-		var err error
-		request.MaxBytes, request.TimeoutSeconds, err = runnerpython.ObjectValidationBudget(request.MaxBytes, request.TimeoutSeconds)
-		return request, err
+	if request.MinCount < 0 || (request.Limit > 0 && request.MinCount > request.Limit) {
+		return request, errors.New("min_count must be nonnegative and no greater than a positive validation limit")
 	}
-	if request.MaxBytes != 0 || request.TimeoutSeconds != 0 {
-		return request, errors.New("max_bytes and timeout_seconds apply only to file validation")
+	if request.MaxBytes < 0 || request.TimeoutSeconds < 0 {
+		return request, errors.New("max_bytes and timeout_seconds must be nonnegative; 0 means unlimited")
+	}
+	if !files && request.MaxBytes != 0 {
+		return request, errors.New("max_bytes applies only to file validation")
 	}
 	return request, nil
 }
@@ -64,9 +60,10 @@ type Validation struct {
 
 func validationProperties() map[string]any {
 	return map[string]any{
-		"limit":           map[string]any{"type": "integer", "minimum": 1, "maximum": 1000},
-		"max_bytes":       map[string]any{"type": "integer", "minimum": 1, "maximum": int64(10 * 1024 * 1024 * 1024), "description": "File validation only: total bytes across both sample loads; default 50 MiB."},
-		"timeout_seconds": map[string]any{"type": "integer", "minimum": 1, "maximum": 1800, "description": "File validation only: execution timeout; default 90 seconds."},
+		"limit":           map[string]any{"type": "integer", "minimum": 0, "description": "Choose how many rows or files to validate. Omitted or 0 fetches all items. No upper ceiling. Choose a sample or full extraction based on the source and suspected bugs."},
+		"min_count":       map[string]any{"type": "integer", "minimum": 0, "description": "Optional minimum count required to pass; cannot exceed a positive limit. Set from source evidence or the user's expected count. For a suspected 10-item cap, use limit=11 and min_count=11."},
+		"max_bytes":       map[string]any{"type": "integer", "minimum": 0, "description": "Optional file download budget in bytes across both loads. Omitted or 0 means unlimited. No upper ceiling."},
+		"timeout_seconds": map[string]any{"type": "integer", "minimum": 0, "description": "Optional validation execution timeout for rows or files. Omitted or 0 means no timeout. No upper ceiling."},
 	}
 }
 
@@ -144,17 +141,18 @@ func (s *Service) proposeValidation(ctx context.Context, v *Session, arguments s
 		v.Pending = nil
 		return s.validateSample(ctx, v, plan, &request)
 	}
+	scope := "all items"
+	if request.Limit > 0 {
+		scope = fmt.Sprintf("up to %d items", request.Limit)
+	}
 	v.Pending = &Handoff{ID: fmt.Sprint(len(v.Messages)), Kind: "validation",
 		Prompt:     "Validate a sample before saving this ingestion?",
 		Validation: &request,
 		Actions: []Action{
-			{ID: "accept_validation", Label: "Run validation", Message: fmt.Sprintf("Validate up to %d source rows in a temporary database using the confirmed loading strategy.", request.Limit)},
+			{ID: "accept_validation", Label: "Run validation", Message: fmt.Sprintf("Validate %s in temporary storage using the selected validation settings.", scope)},
 			{ID: "explain", Label: "Tell me more", Message: "Explain the validation sample and what will be checked. Keep validation awaiting my confirmation."},
 			{ID: "defer_validation", Label: "Not now", Message: "Do not run validation yet. Keep the draft; I will decide when to validate."},
 		}}
-	if v.Draft.Data == "files" {
-		v.Pending.Actions[0].Message = fmt.Sprintf("Validate up to %d files with two sample loads in a temporary folder and object catalog (%d bytes total, %d seconds).", request.Limit, request.MaxBytes, request.TimeoutSeconds)
-	}
 	return "Waiting for explicit user confirmation. The card shows the validation row limit and temporary loading checks. Validation has not run.", nil
 }
 
@@ -184,7 +182,7 @@ func (s *Service) runValidation(ctx context.Context, v *Session, proposal *Valid
 	v.Validation = nil
 	call := Call{ID: fmt.Sprintf("validation_%d", len(v.Messages)), Type: "function"}
 	call.Function.Name = "validate_ingestion"
-	args, _ := json.Marshal(map[string]any{"limit": proposal.Limit, "max_bytes": proposal.MaxBytes, "timeout_seconds": proposal.TimeoutSeconds, "strategy": plan.Strategy, "destination": "temporary DuckDB"})
+	args, _ := json.Marshal(map[string]any{"limit": proposal.Limit, "min_count": proposal.MinCount, "max_bytes": proposal.MaxBytes, "timeout_seconds": proposal.TimeoutSeconds, "strategy": plan.Strategy, "destination": "temporary DuckDB"})
 	call.Function.Arguments = string(args)
 	message := Message{Role: "assistant", Calls: []Call{call}}
 	v.Messages = append(v.Messages, message)
@@ -201,12 +199,24 @@ func (s *Service) runValidation(ctx context.Context, v *Session, proposal *Valid
 }
 
 func (s *Service) validateSample(ctx context.Context, v *Session, plan compiler.ExecutionPlan, proposal *ValidationProposal) (string, error) {
-	plan.ValidationMaxBytes, plan.ValidationTimeoutSeconds = proposal.MaxBytes, proposal.TimeoutSeconds
-	result, _, err := s.Python.Validate(ctx, plan, proposal.Limit)
+	result, err := s.performValidation(ctx, v, plan, proposal)
 	if err != nil {
 		return "", err
 	}
-	v.Validation = &Validation{Fingerprint: proposal.Fingerprint, Result: result}
 	data, err := json.Marshal(result)
 	return "POMPOS_VALIDATION_RESULT=" + string(data), err
+}
+
+func (s *Service) performValidation(ctx context.Context, v *Session, plan compiler.ExecutionPlan, proposal *ValidationProposal) (runnerpython.ValidationResult, error) {
+	v.Ready, v.Validation = false, nil
+	plan.ValidationMaxBytes, plan.ValidationTimeoutSeconds = proposal.MaxBytes, proposal.TimeoutSeconds
+	result, _, err := s.Python.Validate(ctx, plan, proposal.Limit)
+	if err != nil {
+		return result, err
+	}
+	if result.SampleCount < proposal.MinCount {
+		return result, fmt.Errorf("validation fetched %d items; expected at least %d (limit %d). Investigate pagination, filters, or extraction caps before saving", result.SampleCount, proposal.MinCount, proposal.Limit)
+	}
+	v.Validation = &Validation{Fingerprint: proposal.Fingerprint, Result: result}
+	return result, nil
 }

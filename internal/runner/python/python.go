@@ -32,17 +32,14 @@ func (r Runner) Run(ctx context.Context, plan compiler.ExecutionPlan) error {
 	return err
 }
 func (r Runner) Execute(ctx context.Context, plan compiler.ExecutionPlan, probe bool) (string, error) {
-	return r.execute(ctx, plan, probe, 0)
+	return r.execute(ctx, plan, probe, 0, false)
 }
 
-// Validate loads a bounded sample twice into a disposable database, using the production loader.
+// Validate loads the selected sample twice into a disposable database. Zero selects all items.
 func (r Runner) Validate(ctx context.Context, plan compiler.ExecutionPlan, limit int) (ValidationResult, string, error) {
 	var result ValidationResult
-	if limit < 1 || limit > 1000 {
-		return result, "", fmt.Errorf("validation limit must be between 1 and 1000")
-	}
-	if plan.DestinationType == "objects" && limit > 10 {
-		return result, "", fmt.Errorf("object validation limit must be between 1 and 10 files")
+	if limit < 0 || plan.ValidationTimeoutSeconds < 0 {
+		return result, "", fmt.Errorf("validation limit and timeout must be nonnegative")
 	}
 	if plan.DestinationType == "objects" {
 		var err error
@@ -72,7 +69,7 @@ func (r Runner) Validate(ctx context.Context, plan compiler.ExecutionPlan, limit
 	if plan.DestinationType == "objects" {
 		plan.DestinationPath = filepath.Join(directory, "objects")
 	}
-	output, err := r.execute(ctx, plan, false, limit)
+	output, err := r.execute(ctx, plan, false, limit, true)
 	if err != nil {
 		return result, output, err
 	}
@@ -83,7 +80,7 @@ func (r Runner) Validate(ctx context.Context, plan compiler.ExecutionPlan, limit
 	if plan.Strategy == "append" {
 		expected *= 2
 	}
-	if result.SampleCount < 1 || result.SampleCount > limit || result.FirstLoadRows != result.SampleCount || result.SecondLoadRows != expected {
+	if result.SampleCount < 1 || (limit > 0 && result.SampleCount > limit) || result.FirstLoadRows != result.SampleCount || result.SecondLoadRows != expected {
 		return result, output, fmt.Errorf("validation returned inconsistent load counts")
 	}
 	preview, previewErr := r.Preview(ctx, plan)
@@ -118,7 +115,7 @@ func ReadResult(output, marker string, result any) error {
 	return fmt.Errorf("Python exited without a %s result", strings.TrimSuffix(marker, "="))
 }
 
-func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe bool, validationLimit int) (string, error) {
+func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe bool, validationLimit int, validation bool) (string, error) {
 	plan, err := r.Prepare(ctx, plan)
 	if err != nil {
 		return "", err
@@ -132,19 +129,23 @@ func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 		values[ref] = string(value)
 	}
 	payload, _ := json.Marshal(values)
-	config, _ := json.Marshal(map[string]any{"destination_type": plan.DestinationType, "destination": plan.DestinationPath, "schema": destination.SchemaName(plan.DestinationSchema), "table": plan.DestinationObject, "strategy": plan.Strategy, "primary_key": plan.PrimaryKey, "validation_limit": validationLimit, "validation_max_bytes": plan.ValidationMaxBytes})
+	config, _ := json.Marshal(map[string]any{"destination_type": plan.DestinationType, "destination": plan.DestinationPath, "schema": destination.SchemaName(plan.DestinationSchema), "table": plan.DestinationObject, "strategy": plan.Strategy, "primary_key": plan.PrimaryKey, "validation": validation, "validation_limit": validationLimit, "validation_max_bytes": plan.ValidationMaxBytes})
 	timeout := 30 * time.Minute
-	if validationLimit > 0 {
-		timeout = 90 * time.Second
-		if plan.DestinationType == "objects" && plan.ValidationTimeoutSeconds > 0 {
+	if validation {
+		timeout = 0
+		// Durations beyond time.Duration's range must not wrap into an immediate timeout.
+		if int64(plan.ValidationTimeoutSeconds) <= (1<<63-1)/int64(time.Second) {
 			timeout = time.Duration(plan.ValidationTimeoutSeconds) * time.Second
 		}
 	}
 	if probe {
 		timeout = 45 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	binary := plan.PythonBinary
 	script, err := filepath.Abs(plan.Script)
 	if err != nil {
@@ -188,7 +189,7 @@ func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 	if !probeValid {
 		return result, fmt.Errorf("Python exited without a valid nonempty probe sample; ensure fetch yields dictionaries and does not exit early")
 	}
-	if plan.DestinationType == "objects" && !probe && validationLimit == 0 {
+	if plan.DestinationType == "objects" && !probe && !validation {
 		var summary struct {
 			Objects int `json:"objects"`
 		}
@@ -282,8 +283,8 @@ if __name__ == "__main__":
             _info = _pipeline.run(_resource)
             _info.raise_on_failed_jobs()
             return _info
-        if _validation_limit:
-            _sample = list(itertools.islice(_rows(), _validation_limit))
+        if _config.get("validation", bool(_validation_limit)):
+            _sample = list(itertools.islice(_rows(), _validation_limit or None))
             if not _sample:
                 raise ValueError("Validation returned no rows")
             _keys = _config.get("primary_key") or []
