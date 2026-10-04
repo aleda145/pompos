@@ -104,6 +104,7 @@ code { font-size: 1em; overflow-wrap: anywhere; }
 .run-empty { padding: 12px; font-size: 12px; }
 .run-workspace [data-poll-error] { margin: 0 0 8px; padding-left: 8px; border-left: 3px solid var(--warning); }
 .button, button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; border: 1px solid var(--border-strong); border-radius: 3px; background: var(--surface); color: var(--text); padding: 5px 12px; font: 500 14px/1.5 var(--sans); text-decoration: none; cursor: pointer; }
+.page-heading > .button { min-height: 26px; padding: 1px 12px; }
 .button:hover, button:hover { background: var(--surface-inset); border-color: var(--text); text-decoration: none; }
 .button:active, button:active { background: var(--border); transform: translateY(1px); }
 .primary { background: var(--accent); border-color: var(--text); }
