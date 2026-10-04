@@ -91,6 +91,13 @@ CREATE TABLE IF NOT EXISTS ingestion_runs (
 );
 CREATE INDEX IF NOT EXISTS ingestion_runs_claim
     ON ingestion_runs (status, scheduled_for);
+CREATE INDEX IF NOT EXISTS ingestion_runs_history
+    ON ingestion_runs (ingestion_id, id DESC);
+CREATE TABLE IF NOT EXISTS ingestion_run_logs (
+    run_id INTEGER PRIMARY KEY REFERENCES ingestion_runs(id),
+    output TEXT NOT NULL DEFAULT '',
+    truncated INTEGER NOT NULL DEFAULT 0
+);
 PRAGMA user_version = 6;`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize metadata database: %w", err)

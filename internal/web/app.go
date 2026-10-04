@@ -32,6 +32,9 @@ type MetadataStore interface {
 	Get(context.Context, string) (ingestion.Ingestion, error)
 	List(context.Context) ([]ingestion.Ingestion, error)
 	UpdateSpecReference(context.Context, string, string, string) error
+	ListRuns(context.Context, string, int64, int) ([]ingestion.Run, error)
+	GetRun(context.Context, string, int64) (ingestion.Run, error)
+	HasActiveRuns(context.Context, string) (bool, error)
 }
 
 type ScheduleManager interface {
@@ -115,11 +118,13 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/agent/mcp", a.toggleMCP)
 	mux.HandleFunc("GET /ingestions/{id}", a.ingestionDetail)
 	mux.HandleFunc("GET /ingestions/{id}/preview", a.ingestionPreview)
+	mux.HandleFunc("GET /ingestions/{id}/runs", a.ingestionRuns)
 	mux.HandleFunc("POST /ingestions/{id}/run", a.runIngestion)
 	mux.HandleFunc("POST /ingestions/{id}/schedule", a.updateSchedule)
 	for pattern, handler := range map[string]http.HandlerFunc{
 		"GET /ingestions/{destination}/{schema}/{table}":           a.ingestionDetail,
 		"GET /ingestions/{destination}/{schema}/{table}/preview":   a.ingestionPreview,
+		"GET /ingestions/{destination}/{schema}/{table}/runs":      a.ingestionRuns,
 		"POST /ingestions/{destination}/{schema}/{table}/run":      a.runIngestion,
 		"POST /ingestions/{destination}/{schema}/{table}/schedule": a.updateSchedule,
 	} {
@@ -187,11 +192,12 @@ type detailPageData struct {
 	ScheduleValue string
 	ScheduleSaved bool
 	ScheduleError string
-	RunQueued     bool
 	YAML          string
 	Python        string
 	PythonError   string
 	RunError      string
+	RunView       runView
+	RunsError     string
 }
 
 func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
@@ -204,16 +210,23 @@ func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, err)
 		return
 	}
-	page := a.detailData(item)
+	page := a.detailData(r, item)
 	page.ScheduleSaved = r.URL.Query().Get("schedule") == "saved"
-	page.RunQueued = r.URL.Query().Get("run") == "queued"
 	a.render(w, http.StatusOK, "detail", page)
 }
 
-func (a *App) detailData(item ingestion.Ingestion) detailPageData {
+func (a *App) detailData(r *http.Request, item ingestion.Ingestion) detailPageData {
 	page := detailPageData{
 		Title: item.Name, Ingestion: item, SpecPath: item.SpecPath,
 		NextRun: item.NextRun, ScheduleValue: item.Schedule,
+	}
+	before, selected, historyErr := runQuery(r)
+	if historyErr == nil {
+		page.RunView, historyErr = a.runData(r.Context(), item.ID, before, selected)
+	}
+	if historyErr != nil {
+		page.RunsError = "Run history unavailable."
+		a.Logger.Printf("load run history ingestion_id=%s error=%q", item.ID, historyErr)
 	}
 	// Keep malformed YAML visible so the operator can diagnose it.
 	yamlData, err := os.ReadFile(item.SpecPath)
@@ -245,7 +258,7 @@ func (a *App) runIngestion(w http.ResponseWriter, r *http.Request) {
 			a.serverError(w, loadErr)
 			return
 		}
-		page := a.detailData(item)
+		page := a.detailData(r, item)
 		page.RunError = err.Error()
 		a.render(w, http.StatusUnprocessableEntity, "detail", page)
 		return
@@ -265,18 +278,18 @@ func (a *App) updateSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err = a.hydrate(item)
 	if err != nil {
-		a.render(w, http.StatusUnprocessableEntity, "detail", a.detailData(item))
+		a.render(w, http.StatusUnprocessableEntity, "detail", a.detailData(r, item))
 		return
 	}
 	schedule := strings.TrimSpace(r.FormValue("schedule"))
 	if err := a.Scheduler.Validate(schedule); err != nil {
-		page := a.detailData(item)
+		page := a.detailData(r, item)
 		page.ScheduleValue, page.ScheduleError = schedule, err.Error()
 		a.render(w, http.StatusUnprocessableEntity, "detail", page)
 		return
 	}
 	if err := a.setIngestionSchedule(r.Context(), item.ID, schedule); err != nil {
-		page := a.detailData(item)
+		page := a.detailData(r, item)
 		page.ScheduleValue, page.ScheduleError = schedule, err.Error()
 		a.render(w, http.StatusUnprocessableEntity, "detail", page)
 		return

@@ -14,7 +14,7 @@ function mount(fetch) {
     addEventListener: (_, listener) => { click = listener; },
   };
   runInNewContext(readFileSync(`${__dirname}/preview.js`, 'utf8'), {
-    document: {querySelector: () => panel}, fetch, AbortController,
+    document: {querySelector: () => panel, addEventListener: () => {}}, fetch, AbortController,
     setTimeout: callback => { timeout = callback; return 1; },
     clearTimeout: () => { timeout = null; },
   });

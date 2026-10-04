@@ -18,6 +18,7 @@ type Store interface {
 	Get(context.Context, string) (ingestion.Ingestion, error)
 	MarkRunning(context.Context, string, time.Time) error
 	Finish(context.Context, string, string, string) error
+	AppendRunLog(context.Context, int64, string) error
 }
 
 // Service executes ingestions independently of any transport such as HTTP.
@@ -40,12 +41,31 @@ func New(service Service) (*Service, error) {
 }
 
 func (s *Service) Run(ctx context.Context, queued ingestion.Run) (runErr error) {
+	ctx = runner.WithLog(ctx, func(output string) {
+		if queued.ID == 0 {
+			return
+		}
+		logCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.Store.AppendRunLog(logCtx, queued.ID, output); err != nil {
+			s.Logger.Printf("persist run log run_id=%d error=%q", queued.ID, err)
+		}
+	})
+	runner.Log(ctx, fmt.Sprintf("%s Starting attempt %d\n", time.Now().UTC().Format("15:04:05"), queued.Attempts))
 	defer func() {
 		if value := recover(); value != nil {
 			runErr = fmt.Errorf("ingestion panicked: %v", value)
 			s.Logger.Printf("ingestion panic ingestion_id=%s error=%q stack=%s", queued.IngestionID, runErr, debug.Stack())
 			runErr = errors.Join(runErr, s.finish(queued.IngestionID, ingestion.StatusFailed, runErr.Error()))
 		}
+		message := "SUCCESS"
+		if runErr != nil {
+			message = "FAILED: " + runErr.Error()
+		}
+		if ctx.Err() != nil {
+			message = "Interrupted; queued for retry"
+		}
+		runner.Log(ctx, fmt.Sprintf("\n%s %s\n", time.Now().UTC().Format("15:04:05"), message))
 	}()
 	item, err := s.Store.Get(ctx, queued.IngestionID)
 	if err != nil {
@@ -73,6 +93,7 @@ func (s *Service) execute(ctx context.Context, item ingestion.Ingestion) error {
 		return ctx.Err()
 	}
 	started := time.Now()
+	runner.Log(ctx, time.Now().UTC().Format("15:04:05")+" Loading YAML\n")
 	document, _, err := spec.Read(item.SpecPath)
 	if err != nil {
 		s.Logger.Printf("spec load failed ingestion_id=%s spec_path=%s error=%q", item.ID, item.SpecPath, err)
@@ -84,6 +105,7 @@ func (s *Service) execute(ctx context.Context, item ingestion.Ingestion) error {
 		return s.finish(item.ID, ingestion.StatusFailed, err.Error())
 	}
 	s.Logger.Printf("marking ingestion running ingestion_id=%s destination_table=%s", item.ID, plan.DestinationObject)
+	runner.Log(ctx, fmt.Sprintf("%s Loading %s · %s\n", time.Now().UTC().Format("15:04:05"), plan.DestinationObject, plan.Strategy))
 	if err := s.Store.MarkRunning(ctx, item.ID, time.Now()); err != nil {
 		s.Logger.Printf("failed to mark ingestion running ingestion_id=%s error=%q", item.ID, err)
 		return err

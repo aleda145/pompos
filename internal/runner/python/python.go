@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +15,7 @@ import (
 
 	"pompos/internal/compiler"
 	"pompos/internal/destination"
+	"pompos/internal/runner"
 	"pompos/internal/secrets"
 )
 
@@ -116,6 +117,7 @@ func ReadResult(output, marker string, result any) error {
 }
 
 func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe bool, validationLimit int, validation bool) (string, error) {
+	runner.Log(ctx, "Preparing Python environment\n")
 	plan, err := r.Prepare(ctx, plan)
 	if err != nil {
 		return "", err
@@ -164,21 +166,22 @@ func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 	}
 	cmd.WaitDelay = 2 * time.Second
 	output := cappedOutput{tail: plan.DestinationType == "objects"}
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	redacted := cappedOutput{tail: plan.DestinationType == "objects"}
+	live := newRedactedLog(values, func(text string) {
+		_, _ = redacted.Write([]byte(text))
+		runner.Log(ctx, text)
+	})
+	stream := io.MultiWriter(&output, live)
+	cmd.Stdout = stream
+	cmd.Stderr = stream
+	runner.Log(ctx, "Executing Python\n")
 	err = cmd.Run()
-	result := output.String()
+	live.flush(true)
+	result := redacted.String()
 	probeValid := !probe
 	if probe {
 		var sample ProbeResult
-		probeValid = ReadResult(result, "POMPOS_PROBE_RESULT=", &sample) == nil && sample.Count > 0 && sample.Count <= 5 && len(sample.Rows) == sample.Count
-	}
-
-	for _, value := range values {
-		if value != "" {
-			result = strings.ReplaceAll(result, value, "[REDACTED]")
-			result = strings.ReplaceAll(result, url.QueryEscape(value), "[REDACTED]")
-		}
+		probeValid = ReadResult(output.String(), "POMPOS_PROBE_RESULT=", &sample) == nil && sample.Count > 0 && sample.Count <= 5 && len(sample.Rows) == sample.Count
 	}
 	if ctx.Err() != nil {
 		return result, fmt.Errorf("Python execution timed out or was cancelled")

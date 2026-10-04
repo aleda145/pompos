@@ -1,6 +1,7 @@
 (() => {
   const panel = document.querySelector("[data-preview-url]");
   if (!panel) return;
+  let refreshPending = false;
 
   async function loadPreview() {
     if (panel.getAttribute("aria-busy") === "true") return;
@@ -21,11 +22,19 @@
     } finally {
       clearTimeout(timeout);
       panel.setAttribute("aria-busy", "false");
+      if (refreshPending) {
+        refreshPending = false;
+        loadPreview();
+      }
     }
   }
 
   panel.addEventListener("click", (event) => {
     if (event.target.closest("[data-preview-retry]")) loadPreview();
+  });
+  document.addEventListener("pompos:run-succeeded", () => {
+    if (panel.getAttribute("aria-busy") === "true") refreshPending = true;
+    else loadPreview();
   });
   loadPreview();
 })();

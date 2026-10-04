@@ -39,6 +39,27 @@ type Run struct {
 	Attempts     int
 	SpecPath     string
 	SpecDigest   string
+	Status       string
+	StartedAt    *time.Time
+	FinishedAt   *time.Time
+	LastError    string
+	Log          string
+	LogTruncated bool
+}
+
+func (r Run) Duration() string {
+	if r.StartedAt == nil {
+		return "—"
+	}
+	end := time.Now()
+	if r.FinishedAt != nil {
+		end = *r.FinishedAt
+	}
+	d := max(end.Sub(*r.StartedAt), 0)
+	if d < time.Second {
+		return d.Round(time.Millisecond).String()
+	}
+	return d.Round(time.Second).String()
 }
 
 type Source struct {
