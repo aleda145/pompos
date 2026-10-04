@@ -60,6 +60,9 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 				}
 			}
 			b, _ := json.Marshal(agent.Draft{Schema: "raw", Name: group + " records", Source: "fixture/" + group, Table: group + "_records", Destination: "local-duckdb", Strategy: "replace", Code: "def fetch(secret, limit):\n    yield {'id': 1, 'group': '" + group + "'}\n"})
+			if step >= 12 {
+				b, _ = json.Marshal(agent.Draft{Schema: "raw", Name: "Updated men records", Source: "fixture/men", Table: "men_records", Destination: "local-duckdb", Strategy: "replace", Code: "def fetch(secret, limit):\n    yield {'id': 2, 'group': 'men'}\n"})
+			}
 			call.Function.Arguments = string(b)
 		case 1:
 			call.Function.Name = "test_script"
@@ -250,6 +253,55 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 	w = request("GET", path, "", "")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "saved-ingestions") || !strings.Contains(w.Body.String(), both.PublishedID) || !strings.Contains(w.Body.String(), saved.PublishedID) || !strings.Contains(w.Body.String(), "New chat") {
 		t.Fatal("chat reload lost saved ingestions or the new-chat action")
+	}
+	// Editing an earlier ingestion updates its files and schedule in place.
+	beforeUpdate, err := db.Get(ctx, saved.PublishedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w = request("POST", path, `{"message":"update the men's records extractor"}`, "application/json")
+	reply.Session = agent.Session{}
+	if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil || reply.Session.Pending == nil || reply.Session.Pending.Kind != "loading" {
+		t.Fatalf("update loading proposal: %s", w.Body)
+	}
+	if blocked := request("POST", path+"/publish", "", ""); blocked.Code != 422 {
+		t.Fatal("update published without fresh validation")
+	}
+	accepted, _ = json.Marshal(agent.Input{ActionID: "accept_loading", HandoffID: reply.Session.Pending.ID, Loading: &agent.Loading{Strategy: "replace"}})
+	w = request("POST", path, string(accepted), "application/json")
+	reply.Session = agent.Session{}
+	if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil || reply.Session.Pending == nil || reply.Session.Pending.Kind != "validation" {
+		t.Fatalf("update validation proposal: %s", w.Body)
+	}
+	accepted, _ = json.Marshal(agent.Input{ActionID: "accept_validation", HandoffID: reply.Session.Pending.ID})
+	w = request("POST", path, string(accepted), "application/json")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ready":true`) {
+		t.Fatalf("update validation: %d %s", w.Code, w.Body)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		w = request("POST", path+"/publish", "", "")
+		if w.Code != 303 {
+			t.Fatalf("update publish: %d %s", w.Code, w.Body)
+		}
+	}
+	updated, err := app.Agent.Load(chatID)
+	if err != nil || updated.PublishedID != saved.PublishedID || len(updated.SavedIngestions) != 2 || updated.SavedIngestions[0].Name != "Updated men records" {
+		t.Fatalf("update duplicated or lost saved ingestion: %#v %v", updated, err)
+	}
+	updatedDoc, updatedYAML, err := spec.Read(firstYAMLPath)
+	if err != nil || updatedDoc.Metadata.Name != "Updated men records" || updatedDoc.Schedule != nil || updatedDoc.Materialization.Strategy != "replace" {
+		t.Fatalf("update did not persist configuration: %#v %v", updatedDoc, err)
+	}
+	updatedScript, err := os.ReadFile(initial.Runtime.Script)
+	if err != nil || !strings.Contains(string(updatedScript), "'id': 2") {
+		t.Fatalf("update did not persist script: %s %v", updatedScript, err)
+	}
+	afterUpdate, err := db.Get(ctx, saved.PublishedID)
+	if err != nil || afterUpdate.SpecDigest != spec.Digest(updatedYAML) || afterUpdate.Status != beforeUpdate.Status || afterUpdate.LastError != beforeUpdate.LastError {
+		t.Fatalf("update lost run state or spec reference: %#v %v", afterUpdate, err)
+	}
+	if schedules.item.ID != saved.PublishedID || schedules.item.Schedule != "" || len(schedules.enqueued) != 1 {
+		t.Fatal("update did not disable schedule or unexpectedly queued a run")
 	}
 }
 

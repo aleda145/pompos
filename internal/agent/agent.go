@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -107,8 +108,15 @@ type SavedIngestion struct {
 
 func (v *Session) recordPublication(id string) {
 	d := v.Draft
-	v.SavedIngestions = append(v.SavedIngestions, SavedIngestion{Schema: destination.SchemaName(d.Schema), ID: id, Name: d.Name, Table: d.Table, Destination: d.Destination})
-	v.Messages = append(v.Messages, Message{Role: "assistant", Content: fmt.Sprintf("Saved ingestion %q (%s) for table %s in %s. You can create another ingestion in this conversation.", d.Name, id, d.Table, d.Destination)})
+	saved := SavedIngestion{Schema: destination.SchemaName(d.Schema), ID: id, Name: d.Name, Table: d.Table, Destination: d.Destination}
+	action := "Saved"
+	if index := slices.IndexFunc(v.SavedIngestions, func(item SavedIngestion) bool { return item.ID == id }); index >= 0 {
+		v.SavedIngestions[index] = saved
+		action = "Updated"
+	} else {
+		v.SavedIngestions = append(v.SavedIngestions, saved)
+	}
+	v.Messages = append(v.Messages, Message{Role: "assistant", Content: fmt.Sprintf("%s ingestion %q (%s) for table %s in %s. You can create another ingestion in this conversation.", action, d.Name, id, d.Table, d.Destination)})
 }
 
 func (v *Session) clearDraft() {
@@ -751,12 +759,15 @@ func (s *Service) Publish(ctx context.Context, id, artifactDir string, persist f
 		return "", e
 	}
 	// Record the destination/schema/table identity before publishing. Retries keep
-	// their files; a new draft must not overwrite another ingestion.
+	// their files; only ingestions saved in this conversation can be updated.
 	if v.DraftID != ingestionID {
+		updating := slices.ContainsFunc(v.SavedIngestions, func(item SavedIngestion) bool { return item.ID == ingestionID })
 		for _, extension := range []string{".py", ".yaml", ".py.lock"} {
 			path := spec.ArtifactPath(artifactDir, ingestionID, extension)
 			if _, err := os.Lstat(path); err == nil {
-				return "", fmt.Errorf("ingestion %q already exists; choose a different destination, schema, or table", ingestionID)
+				if !updating {
+					return "", fmt.Errorf("ingestion %q already exists; choose a different destination, schema, or table", ingestionID)
+				}
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return "", err
 			}
@@ -775,6 +786,8 @@ func (s *Service) Publish(ctx context.Context, id, artifactDir string, persist f
 			return "", err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	} else if err := os.Remove(absolute + ".lock"); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
 

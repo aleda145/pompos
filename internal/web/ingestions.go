@@ -26,8 +26,14 @@ func (a *App) publishSession(ctx context.Context, id string) (string, error) {
 		if err := a.Scheduler.Validate(item.Schedule); err != nil {
 			return err
 		}
-		if existing, err := a.Store.Get(ctx, ingestionID); err == nil {
-			return a.Scheduler.Upsert(existing)
+		if _, err := a.Store.Get(ctx, ingestionID); err == nil {
+			if err := agent.WriteFile(path, data); err != nil {
+				return err
+			}
+			if err := a.Store.UpdateSpecReference(ctx, ingestionID, path, item.SpecDigest); err != nil {
+				return err
+			}
+			return a.Scheduler.Upsert(item)
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return err
 		}

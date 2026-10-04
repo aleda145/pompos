@@ -292,6 +292,8 @@
     $('#send').classList.toggle('primary', !session.ready || !!session.published_id);
     $('#message').disabled = busy;
     const saved = session.saved_ingestions || [];
+    const targetID = session.draft ? `${session.draft.destination}/${session.draft.schema || 'main'}/${session.draft.table}` : '';
+    $('#publish button').textContent = saved.some(ingestion => ingestion.id === targetID) ? 'Update ingestion' : 'Save ingestion';
     $('#published').hidden = !saved.length;
     const links = saved.map(ingestion => {
       const item = element('li');
