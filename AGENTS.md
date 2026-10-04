@@ -7,3 +7,5 @@ Only write tests for critical code. Tests for HTML, css, layouting, design or an
 Read style_guide.md when doing UI/UX work
 
 Never add text to the README.md. or any docs. That should be human written
+
+Pompos is in development, no users. Do not consider backwards compatibility ever
