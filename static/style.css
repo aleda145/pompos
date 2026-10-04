@@ -197,6 +197,12 @@ legend { font-weight: 500; padding: 0; }
 .destination-edit { display: flex; gap: 8px; align-items: center; min-width: 260px; }
 .destination-edit label { flex: 1; margin: 0; }
 .destination-edit button { flex-shrink: 0; }
+.destination-ingestions summary { cursor: pointer; padding: 5px 0; }
+.destination-count { margin-left: 8px; font-size: 12px; white-space: nowrap; }
+.destination-ingestions ul { list-style: none; margin: 8px 0 0; padding: 0 0 0 16px; border-left: 1px solid var(--border); }
+.destination-ingestions li + li { margin-top: 4px; }
+.destination-ingestions a { display: inline-block; padding: 3px 0; overflow-wrap: anywhere; }
+.destination-ingestions p { margin: 8px 0 0 16px; font-size: 12px; }
 .chat-heading > div { flex: 1; }
 .chat-heading > a { color: var(--text); white-space: nowrap; }
 #chat { border: 1px solid var(--border); border-radius: 3px; background: var(--surface); }

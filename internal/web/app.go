@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -166,7 +167,17 @@ type destinationsPageData struct {
 	Type         string
 	Path         string
 	Saved        bool
-	Destinations []destination.Config
+	Destinations []destinationView
+}
+
+type destinationView struct {
+	destination.Config
+	Ingestions []destinationIngestion
+}
+
+type destinationIngestion struct {
+	ID     string
+	Target string
 }
 
 type secretsPageData struct {
@@ -298,12 +309,12 @@ func (a *App) updateSchedule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) listDestinations(w http.ResponseWriter, r *http.Request) {
-	a.renderDestinations(w, http.StatusOK, destinationsPageData{Saved: r.URL.Query().Get("saved") == "1"})
+	a.renderDestinations(w, r, http.StatusOK, destinationsPageData{Saved: r.URL.Query().Get("saved") == "1"})
 }
 
 func (a *App) saveDestination(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		a.renderDestinations(w, http.StatusBadRequest, destinationsPageData{Error: "Invalid form submission."})
+		a.renderDestinations(w, r, http.StatusBadRequest, destinationsPageData{Error: "Invalid form submission."})
 		return
 	}
 	data := destinationsPageData{
@@ -317,21 +328,50 @@ func (a *App) saveDestination(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := a.Destinations.PutDestination(r.Context(), config); err != nil {
 		data.Error = err.Error()
-		a.renderDestinations(w, http.StatusUnprocessableEntity, data)
+		a.renderDestinations(w, r, http.StatusUnprocessableEntity, data)
 		return
 	}
 	a.Logger.Printf("destination saved destination=%s type=%s path=%s", config.Name, config.Type, config.Path)
 	http.Redirect(w, r, "/destinations?saved=1", http.StatusSeeOther)
 }
 
-func (a *App) renderDestinations(w http.ResponseWriter, status int, data destinationsPageData) {
-	configs, err := a.Destinations.ListDestinations(context.Background())
+func (a *App) renderDestinations(w http.ResponseWriter, r *http.Request, status int, data destinationsPageData) {
+	configs, err := a.Destinations.ListDestinations(r.Context())
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	items, err := a.ingestionList(r.Context())
 	if err != nil {
 		a.serverError(w, err)
 		return
 	}
 	data.Title = "Destinations"
-	data.Destinations = configs
+	for _, config := range configs {
+		view := destinationView{Config: config}
+		for _, item := range items {
+			parts := strings.Split(item.ID, "/")
+			if len(parts) == 3 {
+				if parts[0] != config.Name {
+					continue
+				}
+			} else if item.Destination.Type != config.Type || item.Destination.Path != config.Path {
+				continue
+			}
+			schema, table := destination.SchemaName(item.Destination.Schema), item.Destination.Table
+			if item.LoadError != "" && len(parts) == 3 {
+				schema, table = parts[1], parts[2]
+			}
+			view.Ingestions = append(view.Ingestions, destinationIngestion{ID: item.ID, Target: schema + "." + table})
+		}
+		slices.SortFunc(view.Ingestions, func(a, b destinationIngestion) int {
+			if order := strings.Compare(strings.ToLower(a.Target), strings.ToLower(b.Target)); order != 0 {
+				return order
+			}
+			return strings.Compare(a.ID, b.ID)
+		})
+		data.Destinations = append(data.Destinations, view)
+	}
 	if data.Type == "" {
 		data.Type = "duckdb"
 	}

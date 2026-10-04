@@ -29,7 +29,18 @@
       <tbody>
       {{range .Destinations}}
         <tr>
-          <th scope="row" class="mono">{{.Name}}</th>
+          <td>
+            <details class="destination-ingestions">
+              <summary><span class="mono">{{.Name}}</span> <span class="destination-count">{{len .Ingestions}} ingestion{{if ne (len .Ingestions) 1}}s{{end}}</span></summary>
+              {{if .Ingestions}}
+              <ul>
+                {{range .Ingestions}}<li><a class="mono" href="/ingestions/{{.ID}}">{{.Target}}</a></li>{{end}}
+              </ul>
+              {{else}}
+              <p>No ingestions.</p>
+              {{end}}
+            </details>
+          </td>
           <td class="mono">{{.Type}}</td>
           <td><form method="post" action="/destinations" class="destination-edit">
             <input type="hidden" name="name" value="{{.Name}}">
