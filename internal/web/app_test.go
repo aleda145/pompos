@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"pompos/internal/destination"
 	"pompos/internal/ingestion"
 	"pompos/internal/spec"
 	"pompos/internal/store"
@@ -104,6 +105,46 @@ func TestDestinationsPageSavesSQLiteDestination(t *testing.T) {
 	app.Handler().ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/destinations", nil))
 	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "warehouse") || !strings.Contains(page.Body.String(), "local-duckdb") {
 		t.Fatalf("destinations page = %d, body = %s", page.Code, page.Body.String())
+	}
+	form.Set("type", "objects")
+	form.Set("path", filepath.Join(dataDir, "objects"))
+	update := httptest.NewRequest(http.MethodPost, "/destinations", strings.NewReader(form.Encode()))
+	update.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	updated := httptest.NewRecorder()
+	app.Handler().ServeHTTP(updated, update)
+	if updated.Code != http.StatusSeeOther {
+		t.Fatalf("update status = %d, body = %s", updated.Code, updated.Body.String())
+	}
+	stored, err = metadata.GetDestination(ctx, "warehouse")
+	if err != nil || stored.Type != "objects" || stored.Path != form.Get("path") {
+		t.Fatalf("updated destination = %#v, error = %v", stored, err)
+	}
+	for _, test := range []struct {
+		name   string
+		status int
+	}{
+		{"", http.StatusUnprocessableEntity},
+		{"missing", http.StatusNotFound},
+		{"warehouse", http.StatusSeeOther},
+		{"warehouse", http.StatusNotFound},
+	} {
+		deleteForm := url.Values{"name": {test.name}}
+		request := httptest.NewRequest(http.MethodPost, "/destinations/delete", strings.NewReader(deleteForm.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		response := httptest.NewRecorder()
+		app.Handler().ServeHTTP(response, request)
+		if response.Code != test.status {
+			t.Fatalf("delete %q: status = %d, body = %s", test.name, response.Code, response.Body.String())
+		}
+		if test.status == http.StatusSeeOther && response.Header().Get("Location") != "/destinations?deleted=1" {
+			t.Fatalf("delete redirect = %q", response.Header().Get("Location"))
+		}
+	}
+	if _, err := metadata.GetDestination(ctx, "warehouse"); !errors.Is(err, destination.ErrNotFound) {
+		t.Fatalf("deleted destination still exists: %v", err)
+	}
+	if _, err := metadata.GetDestination(ctx, "local-duckdb"); err != nil {
+		t.Fatalf("unrelated destination changed: %v", err)
 	}
 }
 

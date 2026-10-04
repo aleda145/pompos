@@ -49,6 +49,7 @@ type DestinationCatalog interface {
 	GetDestination(context.Context, string) (destination.Config, error)
 	ListDestinations(context.Context) ([]destination.Config, error)
 	PutDestination(context.Context, destination.Config) error
+	DeleteDestination(context.Context, string) error
 }
 
 type App struct {
@@ -142,6 +143,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /secrets/delete", a.deleteSecret)
 	mux.HandleFunc("GET /destinations", a.listDestinations)
 	mux.HandleFunc("POST /destinations", a.saveDestination)
+	mux.HandleFunc("POST /destinations/delete", a.deleteDestination)
 	assets, _ := fs.Sub(staticfiles.FS, ".")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(assets))))
 	return a.logRequests(a.recover(sameOriginWrites(a.requireSetup(mux))))
@@ -170,6 +172,8 @@ type destinationsPageData struct {
 	Type         string
 	Path         string
 	Saved        bool
+	Deleted      bool
+	Editing      bool
 	Destinations []destinationView
 }
 
@@ -312,7 +316,22 @@ func (a *App) updateSchedule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) listDestinations(w http.ResponseWriter, r *http.Request) {
-	a.renderDestinations(w, r, http.StatusOK, destinationsPageData{Saved: r.URL.Query().Get("saved") == "1"})
+	data := destinationsPageData{
+		Saved:   r.URL.Query().Get("saved") == "1",
+		Deleted: r.URL.Query().Get("deleted") == "1",
+	}
+	if name := r.URL.Query().Get("edit"); name != "" {
+		config, err := a.Destinations.GetDestination(r.Context(), name)
+		if errors.Is(err, destination.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		} else if err != nil {
+			a.serverError(w, err)
+			return
+		}
+		data.Name, data.Type, data.Path = config.Name, config.Type, config.Path
+	}
+	a.renderDestinations(w, r, http.StatusOK, data)
 }
 
 func (a *App) saveDestination(w http.ResponseWriter, r *http.Request) {
@@ -338,6 +357,27 @@ func (a *App) saveDestination(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/destinations?saved=1", http.StatusSeeOther)
 }
 
+func (a *App) deleteDestination(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		a.renderDestinations(w, r, http.StatusBadRequest, destinationsPageData{Error: "Invalid form submission."})
+		return
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	if name == "" {
+		a.renderDestinations(w, r, http.StatusUnprocessableEntity, destinationsPageData{Error: "Destination name is required."})
+		return
+	}
+	if err := a.Destinations.DeleteDestination(r.Context(), name); errors.Is(err, destination.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	} else if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	a.Logger.Printf("destination deleted destination=%s", name)
+	http.Redirect(w, r, "/destinations?deleted=1", http.StatusSeeOther)
+}
+
 func (a *App) renderDestinations(w http.ResponseWriter, r *http.Request, status int, data destinationsPageData) {
 	configs, err := a.Destinations.ListDestinations(r.Context())
 	if err != nil {
@@ -351,6 +391,9 @@ func (a *App) renderDestinations(w http.ResponseWriter, r *http.Request, status 
 	}
 	data.Title = "Destinations"
 	for _, config := range configs {
+		if config.Name == data.Name {
+			data.Editing = true
+		}
 		view := destinationView{Config: config}
 		for _, item := range items {
 			parts := strings.Split(item.ID, "/")

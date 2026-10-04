@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -203,6 +204,42 @@ func TestSQLiteDestinationsLifecycle(t *testing.T) {
 	configs, err := metadata.ListDestinations(ctx)
 	if err != nil || len(configs) != 2 || configs[0].Name != "local-duckdb" || configs[1].Name != "warehouse" {
 		t.Fatalf("destinations = %#v, %v", configs, err)
+	}
+}
+
+func TestDeleteDestinationPreservesFilesAndSurvivesReopen(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	databasePath := filepath.Join(dir, "metadata.sqlite")
+	destinationPath := filepath.Join(dir, "data.duckdb")
+	contents := []byte("destination data")
+	if err := os.WriteFile(destinationPath, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := Open(ctx, databasePath, destinationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer metadata.Close()
+	if err := metadata.DeleteDestination(ctx, "missing"); !errors.Is(err, destination.ErrNotFound) {
+		t.Fatalf("delete missing destination = %v", err)
+	}
+	if err := metadata.DeleteDestination(ctx, "local-duckdb"); err != nil {
+		t.Fatal(err)
+	}
+	metadata.Close()
+	reopened, err := Open(ctx, databasePath, destinationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	configs, err := reopened.ListDestinations(ctx)
+	if err != nil || len(configs) != 0 {
+		t.Fatalf("destinations after reopening = %#v, %v", configs, err)
+	}
+	data, err := os.ReadFile(destinationPath)
+	if err != nil || string(data) != string(contents) {
+		t.Fatalf("destination file changed: %q, %v", data, err)
 	}
 }
 

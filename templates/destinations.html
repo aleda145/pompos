@@ -3,20 +3,21 @@
   <h1>Destinations</h1>
 </div>
 {{if .Saved}}<div class="notice notice-success" role="status">Destination saved.</div>{{end}}
+{{if .Deleted}}<div class="notice notice-success" role="status">Destination deleted.</div>{{end}}
 {{if .Error}}<div class="error" role="alert">{{.Error}}</div>{{end}}
 
-<form method="post" action="/destinations" class="panel destination-add">
-  <h2>Add or update destination</h2>
+<form id="destination-form" method="post" action="/destinations" class="panel destination-add">
+  <h2>{{if .Editing}}Update destination{{else}}Add destination{{end}}</h2>
   <label for="destination_name">Name</label>
   <input id="destination_name" name="name" value="{{.Name}}" placeholder="analytics" maxlength="200" required>
   <label for="destination_type">Type</label>
-  <select id="destination_type" name="type" required>
+  <select id="destination_type" name="type" required {{if .Editing}}autofocus{{end}}>
     <option value="duckdb" {{if eq .Type "duckdb"}}selected{{end}}>DuckDB</option>
     <option value="objects" {{if eq .Type "objects"}}selected{{end}}>Objects · files + DuckDB catalog</option>
   </select>
   <label for="destination_path">Path · database file or objects directory</label>
   <input id="destination_path" name="path" value="{{.Path}}" placeholder="data/analytics.duckdb" required>
-  <button class="primary" type="submit">Save destination</button>
+  <div class="destination-actions"><button class="primary" type="submit">{{if .Editing}}Update destination{{else}}Add destination{{end}}</button><a id="cancel-destination-update" href="/destinations" {{if not .Editing}}hidden{{end}}>Cancel</a></div>
 </form>
 
 <section class="saved-destinations">
@@ -25,7 +26,7 @@
   <div class="table-scroll" role="region" aria-label="Destinations" tabindex="0">
     <table>
       <caption class="sr-only">Configured destination paths</caption>
-      <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Path</th></tr></thead>
+      <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Path</th><th scope="col">Action</th></tr></thead>
       <tbody>
       {{range .Destinations}}
         <tr>
@@ -42,12 +43,11 @@
             </details>
           </td>
           <td class="mono">{{.Type}}</td>
-          <td><form method="post" action="/destinations" class="destination-edit">
+          <td class="mono">{{.Path}}</td>
+          <td><div class="destination-actions"><a class="button" href="/destinations?edit={{.Name}}#destination-form" data-destination-name="{{.Name}}" data-destination-type="{{.Type}}" data-destination-path="{{.Path}}" aria-label="Update {{.Name}}">Update</a><form method="post" action="/destinations/delete" {{if .Ingestions}}onsubmit="return confirm('Delete destination? Referencing ingestions’ future runs will fail.')"{{end}}>
             <input type="hidden" name="name" value="{{.Name}}">
-            <input type="hidden" name="type" value="{{.Type}}">
-            <label><span class="sr-only">Path for {{.Name}}</span><input name="path" value="{{.Path}}" required></label>
-            <button type="submit">Save path</button>
-          </form></td>
+            <button class="danger" type="submit">Delete</button>
+          </form></div></td>
         </tr>
       {{end}}
       </tbody>
@@ -57,4 +57,5 @@
   <div class="empty">No destinations.</div>
   {{end}}
 </section>
+<script src="/static/destinations.js" defer></script>
 {{end}}

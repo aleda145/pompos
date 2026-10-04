@@ -103,8 +103,10 @@ PRAGMA user_version = 6;`
 		return fmt.Errorf("initialize metadata database: %w", err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO destinations (name, type, path, created_at, updated_at) VALUES ('local-duckdb', 'duckdb', ?, ?, ?)`, s.destinationPath, now, now); err != nil {
-		return fmt.Errorf("initialize default destination: %w", err)
+	if version == 0 {
+		if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO destinations (name, type, path, created_at, updated_at) VALUES ('local-duckdb', 'duckdb', ?, ?, ?)`, s.destinationPath, now, now); err != nil {
+			return fmt.Errorf("initialize default destination: %w", err)
+		}
 	}
 	return nil
 }
@@ -415,6 +417,21 @@ ON CONFLICT(name) DO UPDATE SET type = excluded.type, path = excluded.path, upda
 		config.Name, config.Type, config.Path, now, now)
 	if err != nil {
 		return fmt.Errorf("store destination: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLite) DeleteDestination(ctx context.Context, name string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM destinations WHERE name = ?`, name)
+	if err != nil {
+		return fmt.Errorf("delete destination: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete destination: %w", err)
+	}
+	if count == 0 {
+		return destination.ErrNotFound
 	}
 	return nil
 }

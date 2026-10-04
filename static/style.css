@@ -180,7 +180,8 @@ legend { font-weight: 500; padding: 0; }
 .hljs-variable, .hljs-template-variable { color: #ad400b; }
 .yaml-section .yaml-code { margin-top: 8px; }
 .secret-add, .destination-add { margin-bottom: 24px; }
-.secret-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.secret-actions, .destination-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.destination-add > .destination-actions { margin-top: 16px; }
 .settings-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-bottom: 16px; }
 .settings-checkbox { display: flex; align-items: center; gap: 8px; }
 .settings-checkbox input { width: auto; }
@@ -192,9 +193,6 @@ legend { font-weight: 500; padding: 0; }
 .mcp-command { display: grid; gap: 4px; min-width: 0; margin-top: 12px; }
 .mcp-command code { display: block; padding: 8px 10px; border: 1px solid var(--border); border-radius: 2px; background: var(--surface-inset); white-space: nowrap; overflow-x: auto; user-select: all; }
 .secret-usage ul { margin: 4px 0; padding-left: 18px; }
-.destination-edit { display: flex; gap: 8px; align-items: center; min-width: 260px; }
-.destination-edit label { flex: 1; margin: 0; }
-.destination-edit button { flex-shrink: 0; }
 .destination-ingestions summary { cursor: pointer; padding: 5px 0; }
 .destination-count { margin-left: 8px; font-size: 12px; white-space: nowrap; }
 .destination-ingestions ul { list-style: none; margin: 8px 0 0; padding: 0 0 0 16px; border-left: 1px solid var(--border); }
