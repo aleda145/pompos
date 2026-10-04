@@ -142,7 +142,7 @@ func toolOutput(name, output string) any {
 func developmentDescription(name, fallback string) string {
 	switch name {
 	case "context":
-		return "Discover configured destinations, source secret names and draft settings on the Pompos server. Use this instead of inspecting local files or databases. Missing credential values must be entered by the user at credentials_path; refresh context afterward."
+		return "Discover configured destinations, existing ingestions across all conversations, source secret names and draft settings on the Pompos server. Use existing_ingestions and inspect_destination to choose a fitting dataset schema before write_script. Use these tools instead of inspecting local files or databases. Missing credential values must be entered by the user at credentials_path; refresh context afterward."
 	case "write_script":
 		return "Write the Python extractor draft on the Pompos server; no local files needed. Invalidates probe and validation. Existing configure_loading settings take precedence for the same source and destination; use configure_loading to change them. After saving, writing starts a separate ingestion."
 	}
