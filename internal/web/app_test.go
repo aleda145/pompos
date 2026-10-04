@@ -319,6 +319,8 @@ type scheduleManagerStub struct {
 	enqueued []string
 }
 
+func (s *scheduleManagerStub) WithPublication(apply func() error) error { return apply() }
+
 func (s *scheduleManagerStub) Validate(value string) error {
 	if value == "invalid" {
 		return errors.New("invalid cron schedule")

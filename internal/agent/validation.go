@@ -54,8 +54,9 @@ func validationRequest(v *Session, arguments string) (ValidationProposal, error)
 }
 
 type Validation struct {
-	Fingerprint string                        `json:"fingerprint"`
-	Result      runnerpython.ValidationResult `json:"result"`
+	ArtifactDigest string                        `json:"artifact_digest,omitempty"`
+	Fingerprint    string                        `json:"fingerprint"`
+	Result         runnerpython.ValidationResult `json:"result"`
 }
 
 func validationProperties() map[string]any {
@@ -218,5 +219,13 @@ func (s *Service) performValidation(ctx context.Context, v *Session, plan compil
 		return result, fmt.Errorf("validation fetched %d items; expected at least %d (limit %d). Investigate pagination, filters, or extraction caps before saving", result.SampleCount, proposal.MinCount, proposal.Limit)
 	}
 	v.Validation = &Validation{Fingerprint: proposal.Fingerprint, Result: result}
+	if v.Edit != nil {
+		artifacts, err := s.draftArtifacts(v.ID)
+		if err != nil {
+			v.Validation = nil
+			return result, err
+		}
+		v.Validation.ArtifactDigest = artifacts.digest()
+	}
 	return result, nil
 }

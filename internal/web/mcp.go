@@ -19,6 +19,7 @@ import (
 func (a *App) mcpHandler() http.Handler {
 	server := mcpserver.New(a.Agent, mcpserver.Operations{
 		Save: a.publishSession, List: a.ingestionList, Get: a.getIngestion,
+		Edit: a.startEdit, Apply: a.applySessionEdit,
 		Run: a.queueIngestion, Schedule: a.setIngestionSchedule, Preview: a.previewIngestion,
 	})
 	transport := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})

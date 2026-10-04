@@ -1,0 +1,19 @@
+{{define "content"}}
+<a class="back" href="/chat/{{.SessionID}}">← Edit conversation</a>
+<div class="page-heading"><h1>Review changes · <span class="mono">{{.IngestionID}}</span></h1></div>
+{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+{{if .Review}}
+<p>Validation passed · {{.Review.Validation.Result.SampleCount}} source items · loads: {{.Review.Validation.Result.FirstLoadRows}} → {{.Review.Validation.Result.SecondLoadRows}}</p>
+<div class="panel details edit-review">
+ <section class="half-section"><h2>Python · saved</h2><pre class="yaml-code"><code class="language-python">{{.Review.BeforePython}}</code></pre></section>
+ <section class="half-section"><h2>Python · proposed</h2><pre class="yaml-code"><code class="language-python">{{.Review.AfterPython}}</code></pre></section>
+ <section class="half-section"><h2>YAML · saved</h2><pre class="yaml-code"><code class="language-yaml">{{.Review.BeforeYAML}}</code></pre></section>
+ <section class="half-section"><h2>YAML · proposed</h2><pre class="yaml-code"><code class="language-yaml">{{.Review.AfterYAML}}</code></pre></section>
+</div>
+<form class="quick-actions" method="post" action="/chat/{{.Review.SessionID}}/apply">
+ <input type="hidden" name="fingerprint" value="{{.Review.Fingerprint}}">
+ <button class="primary" type="submit">Apply changes</button>
+ <span>Updates this ingestion and its schedule. Run it from the ingestion page.</span>
+</form>
+{{else}}{{if .IngestionID}}<form method="post" action="/ingestions/{{.IngestionID}}/edit"><button type="submit">Open a new edit</button></form>{{end}}{{end}}
+{{end}}

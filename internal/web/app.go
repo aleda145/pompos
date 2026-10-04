@@ -13,6 +13,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"pompos/internal/agent"
@@ -53,20 +54,22 @@ type DestinationCatalog interface {
 }
 
 type App struct {
-	Agent        *agent.Service
-	Store        MetadataStore
-	Secrets      secrets.Store
-	Destinations DestinationCatalog
-	Scheduler    ScheduleManager
-	SpecDir      string
-	Logger       *log.Logger
-	Previewer    interface {
+	publicationMu *sync.Mutex
+	Agent         *agent.Service
+	Store         MetadataStore
+	Secrets       secrets.Store
+	Destinations  DestinationCatalog
+	Scheduler     ScheduleManager
+	SpecDir       string
+	Logger        *log.Logger
+	Previewer     interface {
 		Preview(context.Context, compiler.ExecutionPlan) (runnerpython.TablePreview, error)
 	}
 	templates map[string]*template.Template
 }
 
 func New(app App) (*App, error) {
+	app.publicationMu = &sync.Mutex{}
 	if app.Store == nil || app.Secrets == nil {
 		return nil, errors.New("web app dependencies must not be nil")
 	}
@@ -84,7 +87,7 @@ func New(app App) (*App, error) {
 		app.Destinations = catalog
 	}
 	app.templates = make(map[string]*template.Template, 5)
-	for _, page := range []string{"home", "detail", "secrets", "destinations", "chats", "chat", "settings", "setup"} {
+	for _, page := range []string{"home", "detail", "secrets", "destinations", "chats", "chat", "settings", "setup", "edit_review"} {
 		parsed, err := template.New(page).ParseFS(templatefiles.FS, "layout.html", page+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s template: %w", page, err)
@@ -112,6 +115,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /chat/{id}", a.chatPage)
 	mux.HandleFunc("POST /chat/{id}", a.chatTurn)
 	mux.HandleFunc("POST /chat/{id}/publish", a.publishChat)
+	mux.HandleFunc("GET /chat/{id}/review", a.reviewEdit)
+	mux.HandleFunc("POST /chat/{id}/apply", a.applyEdit)
 	mux.HandleFunc("POST /chat/{id}/secret", a.chatSecret)
 	mux.HandleFunc("GET /settings", a.settings)
 	mux.HandleFunc("POST /settings", a.settings)
@@ -126,12 +131,14 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /ingestions/{id}/runs", a.ingestionRuns)
 	mux.HandleFunc("POST /ingestions/{id}/run", a.runIngestion)
 	mux.HandleFunc("POST /ingestions/{id}/schedule", a.updateSchedule)
+	mux.HandleFunc("POST /ingestions/{id}/edit", a.editIngestion)
 	for pattern, handler := range map[string]http.HandlerFunc{
 		"GET /ingestions/{destination}/{schema}/{table}":           a.ingestionDetail,
 		"GET /ingestions/{destination}/{schema}/{table}/preview":   a.ingestionPreview,
 		"GET /ingestions/{destination}/{schema}/{table}/runs":      a.ingestionRuns,
 		"POST /ingestions/{destination}/{schema}/{table}/run":      a.runIngestion,
 		"POST /ingestions/{destination}/{schema}/{table}/schedule": a.updateSchedule,
+		"POST /ingestions/{destination}/{schema}/{table}/edit":     a.editIngestion,
 	} {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			r.SetPathValue("id", r.PathValue("destination")+"/"+r.PathValue("schema")+"/"+r.PathValue("table"))

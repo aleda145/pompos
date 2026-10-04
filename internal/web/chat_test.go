@@ -39,7 +39,7 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 		case 0:
 			call.Function.Name = "write_script"
 			group := "men"
-			if step >= 6 {
+			if step >= 6 && step < 12 {
 				group = "women"
 				var payload struct {
 					Messages []agent.Message `json:"messages"`
@@ -69,6 +69,9 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 		case 2:
 			call.Function.Name = "propose_loading"
 			call.Function.Arguments = `{"cron":"0 6 * * *","strategy":"replace","primary_key":[],"reason":"A daily snapshot keeps the current list up to date."}`
+			if step >= 12 {
+				call.Function.Arguments = `{"cron":"","strategy":"replace","primary_key":[],"reason":"Use manual runs for the repaired extractor."}`
+			}
 		case 3:
 			call.Function.Name = "propose_validation"
 		case 4:
@@ -255,6 +258,12 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 		t.Fatal("chat reload lost saved ingestions or the new-chat action")
 	}
 	// Editing an earlier ingestion updates its files and schedule in place.
+	w = request("POST", detail+"/edit", "", "")
+	if w.Code != 303 {
+		t.Fatalf("open edit: %d %s", w.Code, w.Body)
+	}
+	path = w.Header().Get("Location")
+	chatID = strings.TrimPrefix(path, "/chat/")
 	beforeUpdate, err := db.Get(ctx, saved.PublishedID)
 	if err != nil {
 		t.Fatal(err)
@@ -278,14 +287,28 @@ func TestChatCreatesMultipleIngestionsAndPreservesThemThroughScheduling(t *testi
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ready":true`) {
 		t.Fatalf("update validation: %d %s", w.Code, w.Body)
 	}
+	review, err := app.Agent.ReviewEdit(ctx, chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked := request("POST", path+"/apply", url.Values{"fingerprint": {review.Fingerprint}}.Encode(), "application/x-www-form-urlencoded"); blocked.Code != 422 {
+		t.Fatal("applied an edit while a run was queued")
+	}
+	runs, err := db.ListRuns(ctx, saved.PublishedID, 0, 1)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("queued run: %v %v", runs, err)
+	}
+	if err := db.FinishRun(ctx, runs[0].ID, ""); err != nil {
+		t.Fatal(err)
+	}
 	for attempt := 0; attempt < 2; attempt++ {
-		w = request("POST", path+"/publish", "", "")
+		w = request("POST", path+"/apply", url.Values{"fingerprint": {review.Fingerprint}}.Encode(), "application/x-www-form-urlencoded")
 		if w.Code != 303 {
 			t.Fatalf("update publish: %d %s", w.Code, w.Body)
 		}
 	}
 	updated, err := app.Agent.Load(chatID)
-	if err != nil || updated.PublishedID != saved.PublishedID || len(updated.SavedIngestions) != 2 || updated.SavedIngestions[0].Name != "Updated men records" {
+	if err != nil || updated.PublishedID != saved.PublishedID || len(updated.SavedIngestions) != 1 || updated.SavedIngestions[0].Name != "Updated men records" {
 		t.Fatalf("update duplicated or lost saved ingestion: %#v %v", updated, err)
 	}
 	updatedDoc, updatedYAML, err := spec.Read(firstYAMLPath)

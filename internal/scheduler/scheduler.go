@@ -47,6 +47,7 @@ type Manager struct {
 	ctx             context.Context
 	cancel          context.CancelFunc
 	pollMu          sync.Mutex
+	publicationMu   sync.RWMutex
 	wake            chan struct{}
 	reconcileErrors map[string]string
 }
@@ -134,6 +135,8 @@ func (m *Manager) NextRun(ingestionID string) *time.Time {
 // Enqueue records the run before waking the worker. Once this returns, the run
 // survives request cancellation and process restarts.
 func (m *Manager) Enqueue(ctx context.Context, ingestionID string) error {
+	m.publicationMu.RLock()
+	defer m.publicationMu.RUnlock()
 	if err := m.store.EnqueueRun(ctx, ingestionID, m.now().UTC()); err != nil {
 		return fmt.Errorf("enqueue ingestion: %w", err)
 	}
@@ -182,6 +185,8 @@ func (m *Manager) wakeLoop() {
 }
 
 func (m *Manager) poll(ctx context.Context) {
+	m.publicationMu.RLock()
+	defer m.publicationMu.RUnlock()
 	if !m.pollMu.TryLock() {
 		return
 	}
@@ -201,6 +206,16 @@ func (m *Manager) poll(ctx context.Context) {
 		}
 		m.executeClaim(ctx, run)
 	}
+}
+
+// WithPublication excludes both claiming/running work and new manual queues
+// while a validated edit replaces its Python, lock and YAML files.
+func (m *Manager) WithPublication(apply func() error) error {
+	if !m.publicationMu.TryLock() {
+		return errors.New("a run or scheduler operation is active; wait for it to finish and apply again")
+	}
+	defer m.publicationMu.Unlock()
+	return apply()
 }
 
 func (m *Manager) enqueueDue(ctx context.Context) error {

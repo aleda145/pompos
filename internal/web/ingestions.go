@@ -16,6 +16,8 @@ import (
 // Publication is shared by the browser and MCP, including scheduler registration
 // and retrying a partially completed save with the same artifact ID.
 func (a *App) publishSession(ctx context.Context, id string) (string, error) {
+	a.publicationMu.Lock()
+	defer a.publicationMu.Unlock()
 	return a.Agent.Publish(ctx, id, a.SpecDir, func(ingestionID string, doc spec.Ingestion) error {
 		data, e := spec.Marshal(doc)
 		if e != nil {
@@ -69,6 +71,8 @@ func (a *App) ingestionList(ctx context.Context) ([]ingestion.Ingestion, error) 
 }
 
 func (a *App) queueIngestion(ctx context.Context, id string) error {
+	a.publicationMu.Lock()
+	defer a.publicationMu.Unlock()
 	item, err := a.Store.Get(ctx, id)
 	if err != nil {
 		return err
@@ -96,6 +100,8 @@ func (a *App) queueIngestion(ctx context.Context, id string) error {
 }
 
 func (a *App) setIngestionSchedule(ctx context.Context, id, schedule string) error {
+	a.publicationMu.Lock()
+	defer a.publicationMu.Unlock()
 	schedule = strings.TrimSpace(schedule)
 	if err := a.Scheduler.Validate(schedule); err != nil {
 		return err

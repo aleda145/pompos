@@ -1,6 +1,7 @@
 {{define "content"}}
 <div class="chat-heading"><div><h1 id="chat-title">New ingestion</h1></div><a href="/ingestions/new">New chat</a><a href="/settings">Agent settings</a></div>
 <div id="chat" data-id="{{.Session.ID}}">
+ {{with .Session.Edit}}<p class="hint"><a href="/ingestions/{{.IngestionID}}">{{.IngestionID}}</a>{{with .Run}} · Run #{{.ID}} · {{.Status}}{{end}}</p>{{end}}
  <div id="chat-empty"><button type="button" id="example" class="suggestion">Example: GitHub stargazers</button></div>
  <div id="messages" class="chat-log" aria-label="Conversation"></div>
  <div id="working" class="chat-state mono" role="status" aria-live="polite">IDLE</div>

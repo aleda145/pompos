@@ -4,7 +4,7 @@
   <div class="heading-state">
     <h1 class="mono">{{.Ingestion.Name}}</h1>
   </div>
-  <form method="post" action="/ingestions/{{.Ingestion.ID}}/run" data-run-form data-config-unavailable="{{if .Ingestion.LoadError}}true{{else}}false{{end}}"><button class="primary" type="submit" {{if or .Ingestion.LoadError .RunView.Active}}disabled{{end}}>Run</button></form>
+  <div class="quick-actions"><form method="post" action="/ingestions/{{.Ingestion.ID}}/edit"><input type="hidden" name="run_id" data-edit-run value="{{with .RunView.Selected}}{{.ID}}{{end}}"><button type="submit" {{if .Ingestion.LoadError}}disabled{{end}}>Edit</button></form><form method="post" action="/ingestions/{{.Ingestion.ID}}/run" data-run-form data-config-unavailable="{{if .Ingestion.LoadError}}true{{else}}false{{end}}"><button class="primary" type="submit" {{if or .Ingestion.LoadError .RunView.Active}}disabled{{end}}>Run</button></form></div>
 </div>
 {{if .Ingestion.LoadError}}<div class="error" role="alert"><strong>Ingestion configuration unavailable</strong><p>{{.Ingestion.LoadError}}</p><p>Restore or fix <code>{{.SpecPath}}</code>. This ingestion’s schedule is skipped until its YAML is valid again. Other ingestions continue normally.</p></div>{{end}}
 {{if .RunError}}<div class="error" role="alert">{{.RunError}}</div>{{end}}

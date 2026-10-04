@@ -12,6 +12,8 @@ import (
 
 // Operations are the same publication and execution operations used by the UI.
 type Operations struct {
+	Edit     func(context.Context, string, int64, bool) (agent.Session, error)
+	Apply    func(context.Context, string, string) (string, error)
 	Save     func(context.Context, string) (string, error)
 	List     func(context.Context) ([]ingestion.Ingestion, error)
 	Get      func(context.Context, string) (ingestion.Ingestion, error)
@@ -26,6 +28,46 @@ type ingestionInput struct {
 
 func addIngestionTools(server *mcp.Server, service *agent.Service, ops Operations) {
 	no, yes := false, true
+	mcp.AddTool(server, &mcp.Tool{Name: "edit_ingestion", Description: "Open a saved ingestion as an isolated edit draft using its current YAML, Python, dependencies and the selected run's redacted log (latest run by default). Destination stays fixed. Returns session_id and draft; probe, validate, review_ingestion_changes, then apply_ingestion_changes. Does not change the published ingestion.", Annotations: &mcp.ToolAnnotations{DestructiveHint: &no, OpenWorldHint: &no}},
+		func(ctx context.Context, req *mcp.CallToolRequest, input struct {
+			IngestionID string `json:"ingestion_id"`
+			RunID       int64  `json:"run_id,omitempty"`
+		}) (*mcp.CallToolResult, any, error) {
+			if input.RunID < 0 {
+				return nil, nil, errors.New("run_id must be positive or omitted")
+			}
+			v, err := ops.Edit(ctx, input.IngestionID, input.RunID, true)
+			return nil, fullChatResult(v, false), err
+		})
+	mcp.AddTool(server, &mcp.Tool{Name: "review_ingestion_changes", Description: "Review a successfully validated edit. Returns saved/proposed Python and YAML, validation and a fingerprint required to apply this exact revision. Present meaningful changes to the user before applying.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &no}},
+		func(ctx context.Context, req *mcp.CallToolRequest, input struct {
+			SessionID string `json:"session_id"`
+		}) (*mcp.CallToolResult, any, error) {
+			v, err := service.Load(input.SessionID)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !v.External {
+				return nil, nil, errors.New("MCP conversation not found")
+			}
+			review, err := service.ReviewEdit(ctx, input.SessionID)
+			return nil, review, err
+		})
+	mcp.AddTool(server, &mcp.Tool{Name: "apply_ingestion_changes", Description: "Apply reviewed, validated changes to the same ingestion, preserving run history. Requires the review fingerprint and user authorization for the changes. Rejects stale reviews, changed published files, or queued/running work. Updates the schedule but does not queue a run.", Annotations: &mcp.ToolAnnotations{DestructiveHint: &yes, IdempotentHint: true, OpenWorldHint: &no}},
+		func(ctx context.Context, req *mcp.CallToolRequest, input struct {
+			SessionID   string `json:"session_id"`
+			Fingerprint string `json:"fingerprint"`
+		}) (*mcp.CallToolResult, any, error) {
+			v, err := service.Load(input.SessionID)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !v.External {
+				return nil, nil, errors.New("MCP conversation not found")
+			}
+			id, err := ops.Apply(ctx, input.SessionID, input.Fingerprint)
+			return nil, map[string]any{"ingestion_id": id, "detail_path": "/ingestions/" + id, "applied": err == nil}, err
+		})
 	mcp.AddTool(server, &mcp.Tool{Name: "save_ingestion", Description: "Save the current successfully validated draft as one ingestion. Call after validate_ingestion; no finish step. Honor the user's scope. Saving activates its configured UTC cron schedule; blank cron stays manual. Retries return the same saved ingestion. Does not immediately queue a full load.", Annotations: &mcp.ToolAnnotations{DestructiveHint: &yes, IdempotentHint: true, OpenWorldHint: &no}},
 		func(ctx context.Context, req *mcp.CallToolRequest, input struct {
 			SessionID string `json:"session_id"`

@@ -92,7 +92,7 @@
         const name = call.function.name;
         const failed = result?.content.startsWith('Error:');
         const status = result ? (failed ? 'failed' : 'complete') : (busy && index === lastAssistant && activeCall === call.id ? 'running' : 'waiting');
-        let title = toolNames[name] || name;
+        let title = name === 'read_saved_ingestion' ? 'Load saved ingestion' : toolNames[name] || name;
         let args;
         try { args = JSON.parse(call.function.arguments); } catch { args = {}; }
         if (name === 'web_search' && args.query) title += ` · ${args.query.slice(0, 100)}`;
@@ -273,7 +273,7 @@
   }
   function render() {
     renderLog(); renderHandoff();
-    $('#chat-title').textContent = session.messages?.length ? 'Ingestion chat' : 'New ingestion';
+    $('#chat-title').textContent = session.edit && !session.published_id ? 'Edit ingestion' : session.messages?.length ? 'Ingestion chat' : 'New ingestion';
     $('#draft').hidden = !session.draft || !!session.published_id;
     $('#draft-target').textContent = session.draft ? `${session.draft.destination} / ${session.draft.schema || 'main'} / ${session.draft.table} · ${session.draft.strategy} · ${session.draft.schedule ? `${session.draft.schedule} UTC` : 'manual'}` : '';
     const draftCode = $('#draft-code');
@@ -292,8 +292,9 @@
     $('#send').classList.toggle('primary', !session.ready || !!session.published_id);
     $('#message').disabled = busy;
     const saved = session.saved_ingestions || [];
-    const targetID = session.draft ? `${session.draft.destination}/${session.draft.schema || 'main'}/${session.draft.table}` : '';
-    $('#publish button').textContent = saved.some(ingestion => ingestion.id === targetID) ? 'Update ingestion' : 'Save ingestion';
+    $('#publish button').textContent = session.edit ? 'Review changes' : 'Save ingestion';
+    $('#publish').method = session.edit ? 'get' : 'post';
+    $('#publish').action = `/chat/${root.dataset.id}/${session.edit ? 'review' : 'publish'}`;
     $('#published').hidden = !saved.length;
     const links = saved.map(ingestion => {
       const item = element('li');

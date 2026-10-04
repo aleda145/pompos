@@ -67,6 +67,8 @@
       if (current.latestStatus === "succeeded") document.dispatchEvent(new Event("pompos:run-succeeded"));
     }
     latest = current;
+    const editRun = document.querySelector('[data-edit-run]');
+    if (editRun) editRun.value = content.querySelector('[data-run-output]')?.dataset.runId || '';
     if (form) form.querySelector("button").disabled = form.dataset.configUnavailable === "true" || current.active === "true";
   }
 

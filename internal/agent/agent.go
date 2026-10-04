@@ -86,6 +86,7 @@ type Draft struct {
 	Code         string   `json:"code"`
 }
 type Session struct {
+	Edit            *Edit            `json:"edit,omitempty"`
 	External        bool             `json:"external,omitempty"`
 	SavedIngestions []SavedIngestion `json:"saved_ingestions,omitempty"`
 	DraftID         string           `json:"draft_id,omitempty"`
@@ -122,6 +123,7 @@ func (v *Session) recordPublication(id string) {
 }
 
 func (v *Session) clearDraft() {
+	v.Edit = nil
 	v.Draft = nil
 	v.DraftID = ""
 	v.PublishedID = ""
@@ -379,6 +381,9 @@ func (s *Service) turnWithEvents(ctx context.Context, id string, input Input, em
 		validationMode = "Validation approval is enabled. Call propose_validation and wait for the user's Run validation action. Plain chat confirmation does not approve validation."
 	}
 	v.Messages[0] = Message{Role: "system", Content: prompt + "\n" + validationMode}
+	if v.Edit != nil {
+		v.Messages[0].Content += "\n" + editInstructions
+	}
 	v.Ready = false
 	previousHandoff := v.Pending
 	if !cfg.ManualValidation && previousHandoff != nil && previousHandoff.Kind == "validation" && input.ActionID == "" {
@@ -623,6 +628,9 @@ func (s *Service) execute(ctx context.Context, v *Session, call Call) (string, e
 			draft.Data, draft.Collection = "", ""
 		}
 		draft.Schema = destination.SchemaName(draft.Schema)
+		if v.Edit != nil && (draft.Destination != v.Edit.Original.Destination || draft.Schema != v.Edit.Original.Schema || draft.Table != v.Edit.Original.Table) {
+			return "", errors.New("editing keeps the destination, schema and table fixed")
+		}
 		if !regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`).MatchString(draft.Schema) {
 			return "", errors.New("schema must be lower_snake_case without repeated or trailing underscores")
 		}
@@ -722,6 +730,9 @@ func (s *Service) Publish(ctx context.Context, id, artifactDir string, persist f
 	if v.PublishedID != "" {
 		return v.PublishedID, nil
 	}
+	if v.Edit != nil {
+		return "", errors.New("review and apply changes to this existing ingestion")
+	}
 	if !v.Ready || v.Draft == nil {
 		if v.External {
 			return "", errors.New("call validate_ingestion successfully before saving")
@@ -768,15 +779,12 @@ func (s *Service) Publish(ctx context.Context, id, artifactDir string, persist f
 		return "", e
 	}
 	// Record the destination/schema/table identity before publishing. Retries keep
-	// their files; only ingestions saved in this conversation can be updated.
+	// their files; updating a published ingestion requires an explicit edit session.
 	if v.DraftID != ingestionID {
-		updating := slices.ContainsFunc(v.SavedIngestions, func(item SavedIngestion) bool { return item.ID == ingestionID })
 		for _, extension := range []string{".py", ".yaml", ".py.lock"} {
 			path := spec.ArtifactPath(artifactDir, ingestionID, extension)
 			if _, err := os.Lstat(path); err == nil {
-				if !updating {
-					return "", fmt.Errorf("ingestion %q already exists; choose a different destination, schema, or table", ingestionID)
-				}
+				return "", fmt.Errorf("ingestion %q already exists; open it for editing or choose a different destination, schema, or table", ingestionID)
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return "", err
 			}
