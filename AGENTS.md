@@ -2,7 +2,7 @@ Pompos is grug brain. 1-1 mappings. one source table is equal to one ingestion y
 
 never view the resulting UI using a browser. ask the user to check if needed. Do not use chromium
 
-Only write tests for critical code. Tests for HTML, css, layouting, design or anything similar is useless.
+DO NOT WRITE ANY TESTS UNLESS SPECIFICALLY TOLD TO. DO NOT RUN `go test` EITHER
 
 Read style_guide.md when doing UI/UX work
 
