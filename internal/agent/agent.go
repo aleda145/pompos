@@ -44,6 +44,11 @@ type Service struct {
 	Client         *http.Client
 	ResearchClient *http.Client
 	mu             sync.Mutex
+	workMu         sync.Mutex
+	busy           map[string]bool
+	chatJobs       map[string]*chatJob
+	chatWorkers    sync.WaitGroup
+	closing        bool
 }
 type Settings struct {
 	DisplayTimezone  string `json:"display_timezone"`
@@ -235,8 +240,6 @@ func (v Settings) ValidateAgent() error {
 }
 
 func (s *Service) Load(id string) (Session, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	return s.load(id)
 }
 func (s *Service) load(id string) (Session, error) {
@@ -307,13 +310,20 @@ func (s *Service) Turn(ctx context.Context, id, input string) (Session, error) {
 }
 
 func (s *Service) TurnWithEvents(ctx context.Context, id string, input Input, emit func(Event)) (Session, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.turnWithEvents(ctx, id, input, emit)
+	release, err := s.beginSession(id)
+	if err != nil {
+		return Session{ID: id}, err
+	}
+	defer release()
+	return s.turnWithEvents(ctx, id, input, func(_ Session, event Event) {
+		if emit != nil {
+			emit(event)
+		}
+	})
 }
 
-// turnWithEvents runs the custom agent's web conversation. Caller holds mu.
-func (s *Service) turnWithEvents(ctx context.Context, id string, input Input, emit func(Event)) (Session, error) {
+// The caller owns this conversation; settings and other chats remain available.
+func (s *Service) turnWithEvents(ctx context.Context, id string, input Input, emit func(Session, Event)) (Session, error) {
 	v, e := s.load(id)
 	if e != nil {
 		return v, e
@@ -441,7 +451,7 @@ func (s *Service) turnWithEvents(ctx context.Context, id string, input Input, em
 	}
 	send := func(event Event) {
 		if emit != nil {
-			emit(event)
+			emit(v, event)
 		}
 	}
 	send(Event{Type: "message", Message: &userMessage})
@@ -743,8 +753,11 @@ func (s *Service) scriptPath(id string) string { return filepath.Join(s.Dir, id+
 // Publish holds the conversation lock so a tested draft cannot change while it
 // is being copied. Callback persists the YAML and scheduler projection.
 func (s *Service) Publish(ctx context.Context, id, artifactDir string, persist func(string, spec.Ingestion) error) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	release, err := s.beginSession(id)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	v, e := s.load(id)
 	if e != nil {
 		return "", e

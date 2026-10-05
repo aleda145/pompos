@@ -1,8 +1,13 @@
 (() => {
   const $ = (selector) => document.querySelector(selector);
   const root = $('#chat');
-  let session = JSON.parse($('#chat-state').textContent);
-  let busy = false;
+  const initial = JSON.parse($('#chat-state').textContent);
+  let session = initial.session;
+  let busy = initial.running;
+  let submitting = false;
+  let statusKnown = true;
+  let pollTimer;
+  let pollRequest;
   let lastInput = null;
   let activeCall = null;
   let handoffKey = '';
@@ -263,7 +268,7 @@
   }
   function renderHandoff() {
     const target = $('#handoff');
-    if (busy || session.ready) { target.hidden = true; return; }
+    if (busy || submitting || !statusKnown || session.ready) { target.hidden = true; return; }
     const pending = session.pending;
     const key = JSON.stringify(pending || null) + (session.messages?.length || 0);
     if (key === handoffKey) { target.hidden = !target.hasChildNodes(); return; }
@@ -286,11 +291,11 @@
       const unit = result.data === 'files' ? 'objects' : 'rows';
       $('#validation-result').textContent = `Validation passed · ${result.sample_count} source ${unit} · loads: ${result.first_load_rows} → ${result.second_load_rows} ${unit}`;
     }
-    $('#publish').hidden = busy || !session.ready || !!session.published_id;
+    $('#publish').hidden = busy || submitting || !statusKnown || !session.ready || !!session.published_id;
     $('#publish-status').textContent = session.loading?.cron ? `Schedule on save: ${session.loading.cron} · UTC` : 'Manual';
-    $('#send').disabled = busy;
+    $('#send').disabled = busy || submitting || !statusKnown;
     $('#send').classList.toggle('primary', !session.ready || !!session.published_id);
-    $('#message').disabled = busy;
+    $('#message').disabled = busy || submitting || !statusKnown;
     const saved = session.saved_ingestions || [];
     $('#publish button').textContent = session.edit ? 'Review changes' : 'Save ingestion';
     $('#publish').method = session.edit ? 'get' : 'post';
@@ -305,36 +310,75 @@
     });
     $('#saved-ingestions').replaceChildren(...links);
   }
-  function applyEvent(event) {
-    if (event.type === 'thinking') { activeCall = null; $('#working').textContent = 'RUNNING · Thinking'; }
-    if (event.type === 'message') {
-      session.messages ||= [];
-      session.messages.push(event.message);
-      if (event.message.selection?.handoff.id === session.pending?.id) session.pending = null;
-      if (event.message.role === 'user') $('#message').value = '';
+  function applyStatus(status) {
+    session = status.session;
+    busy = status.running;
+    statusKnown = true;
+    activeCall = busy && status.activity?.type === 'tool_start' ? status.activity.call.id : null;
+    let label = busy ? 'RUNNING' : status.error ? 'FAILED' : 'IDLE';
+    if (busy && status.activity?.type === 'thinking') label += ' · Thinking';
+    if (activeCall) label += ` · ${toolNames[status.activity.call.function.name] || status.activity.call.function.name}`;
+    $('#working').textContent = label;
+    $('#chat-error').textContent = status.error || '';
+    $('#chat-error').hidden = !status.error;
+    $('#recovery').hidden = busy || !status.error;
+    render();
+  }
+
+  async function pollStatus() {
+    clearTimeout(pollTimer);
+    if (pollRequest || submitting || document.hidden) return;
+    const controller = new AbortController();
+    pollRequest = controller;
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(`/chat/${root.dataset.id}/status`, {cache: 'no-store', signal: controller.signal});
+      if (!response.ok || response.redirected) throw new Error('Chat status unavailable');
+      const status = await response.json();
+      if (pollRequest === controller && !submitting && !controller.signal.aborted) applyStatus(status);
+    } catch {
+      if (!submitting && !document.hidden && pollRequest === controller) {
+        statusKnown = false;
+        $('#chat-error').textContent = 'Chat update failed. Reconnecting…';
+        $('#chat-error').hidden = false;
+        $('#recovery').hidden = true;
+        render();
+      }
+    } finally {
+      clearTimeout(timeout);
+      if (pollRequest === controller) {
+        pollRequest = null;
+        if (!submitting && !document.hidden) pollTimer = setTimeout(pollStatus, busy ? 1000 : 5000);
+      }
     }
-    if (event.type === 'tool_start') { activeCall = event.call.id; $('#working').textContent = `RUNNING · ${toolNames[event.call.function.name] || event.call.function.name}`; }
-    if (event.type === 'done') {
-      session = event.session; activeCall = null;
-      if (event.error) throw new Error(event.error);
-    }
-    renderLog();
   }
   async function submit(input) {
-    if (busy) return;
-    lastInput = input; busy = true;
+    if (busy || submitting || !statusKnown) return;
+    clearTimeout(pollTimer);
+    pollRequest?.abort();
+    pollRequest = null;
+    lastInput = input; busy = true; submitting = true;
     $('#working').textContent = 'RUNNING';
     $('#chat-error').hidden = true; $('#recovery').hidden = true;
     render();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-      const response = await fetch(`/chat/${root.dataset.id}`, {method: 'POST', headers: {'Content-Type': 'application/json', Accept: 'application/x-ndjson'}, body: JSON.stringify(input)});
+      const response = await fetch(`/chat/${root.dataset.id}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(input), signal: controller.signal});
       if (!response.ok) throw new Error(await response.text());
-      await readChatEvents(response.body, applyEvent);
+      applyStatus(await response.json());
+      $('#message').value = '';
     } catch (error) {
+      // A lost response does not prove the turn failed to start. Read its status
+      // before enabling another submission; never resend a message automatically.
+      statusKnown = false;
       $('#chat-error').textContent = error.message; $('#chat-error').hidden = false;
-      $('#recovery').hidden = false;
+      $('#recovery').hidden = true;
     } finally {
-      busy = false; $('#working').textContent = $('#chat-error').hidden ? 'IDLE' : 'FAILED'; render();
+      clearTimeout(timeout);
+      submitting = false;
+      render();
+      pollTimer = setTimeout(pollStatus, 0);
     }
   }
   $('#chat-form').addEventListener('submit', (event) => {
@@ -347,5 +391,15 @@
   });
   $('#example').addEventListener('click', () => { $('#message').value = 'Ingest individual GitHub stargazers from https://github.com/aleda145/kavla'; $('#message').focus(); });
   $('#retry-turn').addEventListener('click', () => submit(session.pending && lastInput?.action_id ? lastInput : {message: 'Continue from the last saved step. Retry if needed.'}));
-  render();
+  document.addEventListener('visibilitychange', () => {
+    clearTimeout(pollTimer);
+    if (!document.hidden) pollStatus();
+  });
+  window.addEventListener('pagehide', () => {
+    clearTimeout(pollTimer);
+    pollRequest?.abort();
+  });
+  window.addEventListener('pageshow', (event) => { if (event.persisted) pollStatus(); });
+  applyStatus(initial);
+  pollTimer = setTimeout(pollStatus, 0);
 })();

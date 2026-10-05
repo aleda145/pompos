@@ -107,8 +107,11 @@ func secretReply(name string) string {
 
 // SaveRequestedSecret never puts the secret value into conversation history or events.
 func (s *Service) SaveRequestedSecret(ctx context.Context, id, handoffID, name, value string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	release, err := s.beginSession(id)
+	if err != nil {
+		return err
+	}
+	defer release()
 	v, err := s.load(id)
 	if err != nil {
 		return err

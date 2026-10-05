@@ -42,8 +42,6 @@ type EditReview struct {
 
 // StartEdit takes its snapshot from the published files, never an old conversation.
 func (s *Service) StartEdit(ctx context.Context, item ingestion.Ingestion, run *ingestion.Run, external bool) (Session, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	doc, yaml, err := spec.Read(item.SpecPath)
 	if err != nil {
 		return Session{}, err
@@ -153,8 +151,11 @@ func (f editFiles) digest() string {
 }
 
 func (s *Service) ReviewEdit(ctx context.Context, id string) (EditReview, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	release, err := s.beginSession(id)
+	if err != nil {
+		return EditReview{}, err
+	}
+	defer release()
 	v, err := s.load(id)
 	if err != nil {
 		return EditReview{}, err
@@ -234,8 +235,11 @@ func (s *Service) draftArtifacts(id string) (editFiles, error) {
 // ApplyEdit must run under the scheduler's publication guard. Roll back files
 // and the metadata projection if publication fails; the draft remains retryable.
 func (s *Service) ApplyEdit(ctx context.Context, id, fingerprint string, persist func(string, spec.Ingestion) error) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	release, err := s.beginSession(id)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	v, err := s.load(id)
 	if err != nil {
 		return "", err

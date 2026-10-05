@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 
 	"pompos/internal/agent"
 )
@@ -51,7 +50,7 @@ func (a *App) chatPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/chat/"+id, http.StatusSeeOther)
 		return
 	}
-	v, e := a.Agent.LoadWebChat(id)
+	status, e := a.Agent.ChatStatus(id)
 	if errors.Is(e, agent.ErrMCPConversation) {
 		http.NotFound(w, r)
 		return
@@ -60,17 +59,17 @@ func (a *App) chatPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, e.Error(), 400)
 		return
 	}
+	status.Session = publicSession(status.Session)
+	w.Header().Set("Cache-Control", "no-store")
 	a.render(w, 200, "chat", struct {
 		Title   string
 		Session agent.Session
-	}{"Ingestion chat", publicSession(v)})
+		Status  agent.ChatStatus
+	}{"Ingestion chat", status.Session, status})
 }
 func (a *App) chatTurn(w http.ResponseWriter, r *http.Request) {
 	if a.Agent == nil {
 		http.Error(w, "Agent is not configured", 503)
-		return
-	}
-	if !a.requireWebChat(w, r) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 20000)
@@ -80,37 +79,41 @@ func (a *App) chatTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	if strings.Contains(r.Header.Get("Accept"), "application/x-ndjson") {
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		w.Header().Set("X-Accel-Buffering", "no")
-		encoder := json.NewEncoder(w)
-		send := func(value any) {
-			if encoder.Encode(value) == nil {
-				_ = http.NewResponseController(w).Flush()
-			}
+	status, err := a.Agent.StartTurn(r.PathValue("id"), input)
+	if err != nil {
+		code := http.StatusBadRequest
+		if errors.Is(err, agent.ErrSessionBusy) {
+			code = http.StatusConflict
+		} else if errors.Is(err, agent.ErrMCPConversation) {
+			code = http.StatusNotFound
 		}
-		v, e := a.Agent.TurnWithEvents(r.Context(), r.PathValue("id"), input, func(event agent.Event) { send(event) })
-		message := ""
-		if e != nil {
-			message = e.Error()
-		}
-		send(struct {
-			Type    string        `json:"type"`
-			Session agent.Session `json:"session"`
-			Error   string        `json:"error,omitempty"`
-		}{"done", publicSession(v), message})
+		http.Error(w, err.Error(), code)
 		return
 	}
-	v, e := a.Agent.TurnWithEvents(r.Context(), r.PathValue("id"), input, nil)
+	status.Session = publicSession(status.Session)
 	w.Header().Set("Content-Type", "application/json")
-	message := ""
-	if e != nil {
-		message = e.Error()
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(status)
+}
+
+func (a *App) chatStatus(w http.ResponseWriter, r *http.Request) {
+	if a.Agent == nil {
+		http.Error(w, "Agent is not configured", http.StatusServiceUnavailable)
+		return
 	}
-	_ = json.NewEncoder(w).Encode(struct {
-		Session agent.Session `json:"session"`
-		Error   string        `json:"error,omitempty"`
-	}{publicSession(v), message})
+	w.Header().Set("Cache-Control", "no-store")
+	status, err := a.Agent.ChatStatus(r.PathValue("id"))
+	if errors.Is(err, agent.ErrMCPConversation) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	status.Session = publicSession(status.Session)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(status)
 }
 func publicSession(v agent.Session) agent.Session {
 	if v.Loading == nil || v.Validation == nil {

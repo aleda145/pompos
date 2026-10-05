@@ -121,6 +121,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /ingestions/new", a.chatPage)
 	mux.HandleFunc("GET /chat", a.listChats)
 	mux.HandleFunc("GET /chat/{id}", a.chatPage)
+	mux.HandleFunc("GET /chat/{id}/status", a.chatStatus)
 	mux.HandleFunc("POST /chat/{id}", a.chatTurn)
 	mux.HandleFunc("POST /chat/{id}/publish", a.publishChat)
 	mux.HandleFunc("GET /chat/{id}/review", a.reviewEdit)

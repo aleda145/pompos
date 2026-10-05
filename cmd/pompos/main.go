@@ -86,6 +86,13 @@ func runServer() {
 	if err != nil {
 		logger.Fatal(err)
 	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := app.Agent.Shutdown(ctx); err != nil {
+			logger.Printf("agent shutdown: %v", err)
+		}
+	}()
 	if err := scheduleManager.Start(); err != nil {
 		logger.Fatal(err)
 	}

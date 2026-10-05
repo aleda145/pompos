@@ -75,8 +75,6 @@ After the probe, explain the chosen strategy and schedule briefly and call confi
 Keep progress and final replies concise. Never claim validation or loading succeeded without a successful result. run_ingestion queues a production load; queued is not completed. Use get_ingestion to check execution status without continuous polling, and preview_ingestion to inspect up to 10 destination rows and the total row count. set_schedule changes or disables UTC schedules. Tool calls must honor the user's scope and authorization; the server cannot independently verify human consent.` + "\n" + schemaInstructions + objectInstructions
 
 func (s *Service) NewMCPChat(title string) (Session, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if strings.TrimSpace(title) == "" || len(title) > 1000 {
 		return Session{}, errors.New("provide a title of 1–1000 bytes describing the ingestion")
 	}
@@ -89,8 +87,11 @@ func (s *Service) NewMCPChat(title string) (Session, error) {
 }
 
 func (s *Service) MCPCall(ctx context.Context, id, name string, arguments json.RawMessage) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	release, err := s.beginSession(id)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	if _, err := s.path(id); err != nil {
 		return "", err
 	}

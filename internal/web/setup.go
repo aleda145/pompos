@@ -65,7 +65,7 @@ func (a *App) setupSecretAvailable(ctx context.Context, name string) (bool, erro
 func (a *App) requireSetup(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		if a.Agent != nil && r.Method == "GET" && (path == "/" || path == "/ingestions/new" || path == "/chat" || strings.HasPrefix(path, "/chat/")) {
+		if a.Agent != nil && r.Method == "GET" && (path == "/" || path == "/ingestions/new" || path == "/chat" || (strings.HasPrefix(path, "/chat/") && !strings.HasSuffix(path, "/status"))) {
 			cfg, err := a.Agent.Settings()
 			if err != nil {
 				a.serverError(w, err)
