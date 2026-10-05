@@ -38,6 +38,7 @@ type MetadataStore interface {
 	GetRun(context.Context, string, int64) (ingestion.Run, error)
 	HasActiveRuns(context.Context, string) (bool, error)
 	RunQueue(context.Context) (store.RunQueue, error)
+	RunHistory(context.Context, int) (store.RunHistory, error)
 }
 
 type ScheduleManager interface {

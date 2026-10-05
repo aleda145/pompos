@@ -9,7 +9,7 @@
   {{if .WorkersSaved}}<span role="status">Worker count saved.</span>{{end}}
 </form>
 {{if .WorkersError}}<div class="error" id="runtime-workers-error" role="alert">{{.WorkersError}}</div>{{end}}
-<div data-runtime-url="/runtime/status">
+<div data-runtime-url="/runtime/status?page={{.History.Page}}">
   <p class="error" role="status" data-runtime-error hidden></p>
   <div data-runtime-content>{{template "runtime-status" .}}</div>
   <noscript><p class="hint">Reload for runtime updates.</p></noscript>
@@ -89,5 +89,34 @@
     </div>
   </section>
   {{end}}
+
+  <section class="runtime-section" id="runtime-history" aria-labelledby="runtime-history-heading">
+    <div class="section-heading">
+      <h2 id="runtime-history-heading">Run history <span class="hint">{{.History.Total}} runs</span></h2>
+      {{if .History.Runs}}<nav class="run-history-nav" aria-label="Run history pages">
+        {{if .PreviousPage}}<a href="/runtime?page={{.PreviousPage}}#runtime-history" rel="prev">← Previous</a>{{end}}
+        <span class="mono">Page {{.History.Page}} / {{.History.Pages}}</span>
+        {{if .NextPage}}<a href="/runtime?page={{.NextPage}}#runtime-history" rel="next">Next →</a>{{end}}
+      </nav>{{end}}
+    </div>
+    {{if .History.Runs}}
+    <div class="table-scroll" role="region" aria-label="Run history" tabindex="0">
+      <table class="runtime-table">
+        <thead><tr><th scope="col">Run</th><th scope="col">Ingestion</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Started<span data-display-timezone> · UTC</span></th><th scope="col">Finished<span data-display-timezone> · UTC</span></th><th scope="col">Trigger</th></tr></thead>
+        <tbody>{{range .History.Runs}}
+          <tr>
+            <th scope="row"><a class="mono" href="/ingestions/{{.IngestionID}}?run_id={{.ID}}" aria-label="View run {{.ID}} logs">#{{.ID}}</a></th>
+            <td><a class="mono" href="/ingestions/{{.IngestionID}}">{{.IngestionID}}</a></td>
+            <td>{{template "status" .Status}}</td>
+            <td class="mono nowrap">{{.Duration}}</td>
+            <td class="mono nowrap">{{if .StartedAt}}{{template "timestamp" .StartedAt}}{{else}}—{{end}}</td>
+            <td class="mono nowrap">{{if .FinishedAt}}{{template "timestamp" .FinishedAt}}{{else}}—{{end}}</td>
+            <td>{{if eq .Trigger "scheduled"}}Scheduled{{else}}Manual{{end}}</td>
+          </tr>
+        {{end}}</tbody>
+      </table>
+    </div>
+    {{else}}<div class="empty">No completed runs.</div>{{end}}
+  </section>
 </div>
 {{end}}

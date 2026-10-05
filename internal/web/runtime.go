@@ -9,6 +9,7 @@ import (
 
 	"pompos/internal/ingestion"
 	"pompos/internal/scheduler"
+	"pompos/internal/store"
 )
 
 type runtimeQueueRow struct {
@@ -27,9 +28,12 @@ type runtimePageData struct {
 	WorkersValue string
 	WorkersError string
 	WorkersSaved bool
+	History      store.RunHistory
+	PreviousPage int
+	NextPage     int
 }
 
-func (a *App) runtimeData(ctx context.Context) (runtimePageData, error) {
+func (a *App) runtimeData(ctx context.Context, page int) (runtimePageData, error) {
 	view := runtimePageData{Title: "Runtime", Runtime: a.Scheduler.Runtime(), UpdatedAt: time.Now().UTC()}
 	view.Uptime = runtimeElapsed(view.UpdatedAt, view.Runtime.StartedAt)
 	view.WorkersValue = strconv.Itoa(view.Runtime.WorkerLimit)
@@ -51,7 +55,29 @@ func (a *App) runtimeData(ctx context.Context) (runtimePageData, error) {
 		}
 		view.Queue = append(view.Queue, runtimeQueueRow{Run: run, Waiting: runtimeElapsed(view.UpdatedAt, run.ScheduledFor), Reason: reason})
 	}
+	view.History, err = a.Store.RunHistory(ctx, page)
+	if err != nil {
+		return view, err
+	}
+	if view.History.Page > 1 {
+		view.PreviousPage = view.History.Page - 1
+	}
+	if view.History.Page < view.History.Pages {
+		view.NextPage = view.History.Page + 1
+	}
 	return view, nil
+}
+
+func runtimeHistoryPage(r *http.Request) (int, error) {
+	value := r.URL.Query().Get("page")
+	if value == "" {
+		return 1, nil
+	}
+	page, err := strconv.Atoi(value)
+	if err != nil || page < 1 {
+		return 0, strconv.ErrSyntax
+	}
+	return page, nil
 }
 
 func runtimeElapsed(now, start time.Time) string {
@@ -63,7 +89,12 @@ func runtimeElapsed(now, start time.Time) string {
 
 func (a *App) runtimePage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	view, err := a.runtimeData(r.Context())
+	page, err := runtimeHistoryPage(r)
+	if err != nil {
+		http.Error(w, "Invalid history page", http.StatusBadRequest)
+		return
+	}
+	view, err := a.runtimeData(r.Context(), page)
 	if err != nil {
 		a.serverError(w, err)
 		return
@@ -93,7 +124,7 @@ func (a *App) runtimeWorkers(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusInternalServerError
 		}
 	}
-	view, err := a.runtimeData(r.Context())
+	view, err := a.runtimeData(r.Context(), 1)
 	if err != nil {
 		a.serverError(w, err)
 		return
@@ -104,7 +135,12 @@ func (a *App) runtimeWorkers(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) runtimeStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	view, err := a.runtimeData(r.Context())
+	page, err := runtimeHistoryPage(r)
+	if err != nil {
+		http.Error(w, "Invalid history page", http.StatusBadRequest)
+		return
+	}
+	view, err := a.runtimeData(r.Context(), page)
 	if err != nil {
 		a.serverError(w, err)
 		return

@@ -18,6 +18,42 @@ type RunQueue struct {
 	Runs  []ingestion.Run
 }
 
+type RunHistory struct {
+	Runs  []ingestion.Run
+	Total int
+	Page  int
+	Pages int
+}
+
+// RunHistory returns ten completed runs, newest first, from one snapshot.
+func (s *SQLite) RunHistory(ctx context.Context, page int) (RunHistory, error) {
+	var history RunHistory
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return history, err
+	}
+	defer tx.Rollback()
+	const completed = `status IN ('succeeded', 'failed', 'cancelled')`
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM ingestion_runs WHERE `+completed).Scan(&history.Total); err != nil {
+		return history, err
+	}
+	history.Pages = max(1, (history.Total+9)/10)
+	history.Page = min(max(1, page), history.Pages)
+	rows, err := tx.QueryContext(ctx, `SELECT `+runColumns+` FROM ingestion_runs WHERE `+completed+` ORDER BY id DESC LIMIT 10 OFFSET ?`, (history.Page-1)*10)
+	if err != nil {
+		return history, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		run, err := scanRun(rows)
+		if err != nil {
+			return history, err
+		}
+		history.Runs = append(history.Runs, run)
+	}
+	return history, rows.Err()
+}
+
 // RunQueue returns the next 100 pending runs and the full queue count from one snapshot.
 func (s *SQLite) RunQueue(ctx context.Context) (RunQueue, error) {
 	var queue RunQueue
