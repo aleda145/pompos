@@ -29,11 +29,13 @@
   <section>
     {{if .ScheduleSaved}}<div class="notice notice-success" role="status">Schedule saved.</div>{{end}}
     {{if .ScheduleError}}<div class="error" role="alert">{{.ScheduleError}}</div>{{end}}
+    <form id="manual-schedule" method="post" action="/ingestions/{{.Ingestion.ID}}/schedule"></form>
     <form method="post" action="/ingestions/{{.Ingestion.ID}}/schedule" class="schedule-form">
       <label for="schedule">Schedule · UTC</label>
       <div class="schedule-controls">
         <input {{if .Ingestion.LoadError}}disabled{{end}} class="mono" id="schedule" name="schedule" value="{{.ScheduleValue}}" placeholder="Manual" autocomplete="off">
         <button type="submit" {{if .Ingestion.LoadError}}disabled{{end}}>Save schedule</button>
+        <button type="submit" form="manual-schedule" name="schedule" value="" {{if .Ingestion.LoadError}}disabled{{end}}>Set Manual</button>
       </div>
       {{if .NextRun}}<p class="hint">Next run: <span class="mono">{{.NextRun.Format "2006-01-02 15:04:05 UTC"}}</span></p>{{end}}
     </form>

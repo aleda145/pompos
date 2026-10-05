@@ -165,9 +165,9 @@ legend { font-weight: 500; padding: 0; }
 .details .hint { margin-top: 6px; }
 .connection h2 { margin-bottom: 4px; }
 .connection .url { font-size: 12px; }
-.schedule-form { display: grid; grid-template-columns: auto minmax(0, 400px) minmax(0, 1fr); gap: 8px 16px; align-items: center; }
+.schedule-form { display: grid; grid-template-columns: auto minmax(0, 500px) minmax(0, 1fr); gap: 8px 16px; align-items: center; }
 .schedule-form label, .schedule-form .hint { margin: 0; }
-.schedule-controls { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+.schedule-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
 .schedule-controls button { white-space: nowrap; }
 .yaml-code { margin: 0; padding: 12px; max-height: 608px; overflow: auto; color: var(--text); background: var(--surface-inset); white-space: pre; tab-size: 2; font: 12px/1.65 var(--mono); border: 1px solid var(--border); border-radius: 2px; }
 .yaml-code code { font: inherit; }
@@ -286,6 +286,7 @@ legend { font-weight: 500; padding: 0; }
   .loading-summary div { grid-template-columns: 110px minmax(0, 1fr); }
 }
 @media (max-width: 400px) {
-  .schedule-controls { grid-template-columns: minmax(0, 1fr); }
+  .schedule-controls { grid-template-columns: auto minmax(0, 1fr); }
+  .schedule-controls input { grid-column: 1 / -1; }
   .schedule-controls button { justify-self: start; }
 }
