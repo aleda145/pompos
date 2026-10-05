@@ -37,6 +37,7 @@ type MetadataStore interface {
 	ListRuns(context.Context, string, int64, int) ([]ingestion.Run, error)
 	GetRun(context.Context, string, int64) (ingestion.Run, error)
 	HasActiveRuns(context.Context, string) (bool, error)
+	RunQueue(context.Context) (store.RunQueue, error)
 }
 
 type ScheduleManager interface {
@@ -44,6 +45,8 @@ type ScheduleManager interface {
 	Upsert(ingestion.Ingestion) error
 	Enqueue(context.Context, string) error
 	NextRun(string) *time.Time
+	Runtime() scheduler.Runtime
+	SetWorkers(context.Context, int) error
 }
 
 type DestinationCatalog interface {
@@ -87,7 +90,7 @@ func New(app App) (*App, error) {
 		app.Destinations = catalog
 	}
 	app.templates = make(map[string]*template.Template, 5)
-	for _, page := range []string{"home", "detail", "secrets", "destinations", "chats", "chat", "settings", "setup", "edit_review"} {
+	for _, page := range []string{"home", "detail", "secrets", "destinations", "chats", "chat", "settings", "setup", "edit_review", "runtime"} {
 		parsed, err := template.New(page).Funcs(template.FuncMap{
 			"displayTimezone": app.displayTimezone,
 		}).ParseFS(templatefiles.FS, "layout.html", page+".html")
@@ -102,6 +105,9 @@ func New(app App) (*App, error) {
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", a.home)
+	mux.HandleFunc("GET /runtime", a.runtimePage)
+	mux.HandleFunc("GET /runtime/status", a.runtimeStatus)
+	mux.HandleFunc("POST /runtime/workers", a.runtimeWorkers)
 	mux.HandleFunc("GET /setup", a.setupPage)
 	mux.HandleFunc("POST /setup/mode", a.setupMode)
 	mux.HandleFunc("GET /settings/mcp", func(w http.ResponseWriter, r *http.Request) {
@@ -628,3 +634,9 @@ func (noopScheduleManager) Enqueue(context.Context, string) error {
 	return errors.New("run queue is unavailable")
 }
 func (noopScheduleManager) NextRun(string) *time.Time { return nil }
+func (noopScheduleManager) Runtime() scheduler.Runtime {
+	return scheduler.Runtime{Status: ingestion.StatusPending}
+}
+func (noopScheduleManager) SetWorkers(context.Context, int) error {
+	return errors.New("scheduler is unavailable")
+}

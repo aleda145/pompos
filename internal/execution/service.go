@@ -26,7 +26,6 @@ type Service struct {
 	Store  Store
 	Runner runner.Runner
 	Logger *log.Logger
-	gate   chan struct{}
 }
 
 func New(service Service) (*Service, error) {
@@ -36,7 +35,6 @@ func New(service Service) (*Service, error) {
 	if service.Logger == nil {
 		service.Logger = log.Default()
 	}
-	service.gate = make(chan struct{}, 1)
 	return &service, nil
 }
 
@@ -86,12 +84,6 @@ func (s *Service) Run(ctx context.Context, queued ingestion.Run) (runErr error) 
 }
 
 func (s *Service) execute(ctx context.Context, item ingestion.Ingestion) error {
-	select {
-	case s.gate <- struct{}{}:
-		defer func() { <-s.gate }()
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 	started := time.Now()
 	runner.Log(ctx, time.Now().UTC().Format("15:04:05")+" Loading YAML\n")
 	document, _, err := spec.Read(item.SpecPath)

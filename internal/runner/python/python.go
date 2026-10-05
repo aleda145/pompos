@@ -3,11 +3,11 @@ package python
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -24,6 +24,9 @@ type Runner struct {
 	Binary       string
 	Secrets      secrets.Store
 }
+
+//go:embed locking.py
+var destinationLockScript string
 
 func (r Runner) Run(ctx context.Context, plan compiler.ExecutionPlan) error {
 	if plan.Engine != "python" {
@@ -117,8 +120,18 @@ func ReadResult(output, marker string, result any) error {
 }
 
 func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe bool, validationLimit int, validation bool) (string, error) {
+	script, err := filepath.EvalSymlinks(plan.Script)
+	if err != nil {
+		return "", err
+	}
+	// Also protect local pipeline state from overlapping CLI and server runs.
+	guard, err := lockFile(ctx, script+".run.lock")
+	if err != nil {
+		return "", err
+	}
+	defer guard.Close()
 	runner.Log(ctx, "Preparing Python environment\n")
-	plan, err := r.Prepare(ctx, plan)
+	plan, err = r.Prepare(ctx, plan)
 	if err != nil {
 		return "", err
 	}
@@ -149,11 +162,20 @@ func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 		defer cancel()
 	}
 	binary := plan.PythonBinary
-	script, err := filepath.Abs(plan.Script)
+	script, err = filepath.Abs(plan.Script)
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.CommandContext(ctx, binary, "-I", "-u", script)
+	// Run the source definitions with the current loader. Saved scripts must not
+	// retain an older loader's destination locking or execution behavior.
+	entrypoint := WrapWithRuntime("", "", nil)
+	if plan.DestinationType == "objects" {
+		entrypoint = WrapObjectsWithRuntime("", "", nil)
+	}
+	const launch = "import runpy, sys\nscope = runpy.run_path(sys.argv[1], run_name='pompos_source')\nscope['__name__'] = '__main__'\nexec(compile(sys.argv[2], '<pompos-loader>', 'exec'), scope)\n"
+	cmd := commandContext(ctx, binary, "-I", "-u", "-c", launch, script, entrypoint)
+	// Keep the run lock held if Pompos exits before its Python process does.
+	cmd.ExtraFiles = []*os.File{guard}
 	// Do not inherit provider keys or unrelated service credentials.
 	for _, key := range []string{"PATH", "HOME", "LANG", "SYSTEMROOT", "TMPDIR"} {
 		if value, ok := os.LookupEnv(key); ok {
@@ -245,7 +267,7 @@ func (b *cappedOutput) String() string { b.Lock(); defer b.Unlock(); return stri
 func Wrap(code string) string { return WrapWithRuntime(code, "", nil) }
 
 func WrapWithRuntime(code, python string, dependencies []string) string {
-	return ScriptMetadata(python, dependencies) + code + `
+	return ScriptMetadata(python, dependencies) + code + "\n\n" + destinationLockScript + `
 
 # Pompos entrypoint: fetch(secret, limit) yields dictionaries for ONE source table.
 if __name__ == "__main__":
@@ -276,15 +298,28 @@ if __name__ == "__main__":
         import dlt
         _path = str(Path(_config["destination"]).resolve())
         Path(_path).parent.mkdir(parents=True, exist_ok=True)
-        _pipeline = dlt.pipeline(pipeline_name="pompos_" + Path(__file__).stem,
-            pipelines_dir=str(Path(__file__).parent / ".dlt"),
-            destination=dlt.destinations.duckdb(credentials=_path), dataset_name=_config.get("schema") or "main")
+        with _pompos_destination_lock(_path):
+            _pipeline = dlt.pipeline(pipeline_name="pompos_" + Path(__file__).stem,
+                pipelines_dir=str(Path(__file__).parent / ".dlt"),
+                destination=dlt.destinations.duckdb(credentials=_path), dataset_name=_config.get("schema") or "main")
         def _load(rows):
+            # Restore state and finish any interrupted load before extracting.
+            with _pompos_destination_lock(_path):
+                _pending = _pipeline.run()
+                if _pending is not None:
+                    _pending.raise_on_failed_jobs()
+                    return _pending
             _resource = dlt.resource(rows, name=_config["table"], table_name=_config["table"],
                 max_table_nesting=0, write_disposition=_config["strategy"],
                 primary_key=_config.get("primary_key") or None)
-            _info = _pipeline.run(_resource)
-            _info.raise_on_failed_jobs()
+            print("Extracting and preparing rows", flush=True)
+            _pipeline.extract(_resource)
+            _pipeline.normalize()
+            print("Waiting to load destination", flush=True)
+            with _pompos_destination_lock(_path):
+                print("Loading destination", flush=True)
+                _info = _pipeline.load()
+                _info.raise_on_failed_jobs()
             return _info
         if _config.get("validation", bool(_validation_limit)):
             _sample = list(itertools.islice(_rows(), _validation_limit or None))
@@ -303,7 +338,7 @@ if __name__ == "__main__":
             # Load the same source sample twice; fetch is called only once.
             import copy, duckdb
             def _count():
-                with duckdb.connect(_path, read_only=True) as _db:
+                with _pompos_destination_lock(_path, shared=True), duckdb.connect(_path, read_only=True) as _db:
                     _table = _pipeline.default_schema.naming.normalize_table_identifier(_config["table"])
                     _schema = _pipeline.dataset_name
                     return _db.execute('SELECT count(*) FROM "' + _schema.replace('"', '""') + '"."' + _table.replace('"', '""') + '"').fetchone()[0]

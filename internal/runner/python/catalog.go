@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -16,7 +15,9 @@ import (
 )
 
 //go:embed catalog.py
-var catalogScript string
+var catalogEntrypoint string
+
+var catalogScript = destinationLockScript + "\n\n" + catalogEntrypoint
 
 type DestinationSchema struct {
 	Name   string   `json:"name"`
@@ -62,7 +63,7 @@ func (r Runner) InspectDestination(ctx context.Context, dest destination.Config)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, plan.PythonBinary, "-I", "-c", catalogScript, path)
+	cmd := commandContext(ctx, plan.PythonBinary, "-I", "-c", catalogScript, path)
 	cmd.Env = environmentVariables()
 	cmd.WaitDelay = time.Second
 	output := cappedOutput{limit: 1024 * 1024}

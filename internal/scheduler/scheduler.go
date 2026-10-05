@@ -16,10 +16,7 @@ import (
 	"pompos/internal/spec"
 )
 
-const (
-	pollInterval = 5 * time.Second
-	claimTimeout = time.Hour
-)
+const pollInterval = 5 * time.Second
 
 type RunFunc func(context.Context, ingestion.Run) error
 
@@ -30,10 +27,12 @@ type Store interface {
 	UpdateSpecReference(context.Context, string, string, string) error
 	EnqueueRun(context.Context, string, time.Time) error
 	EnqueueScheduledRun(context.Context, string, time.Time, time.Time) (bool, error)
-	ClaimRun(context.Context, time.Time, time.Time) (ingestion.Run, bool, error)
+	ClaimRun(context.Context, time.Time) (ingestion.Run, bool, error)
 	FinishRun(context.Context, int64, string) error
 	ReleaseRun(context.Context, int64) error
 	RecoverRuns(context.Context) (int64, error)
+	WorkerCount(context.Context) (int, error)
+	SaveWorkerCount(context.Context, int) error
 }
 
 // Manager uses gocron to drive a poller and calculate cron occurrences. Both
@@ -49,12 +48,23 @@ type Manager struct {
 	pollMu          sync.Mutex
 	publicationMu   sync.RWMutex
 	wake            chan struct{}
+	workerLimit     int
+	workers         sync.WaitGroup
+	wakeDone        chan struct{}
+	statusMu        sync.RWMutex
+	workerRuns      []ingestion.Run
+	startedAt       time.Time
+	lastPoll        time.Time
+	pollError       string
 	reconcileErrors map[string]string
 }
 
-func New(logger *log.Logger, store Store, run RunFunc) (*Manager, error) {
+func New(logger *log.Logger, store Store, run RunFunc, workers int) (*Manager, error) {
 	if logger == nil || store == nil || run == nil {
 		return nil, fmt.Errorf("scheduler logger, store, and run function are required")
+	}
+	if workers < 1 {
+		return nil, fmt.Errorf("scheduler workers must be positive")
 	}
 	s, err := gocron.NewScheduler(
 		gocron.WithLocation(time.UTC),
@@ -64,10 +74,10 @@ func New(logger *log.Logger, store Store, run RunFunc) (*Manager, error) {
 		return nil, fmt.Errorf("create scheduler: %w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{scheduler: s, store: store, logger: logger, run: run, now: time.Now, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), reconcileErrors: make(map[string]string)}
+	m := &Manager{scheduler: s, store: store, logger: logger, run: run, now: time.Now, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), workerLimit: workers, wakeDone: make(chan struct{}), workerRuns: make([]ingestion.Run, workers), reconcileErrors: make(map[string]string)}
 	if _, err := s.NewJob(
 		gocron.DurationJob(pollInterval),
-		gocron.NewTask(func(ctx context.Context) { m.poll(ctx) }),
+		gocron.NewTask(func() { m.poll(m.ctx) }),
 		gocron.WithName("durable-run-poller"),
 		gocron.WithSingletonMode(gocron.LimitModeReschedule),
 	); err != nil {
@@ -151,6 +161,13 @@ func (m *Manager) Enqueue(ctx context.Context, ingestionID string) error {
 func (m *Manager) Start() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	workers, err := m.store.WorkerCount(ctx)
+	if err != nil {
+		return fmt.Errorf("load worker setting: %w", err)
+	}
+	if workers > 0 {
+		m.resizeWorkers(workers)
+	}
 	recovered, err := m.store.RecoverRuns(ctx)
 	if err != nil {
 		return fmt.Errorf("recover interrupted ingestion runs: %w", err)
@@ -158,22 +175,41 @@ func (m *Manager) Start() error {
 	if recovered > 0 {
 		m.logger.Printf("interrupted ingestion runs recovered count=%d", recovered)
 	}
+	m.statusMu.Lock()
+	m.startedAt = m.now().UTC()
+	m.statusMu.Unlock()
 	m.scheduler.Start()
 	go m.wakeLoop()
 	select {
 	case m.wake <- struct{}{}:
 	default:
 	}
-	m.logger.Printf("durable run worker started poll_interval=%s", pollInterval)
+	m.logger.Printf("durable run workers started workers=%d poll_interval=%s", m.Runtime().WorkerLimit, pollInterval)
 	return nil
 }
 
 func (m *Manager) Shutdown(ctx context.Context) error {
 	m.cancel()
-	return m.scheduler.ShutdownWithContext(ctx)
+	err := m.scheduler.ShutdownWithContext(ctx)
+	done := make(chan struct{})
+	go func() {
+		<-m.wakeDone
+		// No dispatcher may add a worker after Wait starts.
+		m.pollMu.Lock()
+		m.pollMu.Unlock()
+		m.workers.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return err
+	case <-ctx.Done():
+		return errors.Join(err, ctx.Err())
+	}
 }
 
 func (m *Manager) wakeLoop() {
+	defer close(m.wakeDone)
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -191,20 +227,61 @@ func (m *Manager) poll(ctx context.Context) {
 		return
 	}
 	defer m.pollMu.Unlock()
+	if ctx.Err() != nil {
+		return
+	}
+	var pollErr error
+	defer func() {
+		m.statusMu.Lock()
+		defer m.statusMu.Unlock()
+		m.lastPoll = m.now().UTC()
+		m.pollError = ""
+		if pollErr != nil {
+			m.pollError = pollErr.Error()
+		}
+	}()
 	if err := m.enqueueDue(ctx); err != nil {
+		pollErr = err
 		m.logger.Printf("schedule poll failed error=%q", err)
 	}
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+		worker := m.availableWorker()
+		if worker < 0 {
+			return
+		}
 		now := m.now().UTC()
-		run, ok, err := m.store.ClaimRun(ctx, now, now.Add(-claimTimeout))
+		run, ok, err := m.store.ClaimRun(ctx, now)
 		if err != nil {
+			pollErr = errors.Join(pollErr, err)
 			m.logger.Printf("ingestion run claim failed error=%q", err)
 			return
 		}
 		if !ok {
 			return
 		}
-		m.executeClaim(ctx, run)
+		// Keep published files stable until this worker has finished.
+		m.publicationMu.RLock()
+		m.statusMu.Lock()
+		m.workerRuns[worker] = run
+		m.statusMu.Unlock()
+		m.workers.Add(1)
+		go func(worker int, run ingestion.Run) {
+			defer m.workers.Done()
+			defer func() {
+				m.statusMu.Lock()
+				m.workerRuns[worker] = ingestion.Run{}
+				m.statusMu.Unlock()
+				m.publicationMu.RUnlock()
+				select {
+				case m.wake <- struct{}{}:
+				default:
+				}
+			}()
+			m.executeClaim(ctx, run)
+		}(worker, run)
 	}
 }
 
@@ -226,16 +303,20 @@ func (m *Manager) enqueueDue(ctx context.Context) error {
 	now := m.now().UTC()
 	for _, item := range items {
 		if err := m.reconcileSchedule(ctx, item, now); err != nil {
+			m.statusMu.Lock()
 			if m.reconcileErrors[item.ID] != err.Error() {
 				m.logger.Printf("schedule reconciliation failed ingestion_id=%s spec_path=%s error=%q", item.ID, item.SpecPath, err)
 				m.reconcileErrors[item.ID] = err.Error()
 			}
+			m.statusMu.Unlock()
 			continue
 		}
+		m.statusMu.Lock()
 		if _, failed := m.reconcileErrors[item.ID]; failed {
 			m.logger.Printf("schedule reconciliation recovered ingestion_id=%s", item.ID)
 			delete(m.reconcileErrors, item.ID)
 		}
+		m.statusMu.Unlock()
 	}
 	return nil
 }

@@ -9,7 +9,7 @@ path, schema, table, kind = sys.argv[1:]
 if kind != "objects":
     schema = NamingConvention().normalize_identifier(schema)
     table = NamingConvention().normalize_table_identifier(table)
-with duckdb.connect(path, read_only=True, config={"enable_external_access": False}) as db:
+with _pompos_destination_lock(path, shared=True), duckdb.connect(path, read_only=True, config={"enable_external_access": False}) as db:
     # Only loaded base tables, never views that could execute arbitrary expressions.
     exists = db.execute(
         "SELECT 1 FROM information_schema.tables "

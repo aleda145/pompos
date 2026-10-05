@@ -1,0 +1,93 @@
+{{define "content"}}
+<div class="page-heading">
+  <h1>Runtime</h1>
+</div>
+<form class="runtime-controls" method="post" action="/runtime/workers">
+  <label for="runtime-workers">Workers</label>
+  <input class="mono" id="runtime-workers" name="workers" type="number" min="1" step="1" required value="{{.WorkersValue}}" {{if .WorkersError}}aria-invalid="true" aria-describedby="runtime-workers-error"{{end}}>
+  <button class="primary" type="submit">Save</button>
+  {{if .WorkersSaved}}<span role="status">Worker count saved.</span>{{end}}
+</form>
+{{if .WorkersError}}<div class="error" id="runtime-workers-error" role="alert">{{.WorkersError}}</div>{{end}}
+<div data-runtime-url="/runtime/status">
+  <p class="error" role="status" data-runtime-error hidden></p>
+  <div data-runtime-content>{{template "runtime-status" .}}</div>
+  <noscript><p class="hint">Reload for runtime updates.</p></noscript>
+</div>
+<script src="/static/runtime.js" defer></script>
+{{end}}
+
+{{define "runtime-status"}}
+<div class="runtime-status" data-runtime-state data-worker-limit="{{.Runtime.WorkerLimit}}">
+  <dl class="runtime-summary">
+    <div><dt>Scheduler</dt><dd>{{template "status" .Runtime.Status}}</dd></div>
+    <div><dt>Workers active / limit</dt><dd class="mono">{{.Runtime.Active}} / {{.Runtime.WorkerLimit}}</dd></div>
+    <div><dt>Queued</dt><dd class="mono">{{.Pending}}</dd></div>
+    <div><dt>Uptime</dt><dd class="mono">{{.Uptime}}</dd></div>
+    <div><dt>Execution</dt><dd>Local · uv</dd></div>
+  </dl>
+  <div class="runtime-timing hint">
+    <span>Updated <span class="mono">{{if .Runtime.LastPoll.IsZero}}—{{else}}{{template "timestamp" .Runtime.LastPoll}}{{end}}</span></span>
+    <span data-display-timezone>UTC</span>
+  </div>
+  {{if .Runtime.PollError}}<div class="error" role="alert">{{.Runtime.PollError}}</div>{{end}}
+  {{if gt .Runtime.Active .Runtime.WorkerLimit}}<p class="hint">Active runs will finish before the lower limit takes effect.</p>{{end}}
+
+  <section class="runtime-section" aria-labelledby="runtime-workers-heading">
+    <h2 id="runtime-workers-heading">Workers</h2>
+    <div class="table-scroll" role="region" aria-label="Workers" tabindex="0">
+      <table class="runtime-table">
+        <thead><tr><th scope="col">Worker</th><th scope="col">Status</th><th scope="col">Ingestion</th><th scope="col">Run</th><th scope="col">Elapsed</th><th scope="col">Trigger</th><th scope="col">Attempt</th></tr></thead>
+        <tbody>{{range .Runtime.Workers}}
+          <tr>
+            <th scope="row" class="mono">{{.ID}}</th>
+            {{if .Run.ID}}
+              <td>{{template "status" "running"}}{{if .Draining}}<span class="cell-detail">Retiring after run</span>{{end}}</td>
+              <td><a class="mono" href="/ingestions/{{.Run.IngestionID}}">{{.Run.IngestionID}}</a></td>
+              <td><a class="mono" href="/ingestions/{{.Run.IngestionID}}?run_id={{.Run.ID}}">#{{.Run.ID}}</a></td>
+              <td class="mono nowrap">{{.Run.Duration}}</td>
+              <td>{{if eq .Run.Trigger "scheduled"}}Scheduled{{else}}Manual{{end}}</td>
+              <td class="mono">{{.Run.Attempts}}</td>
+            {{else}}
+              <td>{{template "status" "pending"}}</td><td colspan="5">—</td>
+            {{end}}
+          </tr>
+        {{else}}<tr><td colspan="7">No workers.</td></tr>{{end}}</tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="runtime-section" aria-labelledby="runtime-queue-heading">
+    <h2 id="runtime-queue-heading">Queue{{if gt .Pending (len .Queue)}} <span class="hint">Showing {{len .Queue}} / {{.Pending}}</span>{{end}}</h2>
+    {{if .Queue}}
+    <div class="table-scroll" role="region" aria-label="Queued runs" tabindex="0">
+      <table class="runtime-table">
+        <thead><tr><th scope="col">Run</th><th scope="col">Ingestion</th><th scope="col">Trigger</th><th scope="col">Queued for<span data-display-timezone> · UTC</span></th><th scope="col">Waiting</th><th scope="col">State</th></tr></thead>
+        <tbody>{{range .Queue}}
+          <tr>
+            <th scope="row"><a class="mono" href="/ingestions/{{.IngestionID}}?run_id={{.ID}}">#{{.ID}}</a></th>
+            <td><a class="mono" href="/ingestions/{{.IngestionID}}">{{.IngestionID}}</a></td>
+            <td>{{if eq .Trigger "scheduled"}}Scheduled{{else}}Manual{{end}}</td>
+            <td class="mono nowrap">{{template "timestamp" .ScheduledFor}}</td>
+            <td class="mono nowrap">{{.Waiting}}</td>
+            <td>{{.Reason}}</td>
+          </tr>
+        {{end}}</tbody>
+      </table>
+    </div>
+    {{else}}<div class="empty">Queue empty.</div>{{end}}
+  </section>
+
+  {{if .Runtime.ScheduleErrors}}
+  <section class="runtime-section" aria-labelledby="runtime-errors-heading">
+    <h2 id="runtime-errors-heading">Schedule errors</h2>
+    <div class="table-scroll" role="region" aria-label="Schedule errors" tabindex="0">
+      <table class="runtime-table">
+        <thead><tr><th scope="col">Ingestion</th><th scope="col">Status</th><th scope="col">Error</th></tr></thead>
+        <tbody>{{range $id, $error := .Runtime.ScheduleErrors}}<tr><th scope="row"><a class="mono" href="/ingestions/{{$id}}">{{$id}}</a></th><td>{{template "status" "failed"}}</td><td>{{$error}}</td></tr>{{end}}</tbody>
+      </table>
+    </div>
+  </section>
+  {{end}}
+</div>
+{{end}}

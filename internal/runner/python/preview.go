@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -28,7 +27,9 @@ type TablePreview struct {
 const PreviewUnavailable = "Preview unavailable. The table may not have been loaded yet, or the database may be busy. Try again after the ingestion finishes."
 
 //go:embed preview.py
-var previewScript string
+var previewEntrypoint string
+
+var previewScript = destinationLockScript + "\n\n" + previewEntrypoint
 
 var previewTableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
@@ -57,7 +58,7 @@ func (r Runner) Preview(ctx context.Context, plan compiler.ExecutionPlan) (Table
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	binary := plan.PythonBinary
-	cmd := exec.CommandContext(ctx, binary, "-I", "-c", previewScript, catalogPath, schema, plan.DestinationObject, plan.DestinationType)
+	cmd := commandContext(ctx, binary, "-I", "-c", previewScript, catalogPath, schema, plan.DestinationObject, plan.DestinationType)
 	cmd.Env = []string{"DLT_TELEMETRY=0"}
 	for _, key := range []string{"PATH", "LANG", "SYSTEMROOT", "TMPDIR"} {
 		if value, ok := os.LookupEnv(key); ok {

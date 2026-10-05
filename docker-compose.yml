@@ -1,6 +1,8 @@
 services:
   pompos:
     build: .
+    environment:
+      POMPOS_WORKERS: ${POMPOS_WORKERS:-3}
     ports:
       - "127.0.0.1:8080:8080"
     volumes:

@@ -4,7 +4,7 @@ import sys
 
 import duckdb
 
-with duckdb.connect(sys.argv[1], read_only=True, config={"enable_external_access": False}) as db:
+with _pompos_destination_lock(sys.argv[1], shared=True), duckdb.connect(sys.argv[1], read_only=True, config={"enable_external_access": False}) as db:
     rows = db.execute("""
         SELECT s.schema_name, t.table_name
         FROM information_schema.schemata AS s

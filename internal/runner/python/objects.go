@@ -17,5 +17,5 @@ func ObjectValidationBudget(maxBytes int64, seconds int) (int64, int, error) {
 var objectsEntrypoint string
 
 func WrapObjectsWithRuntime(code, python string, dependencies []string) string {
-	return ScriptMetadata(python, dependencies) + code + "\n\n" + objectsEntrypoint
+	return ScriptMetadata(python, dependencies) + code + "\n\n" + destinationLockScript + "\n\n" + objectsEntrypoint
 }

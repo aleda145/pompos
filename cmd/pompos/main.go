@@ -41,7 +41,10 @@ func main() {
 
 func runServer() {
 	logger := log.New(os.Stdout, "pompos: ", log.LstdFlags)
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Fatal(err)
+	}
 	listener, err := net.Listen("tcp", cfg.Address)
 	if err != nil {
 		logger.Fatal(err)
@@ -66,7 +69,7 @@ func runServer() {
 	if err != nil {
 		logger.Fatal(err)
 	}
-	scheduleManager, err := scheduler.New(logger, metadata, executor.Run)
+	scheduleManager, err := scheduler.New(logger, metadata, executor.Run, cfg.Workers)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -178,7 +181,10 @@ func runCommandIO(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
 	plan, err := compiler.Compile(document)
 	if err != nil {
 		return err

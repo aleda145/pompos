@@ -13,6 +13,37 @@ import (
 
 const runColumns = `id, ingestion_id, trigger, scheduled_for, attempts, spec_path, spec_digest, status, claimed_at, finished_at, last_error`
 
+type RunQueue struct {
+	Total int
+	Runs  []ingestion.Run
+}
+
+// RunQueue returns the next 100 pending runs and the full queue count from one snapshot.
+func (s *SQLite) RunQueue(ctx context.Context) (RunQueue, error) {
+	var queue RunQueue
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return queue, err
+	}
+	defer tx.Rollback()
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM ingestion_runs WHERE status = 'pending'`).Scan(&queue.Total); err != nil {
+		return queue, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT `+runColumns+` FROM ingestion_runs WHERE status = 'pending' ORDER BY scheduled_for, id LIMIT 100`)
+	if err != nil {
+		return queue, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		run, err := scanRun(rows)
+		if err != nil {
+			return queue, err
+		}
+		queue.Runs = append(queue.Runs, run)
+	}
+	return queue, rows.Err()
+}
+
 func (s *SQLite) ListRuns(ctx context.Context, id string, before int64, limit int) ([]ingestion.Run, error) {
 	if limit < 1 || limit > 100 {
 		limit = 25

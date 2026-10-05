@@ -2,7 +2,6 @@
 # and optionally download(object, target_path, secret), writing one staged file.
 def _pompos_objects():
     import datetime
-    import fcntl
     import hashlib
     import itertools
     import json
@@ -94,6 +93,25 @@ def _pompos_objects():
     files.mkdir(parents=True, exist_ok=True)
     catalog = inside(root / "objects.duckdb")
 
+    import duckdb
+
+    @_pompos_contextmanager
+    def catalog_connection(write=False):
+        with _pompos_destination_lock(catalog, shared=not write):
+            with duckdb.connect(str(catalog), read_only=not write) as db:
+                yield db
+
+    with catalog_connection(write=True) as db:
+        database = db.execute("SELECT current_database()").fetchone()[0]
+        target = '"' + database.replace('"', '""') + '"."' + schema + '"."objects"'
+        db.execute('CREATE SCHEMA IF NOT EXISTS "' + schema + '"')
+        db.execute("CREATE TABLE IF NOT EXISTS " + target + " ("
+                   "object_id VARCHAR PRIMARY KEY, source_uri VARCHAR NOT NULL, uri VARCHAR NOT NULL, "
+                   "filename VARCHAR NOT NULL, content_type VARCHAR NOT NULL, size_bytes BIGINT NOT NULL, "
+                   "sha256 VARCHAR NOT NULL, source_version VARCHAR, source_modified_at TIMESTAMPTZ, "
+                   "first_seen_at TIMESTAMPTZ NOT NULL, last_seen_at TIMESTAMPTZ NOT NULL, "
+                   "downloaded_at TIMESTAMPTZ NOT NULL, metadata JSON NOT NULL)")
+
     def checksum(path):
         digest = hashlib.sha256()
         with path.open("rb") as source:
@@ -128,18 +146,20 @@ def _pompos_objects():
                     output.write(chunk)
             return response.headers.get("Content-Type", "").split(";", 1)[0] or None
 
-    def load(db, items):
+    def load(items):
         nonlocal downloaded_bytes
         count = 0
         for item in items:
             now = datetime.datetime.now(datetime.timezone.utc)
-            row = db.execute("SELECT uri, size_bytes, sha256, source_version FROM " + target + " WHERE object_id = ?", [item["object_id"]]).fetchone()
+            with catalog_connection() as db:
+                row = db.execute("SELECT uri, size_bytes, sha256, source_version FROM " + target + " WHERE object_id = ?", [item["object_id"]]).fetchone()
             unchanged = row and item.get("source_version") and item["source_version"] == row[3]
             if (strategy == "skip" or unchanged) and intact(row):
-                db.execute("UPDATE " + target + " SET last_seen_at = ? WHERE object_id = ?", [now, item["object_id"]])
-                if unchanged and strategy == "update":
-                    db.execute("UPDATE " + target + " SET source_uri = ?, metadata = ? WHERE object_id = ?",
-                               [item["source_uri"], json.dumps(item.get("metadata", {}), allow_nan=False), item["object_id"]])
+                with catalog_connection(write=True) as db:
+                    db.execute("UPDATE " + target + " SET last_seen_at = ? WHERE object_id = ?", [now, item["object_id"]])
+                    if unchanged and strategy == "update":
+                        db.execute("UPDATE " + target + " SET source_uri = ?, metadata = ? WHERE object_id = ?",
+                                   [item["source_uri"], json.dumps(item.get("metadata", {}), allow_nan=False), item["object_id"]])
                 count += 1
                 continue
 
@@ -186,47 +206,36 @@ def _pompos_objects():
                     directory = directory.parent
                 # The row always describes published bytes. A crash before this
                 # upsert leaves an unregistered file that the same retry reuses.
-                db.execute("INSERT INTO " + target + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                           "ON CONFLICT (object_id) DO UPDATE SET "
-                           "source_uri=excluded.source_uri, uri=excluded.uri, filename=excluded.filename, "
-                           "content_type=excluded.content_type, size_bytes=excluded.size_bytes, sha256=excluded.sha256, "
-                           "source_version=excluded.source_version, source_modified_at=excluded.source_modified_at, "
-                           "last_seen_at=excluded.last_seen_at, downloaded_at=excluded.downloaded_at, metadata=excluded.metadata",
-                           [item["object_id"], item["source_uri"], final.as_uri(), item["filename"],
-                            item.get("content_type") or content_type or mimetypes.guess_type(item["filename"])[0] or "application/octet-stream",
-                            size, sha, item.get("source_version"), timestamp(item.get("source_modified_at")),
-                            now, now, now, json.dumps(item.get("metadata", {}), allow_nan=False)])
+                with catalog_connection(write=True) as db:
+                    db.execute("INSERT INTO " + target + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                               "ON CONFLICT (object_id) DO UPDATE SET "
+                               "source_uri=excluded.source_uri, uri=excluded.uri, filename=excluded.filename, "
+                               "content_type=excluded.content_type, size_bytes=excluded.size_bytes, sha256=excluded.sha256, "
+                               "source_version=excluded.source_version, source_modified_at=excluded.source_modified_at, "
+                               "last_seen_at=excluded.last_seen_at, downloaded_at=excluded.downloaded_at, metadata=excluded.metadata",
+                               [item["object_id"], item["source_uri"], final.as_uri(), item["filename"],
+                                item.get("content_type") or content_type or mimetypes.guess_type(item["filename"])[0] or "application/octet-stream",
+                                size, sha, item.get("source_version"), timestamp(item.get("source_modified_at")),
+                                now, now, now, json.dumps(item.get("metadata", {}), allow_nan=False)])
                 count += 1
         return count
 
-    import duckdb
-    # Serialize catalog writers across ingestions and Pompos processes.
-    with inside(root / ".catalog.lock").open("a") as guard:
-        fcntl.flock(guard, fcntl.LOCK_EX)
-        with duckdb.connect(str(catalog)) as db:
-            database = db.execute("SELECT current_database()").fetchone()[0]
-            target = '"' + database.replace('"', '""') + '"."' + schema + '"."objects"'
-            db.execute('CREATE SCHEMA IF NOT EXISTS "' + schema + '"')
-            db.execute("CREATE TABLE IF NOT EXISTS " + target + " ("
-                       "object_id VARCHAR PRIMARY KEY, source_uri VARCHAR NOT NULL, uri VARCHAR NOT NULL, "
-                       "filename VARCHAR NOT NULL, content_type VARCHAR NOT NULL, size_bytes BIGINT NOT NULL, "
-                       "sha256 VARCHAR NOT NULL, source_version VARCHAR, source_modified_at TIMESTAMPTZ, "
-                       "first_seen_at TIMESTAMPTZ NOT NULL, last_seen_at TIMESTAMPTZ NOT NULL, "
-                       "downloaded_at TIMESTAMPTZ NOT NULL, metadata JSON NOT NULL)")
-            if validation:
-                sample = list(objects())
-                if not sample:
-                    raise ValueError("Validation returned no objects")
-                load(db, sample)
-                first = db.execute("SELECT count(*) FROM " + target).fetchone()[0]
-                load(db, sample)
-                second = db.execute("SELECT count(*) FROM " + target).fetchone()[0]
-                if first != len(sample) or second != first:
-                    raise ValueError("Unexpected object counts after repeated loads")
-                print("POMPOS_VALIDATION_RESULT=" + json.dumps({"data": "files", "sample_count": len(sample), "first_load_rows": first, "second_load_rows": second, "downloaded_bytes": downloaded_bytes}))
-            else:
-                count = load(db, objects())
-                print("POMPOS_OBJECTS_RESULT=" + json.dumps({"objects": count, "downloaded_bytes": downloaded_bytes}))
+    if validation:
+        sample = list(objects())
+        if not sample:
+            raise ValueError("Validation returned no objects")
+        load(sample)
+        with catalog_connection() as db:
+            first = db.execute("SELECT count(*) FROM " + target).fetchone()[0]
+        load(sample)
+        with catalog_connection() as db:
+            second = db.execute("SELECT count(*) FROM " + target).fetchone()[0]
+        if first != len(sample) or second != first:
+            raise ValueError("Unexpected object counts after repeated loads")
+        print("POMPOS_VALIDATION_RESULT=" + json.dumps({"data": "files", "sample_count": len(sample), "first_load_rows": first, "second_load_rows": second, "downloaded_bytes": downloaded_bytes}))
+    else:
+        count = load(objects())
+        print("POMPOS_OBJECTS_RESULT=" + json.dumps({"objects": count, "downloaded_bytes": downloaded_bytes}))
 
 
 if __name__ == "__main__":

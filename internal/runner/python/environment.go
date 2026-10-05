@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -121,7 +120,7 @@ func (r Runner) Prepare(ctx context.Context, plan compiler.ExecutionPlan) (compi
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return plan, err
 	}
-	guard, err := lockEnvironment(ctx, filepath.Join(directory, ".lock"))
+	guard, err := lockFile(ctx, filepath.Join(directory, ".lock"))
 	if err != nil {
 		return plan, err
 	}
@@ -217,7 +216,7 @@ func (m Environments) runInEnvironment(ctx context.Context, environment string, 
 	if binary == "" {
 		binary = "uv"
 	}
-	cmd := exec.CommandContext(ctx, binary, append([]string{"--no-config", "--no-progress", "--cache-dir", filepath.Join(m.Dir, ".uv-cache")}, args...)...)
+	cmd := commandContext(ctx, binary, append([]string{"--no-config", "--no-progress", "--cache-dir", filepath.Join(m.Dir, ".uv-cache")}, args...)...)
 	cmd.Env = append(environmentVariables(), "UV_PYTHON_INSTALL_DIR="+filepath.Join(m.Dir, ".python"))
 	if environment != "" {
 		cmd.Env = append(cmd.Env, "VIRTUAL_ENV="+environment)
@@ -247,7 +246,7 @@ func environmentVariables() []string {
 
 func hashName(data []byte) string { return strings.TrimPrefix(spec.Digest(data), "sha256:") }
 
-func lockEnvironment(ctx context.Context, path string) (*os.File, error) {
+func lockFile(ctx context.Context, path string) (*os.File, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err

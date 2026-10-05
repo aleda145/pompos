@@ -93,10 +93,16 @@ CREATE INDEX IF NOT EXISTS ingestion_runs_claim
     ON ingestion_runs (status, scheduled_for);
 CREATE INDEX IF NOT EXISTS ingestion_runs_history
     ON ingestion_runs (ingestion_id, id DESC);
+CREATE INDEX IF NOT EXISTS ingestion_runs_active
+    ON ingestion_runs (ingestion_id, status);
 CREATE TABLE IF NOT EXISTS ingestion_run_logs (
     run_id INTEGER PRIMARY KEY REFERENCES ingestion_runs(id),
     output TEXT NOT NULL DEFAULT '',
     truncated INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS runtime_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    workers INTEGER NOT NULL CHECK (workers >= 1)
 );
 PRAGMA user_version = 6;`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
@@ -210,7 +216,9 @@ INSERT INTO ingestion_runs (ingestion_id, trigger, scheduled_for, status, create
 SELECT id, 'manual', ?, 'pending', ?, spec_path, spec_digest FROM ingestions WHERE id = ?`, value, value, ingestionID); err != nil {
 		return fmt.Errorf("enqueue ingestion run: %w", err)
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE ingestions SET status = ?, last_error = '' WHERE id = ?`, ingestion.StatusPending, ingestionID)
+	result, err := tx.ExecContext(ctx, `UPDATE ingestions SET
+status = CASE WHEN EXISTS (SELECT 1 FROM ingestion_runs WHERE ingestion_id = ingestions.id AND status = 'running') THEN 'running' ELSE ? END,
+last_error = '' WHERE id = ?`, ingestion.StatusPending, ingestionID)
 	if err != nil {
 		return fmt.Errorf("mark queued ingestion pending: %w", err)
 	}
@@ -268,7 +276,7 @@ WHERE id = ? AND next_run_at = ?`, nextRun.UTC().Format(time.RFC3339Nano), inges
 	return true, nil
 }
 
-func (s *SQLite) ClaimRun(ctx context.Context, now, staleBefore time.Time) (ingestion.Run, bool, error) {
+func (s *SQLite) ClaimRun(ctx context.Context, now time.Time) (ingestion.Run, bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return ingestion.Run{}, false, fmt.Errorf("begin run claim: %w", err)
@@ -276,9 +284,12 @@ func (s *SQLite) ClaimRun(ctx context.Context, now, staleBefore time.Time) (inge
 	defer tx.Rollback()
 	row := tx.QueryRowContext(ctx, `
 SELECT id, ingestion_id, trigger, scheduled_for, attempts, spec_path, spec_digest
-FROM ingestion_runs
-WHERE status = 'pending' OR (status = 'running' AND claimed_at <= ?)
-ORDER BY scheduled_for, id LIMIT 1`, staleBefore.UTC().Format(time.RFC3339Nano))
+FROM ingestion_runs AS queued
+WHERE status = 'pending' AND NOT EXISTS (
+    SELECT 1 FROM ingestion_runs AS active
+    WHERE active.ingestion_id = queued.ingestion_id AND active.status = 'running'
+)
+ORDER BY scheduled_for, id LIMIT 1`)
 	var run ingestion.Run
 	var scheduledFor string
 	if err := row.Scan(&run.ID, &run.IngestionID, &run.Trigger, &scheduledFor, &run.Attempts, &run.SpecPath, &run.SpecDigest); errors.Is(err, sql.ErrNoRows) {
@@ -292,8 +303,7 @@ ORDER BY scheduled_for, id LIMIT 1`, staleBefore.UTC().Format(time.RFC3339Nano))
 	}
 	result, err := tx.ExecContext(ctx, `
 UPDATE ingestion_runs SET status = 'running', claimed_at = ?, attempts = attempts + 1
-WHERE id = ? AND (status = 'pending' OR (status = 'running' AND claimed_at <= ?))`,
-		now.UTC().Format(time.RFC3339Nano), run.ID, staleBefore.UTC().Format(time.RFC3339Nano))
+WHERE id = ? AND status = 'pending'`, now.UTC().Format(time.RFC3339Nano), run.ID)
 	if err != nil {
 		return ingestion.Run{}, false, fmt.Errorf("claim run: %w", err)
 	}
@@ -308,6 +318,8 @@ WHERE id = ? AND (status = 'pending' OR (status = 'running' AND claimed_at <= ?)
 		return ingestion.Run{}, false, fmt.Errorf("commit run claim: %w", err)
 	}
 	run.Attempts++
+	run.Status = ingestion.StatusRunning
+	run.StartedAt = &now
 	return run, true, nil
 }
 
