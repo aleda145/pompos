@@ -43,7 +43,7 @@
             <th scope="row" class="mono">{{.ID}}</th>
             {{if .Run.ID}}
               <td>{{template "status" "running"}}{{if .Draining}}<span class="cell-detail">Retiring after run</span>{{end}}</td>
-              <td><a class="mono" href="/ingestions/{{.Run.IngestionID}}">{{.Run.IngestionID}}</a></td>
+              <td><a href="/ingestions/{{.Run.IngestionID}}">{{$.IngestionName .Run.IngestionID}}</a></td>
               <td><a class="mono" href="/ingestions/{{.Run.IngestionID}}?run_id={{.Run.ID}}">#{{.Run.ID}}</a></td>
               <td class="mono nowrap">{{.Run.Duration}}</td>
               <td>{{if eq .Run.Trigger "scheduled"}}Scheduled{{else}}Manual{{end}}</td>
@@ -66,7 +66,7 @@
         <tbody>{{range .Queue}}
           <tr>
             <th scope="row"><a class="mono" href="/ingestions/{{.IngestionID}}?run_id={{.ID}}">#{{.ID}}</a></th>
-            <td><a class="mono" href="/ingestions/{{.IngestionID}}">{{.IngestionID}}</a></td>
+            <td><a href="/ingestions/{{.IngestionID}}">{{$.IngestionName .IngestionID}}</a></td>
             <td>{{if eq .Trigger "scheduled"}}Scheduled{{else}}Manual{{end}}</td>
             <td class="mono nowrap">{{template "timestamp" .ScheduledFor}}</td>
             <td class="mono nowrap">{{.Waiting}}</td>
@@ -84,7 +84,7 @@
     <div class="table-scroll" role="region" aria-label="Schedule errors" tabindex="0">
       <table class="runtime-table">
         <thead><tr><th scope="col">Ingestion</th><th scope="col">Status</th><th scope="col">Error</th></tr></thead>
-        <tbody>{{range $id, $error := .Runtime.ScheduleErrors}}<tr><th scope="row"><a class="mono" href="/ingestions/{{$id}}">{{$id}}</a></th><td>{{template "status" "failed"}}</td><td>{{$error}}</td></tr>{{end}}</tbody>
+        <tbody>{{range $id, $error := .Runtime.ScheduleErrors}}<tr><th scope="row"><a href="/ingestions/{{$id}}">{{$.IngestionName $id}}</a></th><td>{{template "status" "failed"}}</td><td>{{$error}}</td></tr>{{end}}</tbody>
       </table>
     </div>
   </section>
@@ -106,7 +106,7 @@
         <tbody>{{range .History.Runs}}
           <tr>
             <th scope="row"><a class="mono" href="/ingestions/{{.IngestionID}}?run_id={{.ID}}" aria-label="View run {{.ID}} logs">#{{.ID}}</a></th>
-            <td><a class="mono" href="/ingestions/{{.IngestionID}}">{{.IngestionID}}</a></td>
+            <td><a href="/ingestions/{{.IngestionID}}">{{$.IngestionName .IngestionID}}</a></td>
             <td>{{template "status" .Status}}</td>
             <td class="mono nowrap">{{.Duration}}</td>
             <td class="mono nowrap">{{if .StartedAt}}{{template "timestamp" .StartedAt}}{{else}}—{{end}}</td>

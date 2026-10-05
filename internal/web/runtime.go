@@ -19,18 +19,26 @@ type runtimeQueueRow struct {
 }
 
 type runtimePageData struct {
-	Title        string
-	Runtime      scheduler.Runtime
-	Queue        []runtimeQueueRow
-	Pending      int
-	UpdatedAt    time.Time
-	Uptime       string
-	WorkersValue string
-	WorkersError string
-	WorkersSaved bool
-	History      store.RunHistory
-	PreviousPage int
-	NextPage     int
+	Title          string
+	Runtime        scheduler.Runtime
+	Queue          []runtimeQueueRow
+	Pending        int
+	UpdatedAt      time.Time
+	Uptime         string
+	WorkersValue   string
+	WorkersError   string
+	WorkersSaved   bool
+	History        store.RunHistory
+	PreviousPage   int
+	NextPage       int
+	ingestionNames map[string]string
+}
+
+func (v runtimePageData) IngestionName(id string) string {
+	if name := v.ingestionNames[id]; name != "" {
+		return name
+	}
+	return id
 }
 
 func (a *App) runtimeData(ctx context.Context, page int) (runtimePageData, error) {
@@ -64,6 +72,14 @@ func (a *App) runtimeData(ctx context.Context, page int) (runtimePageData, error
 	}
 	if view.History.Page < view.History.Pages {
 		view.NextPage = view.History.Page + 1
+	}
+	items, err := a.ingestionList(ctx)
+	if err != nil {
+		return view, err
+	}
+	view.ingestionNames = make(map[string]string, len(items))
+	for _, item := range items {
+		view.ingestionNames[item.ID] = item.Name
 	}
 	return view, nil
 }
