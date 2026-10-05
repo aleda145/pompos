@@ -37,7 +37,7 @@
         <button type="submit" {{if .Ingestion.LoadError}}disabled{{end}}>Save schedule</button>
         <button type="submit" form="manual-schedule" name="schedule" value="" {{if .Ingestion.LoadError}}disabled{{end}}>Set Manual</button>
       </div>
-      {{if .NextRun}}<p class="hint">Next run: <span class="mono">{{.NextRun.Format "2006-01-02 15:04:05 UTC"}}</span></p>{{end}}
+      {{if .NextRun}}<p class="hint">Next run: <span class="mono">{{template "timestamp" .NextRun}}<span data-display-timezone> UTC</span></span></p>{{end}}
     </form>
   </section>
   <section class="run-workspace" data-runs-url="/ingestions/{{.Ingestion.ID}}/runs">
@@ -86,17 +86,17 @@
     </div>
     <pre class="run-output" tabindex="0" aria-label="Run output" data-run-output data-run-id="{{with .Selected}}{{.ID}}{{end}}">{{with .Selected}}{{if .LogTruncated}}[Earlier output omitted.]
 {{end}}{{if .Log}}{{.Log}}{{else if .LastError}}{{.LastError}}{{else if eq .Status "pending"}}Queued.{{else if eq .Status "running"}}Waiting for output…{{else}}No output recorded.{{end}}{{else}}No runs.{{end}}</pre>
-    <div class="run-log-meta" data-run-meta>{{with .Selected}}<span class="mono">{{if .StartedAt}}{{.StartedAt.Format "2006-01-02 15:04:05 UTC"}}{{else}}{{.ScheduledFor.Format "2006-01-02 15:04:05 UTC"}}{{end}}</span><span>{{if eq .Trigger "scheduled"}}Scheduled{{else}}Manual{{end}}</span>{{if gt .Attempts 1}}<span>Attempt <span class="mono">{{.Attempts}}</span></span>{{end}}{{end}}</div>
+    <div class="run-log-meta" data-run-meta>{{with .Selected}}<span class="mono">{{if .StartedAt}}{{template "timestamp" .StartedAt}}{{else}}{{template "timestamp" .ScheduledFor}}{{end}}<span data-display-timezone> UTC</span></span><span>{{if eq .Trigger "scheduled"}}Scheduled{{else}}Manual{{end}}</span>{{if gt .Attempts 1}}<span>Attempt <span class="mono">{{.Attempts}}</span></span>{{end}}{{end}}</div>
   </section>
   <section class="run-history" aria-label="Run history">
     <div class="section-heading"><h2>Run history</h2><div class="run-history-nav" data-run-nav>{{if or .Before (and .Selected (ne .Selected.ID .LatestID))}}<a href="/ingestions/{{.IngestionID}}" data-run-link>Latest</a>{{end}}{{if .NextBefore}}<a href="/ingestions/{{.IngestionID}}?before={{.NextBefore}}" data-run-link>Older →</a>{{end}}</div></div>
     <div class="table-scroll run-history-scroll" data-run-history>
       {{if .Runs}}<table class="run-table">
-        <thead><tr><th scope="col">Run</th><th scope="col">Status</th><th scope="col">Started · UTC</th><th scope="col">Time</th><th scope="col">Trigger</th></tr></thead>
+        <thead><tr><th scope="col">Run</th><th scope="col">Status</th><th scope="col">Started<span data-display-timezone> · UTC</span></th><th scope="col">Time</th><th scope="col">Trigger</th></tr></thead>
         <tbody>{{range .Runs}}<tr {{if and $.Selected (eq $.Selected.ID .ID)}}class="selected-run"{{end}}>
           <td><a class="mono" data-run-link href="/ingestions/{{$.IngestionID}}?run_id={{.ID}}{{if $.Before}}&amp;before={{$.Before}}{{end}}" {{if and $.Selected (eq $.Selected.ID .ID)}}aria-current="true"{{end}} aria-label="View run {{.ID}}">#{{.ID}}</a></td>
           <td>{{template "status" .Status}}{{if eq .Status "pending"}}<span class="run-queued">Queued</span>{{end}}</td>
-          <td class="mono nowrap">{{if .StartedAt}}{{.StartedAt.Format "2006-01-02 15:04:05"}}{{else}}—{{end}}</td>
+          <td class="mono nowrap">{{if .StartedAt}}{{template "timestamp" .StartedAt}}{{else}}—{{end}}</td>
           <td class="mono nowrap">{{.Duration}}</td>
           <td>{{if eq .Trigger "scheduled"}}Scheduled{{else}}Manual{{end}}</td>
         </tr>{{end}}</tbody>

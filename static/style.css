@@ -185,8 +185,19 @@ legend { font-weight: 500; padding: 0; }
 .settings-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-bottom: 16px; }
 .settings-checkbox { display: flex; align-items: center; gap: 8px; }
 .settings-checkbox input { width: auto; }
+.settings-validation { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.settings-validation .settings-checkbox { margin: 0; }
+.settings-validation .hint { margin-bottom: 0; }
 .settings-section { display: grid; align-content: start; min-width: 0; }
 .settings-section > a { justify-self: start; margin-top: 8px; }
+.timezone-control { position: relative; justify-self: start; max-width: 100%; }
+.timezone-toggle { padding: 4px 8px; }
+.timezone-chevron { width: 6px; height: 6px; margin: -3px 2px 0 6px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg); }
+.timezone-toggle[aria-expanded="true"] { background: var(--surface-inset); }
+.timezone-toggle[aria-expanded="true"] .timezone-chevron { margin-top: 3px; transform: rotate(225deg); }
+.timezone-picker { position: absolute; top: calc(100% + 4px); left: 0; z-index: 2; width: min(360px, calc(100vw - 80px)); padding: 8px; border: 1px solid var(--border-strong); border-radius: 3px; background: var(--surface); }
+.timezone-options { display: block; margin-top: 6px; }
+.timezone-options option { padding: 4px; }
 .settings-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
 .settings-save { justify-content: flex-start; margin-top: 16px; }
 .mcp-state { text-decoration: underline; text-underline-offset: 3px; }

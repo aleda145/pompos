@@ -8,8 +8,9 @@
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/vendor/highlight/highlight.js" defer></script>
   <script src="/static/code-highlight.js" defer></script>
+  <script src="/static/timezone.js" defer></script>
 </head>
-<body>
+<body data-timezone="{{displayTimezone}}">
   <a class="skip-link" href="#main">Skip to content</a>
   <header>
     <a class="brand" href="/">pompos</a>
@@ -25,4 +26,5 @@
 </body>
 </html>
 {{end}}
+{{define "timestamp"}}<time datetime="{{.UTC.Format "2006-01-02T15:04:05.999999999Z07:00"}}" data-display-time>{{.UTC.Format "2006-01-02 15:04:05"}}</time>{{end}}
 {{define "status"}}<span class="status status-{{.}}">{{if eq . "succeeded"}}SUCCESS{{else if eq . "running"}}RUNNING{{else if eq . "failed"}}FAILED{{else if eq . "cancelled"}}CANCELLED{{else if or (eq . "pending") (eq . "")}}IDLE{{else}}{{.}}{{end}}</span>{{end}}

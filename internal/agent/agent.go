@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	_ "time/tzdata"
 
 	"pompos/internal/compiler"
 	"pompos/internal/destination"
@@ -45,6 +46,7 @@ type Service struct {
 	mu             sync.Mutex
 }
 type Settings struct {
+	DisplayTimezone  string `json:"display_timezone"`
 	ManualValidation bool   `json:"manual_validation"`
 	Mode             string `json:"mode,omitempty"`
 	MCPEnabled       bool   `json:"mcp_enabled"`
@@ -180,6 +182,25 @@ func (s *Service) settings() (Settings, error) {
 	e = json.Unmarshal(b, &v)
 	return v, e
 }
+
+func (s *Service) SetGeneralSettings(timezone string, manualValidation bool) error {
+	if timezone == "Local" {
+		return errors.New("choose a display timezone")
+	}
+	if _, err := time.LoadLocation(timezone); err != nil {
+		return fmt.Errorf("unknown display timezone %q", timezone)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cfg, err := s.settings()
+	if err != nil {
+		return err
+	}
+	cfg.DisplayTimezone = timezone
+	cfg.ManualValidation = manualValidation
+	return writeJSON(filepath.Join(s.Dir, "settings.json"), cfg)
+}
+
 func (s *Service) SaveSettings(v Settings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

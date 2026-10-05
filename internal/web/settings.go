@@ -26,12 +26,10 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		}
 		switch r.FormValue("section") {
 		case "", "general":
-			if e = a.Agent.SetManualValidation(r.FormValue("manual_validation") == "on"); e != nil {
-				a.serverError(w, e)
+			if e = a.Agent.SetGeneralSettings(r.FormValue("display_timezone"), r.FormValue("manual_validation") == "on"); e == nil {
+				http.Redirect(w, r, "/settings?saved=1", http.StatusSeeOther)
 				return
 			}
-			http.Redirect(w, r, "/settings?saved=1", http.StatusSeeOther)
-			return
 		case "agent":
 			cfg.Endpoint = r.FormValue("endpoint")
 			cfg.Model = r.FormValue("model")
@@ -69,4 +67,12 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 		Secrets     []string
 		MCPEndpoint string
 	}{"Settings", cfg, message, saved, names, mcpEndpoint(r.Host)})
+}
+
+func (a *App) displayTimezone() (string, error) {
+	if a.Agent == nil {
+		return "", nil
+	}
+	cfg, err := a.Agent.Settings()
+	return cfg.DisplayTimezone, err
 }

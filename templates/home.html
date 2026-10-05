@@ -7,14 +7,14 @@
 <div class="table-scroll" role="region" aria-label="Ingestions" tabindex="0">
   <table>
     <caption class="sr-only">Ingestion sources, destination tables, and run state</caption>
-    <thead><tr><th scope="col">Ingestion / source</th><th scope="col">Destination</th><th scope="col">Status</th><th scope="col">Last run · UTC</th><th scope="col">Schedule · UTC</th></tr></thead>
+    <thead><tr><th scope="col">Ingestion / source</th><th scope="col">Destination</th><th scope="col">Status</th><th scope="col">Last run<span data-display-timezone> · UTC</span></th><th scope="col">Schedule · UTC</th></tr></thead>
     <tbody>
     {{range .Ingestions}}
       <tr>
         <th scope="row"><a class="table-name" href="/ingestions/{{.ID}}">{{.Name}}</a><span class="cell-detail mono">{{.Source.DisplayLocation}}</span></th>
         <td class="mono">{{.Destination.Schema}}.{{.Destination.Table}}<span class="cell-detail">{{.Destination.CatalogPath}}</span></td>
         <td>{{if .LoadError}}{{template "status" "broken"}}{{else}}{{template "status" .Status}}{{end}}</td>
-        <td class="mono nowrap">{{if .LastRun}}{{.LastRun.Format "2006-01-02 15:04:05"}}{{else}}Never{{end}}</td>
+        <td class="mono nowrap">{{if .LastRun}}{{template "timestamp" .LastRun}}{{else}}Never{{end}}</td>
         <td class="mono nowrap">{{if .LoadError}}Unavailable{{else if .Schedule}}{{.Schedule}}{{else}}Manual{{end}}</td>
       </tr>
     {{end}}

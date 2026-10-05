@@ -88,7 +88,9 @@ func New(app App) (*App, error) {
 	}
 	app.templates = make(map[string]*template.Template, 5)
 	for _, page := range []string{"home", "detail", "secrets", "destinations", "chats", "chat", "settings", "setup", "edit_review"} {
-		parsed, err := template.New(page).ParseFS(templatefiles.FS, "layout.html", page+".html")
+		parsed, err := template.New(page).Funcs(template.FuncMap{
+			"displayTimezone": app.displayTimezone,
+		}).ParseFS(templatefiles.FS, "layout.html", page+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s template: %w", page, err)
 		}

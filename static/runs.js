@@ -29,6 +29,7 @@
   }
 
   function update(fragment) {
+    window.pomposTimezone?.render(fragment);
     const next = fragment.querySelector("[data-run-state]");
     if (!next) throw new Error("Missing run state");
     const previous = content.querySelector("[data-run-state]");

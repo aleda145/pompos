@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 
 	"pompos/internal/compiler"
 	"pompos/internal/destination"
@@ -19,17 +18,6 @@ type ValidationProposal struct {
 	MaxBytes       int64  `json:"max_bytes,omitempty"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
 	Fingerprint    string `json:"fingerprint"`
-}
-
-func (s *Service) SetManualValidation(enabled bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cfg, err := s.settings()
-	if err != nil {
-		return err
-	}
-	cfg.ManualValidation = enabled
-	return writeJSON(filepath.Join(s.Dir, "settings.json"), cfg)
 }
 
 func validationRequest(v *Session, arguments string) (ValidationProposal, error) {

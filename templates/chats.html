@@ -7,10 +7,10 @@
 <div class="table-scroll" role="region" aria-label="Chats" tabindex="0">
   <table>
     <caption class="sr-only">Saved chats</caption>
-    <thead><tr><th scope="col">Conversation</th><th scope="col">Updated · UTC</th><th scope="col">Ingestions</th></tr></thead>
+    <thead><tr><th scope="col">Conversation</th><th scope="col">Updated<span data-display-timezone> · UTC</span></th><th scope="col">Ingestions</th></tr></thead>
     <tbody>
     {{range .Chats}}
-      <tr><th scope="row"><a class="table-name" href="/chat/{{.ID}}">{{.Title}}</a></th><td class="mono nowrap">{{.UpdatedAt.Format "2006-01-02 15:04"}}</td><td class="mono">{{.SavedCount}}</td></tr>
+      <tr><th scope="row"><a class="table-name" href="/chat/{{.ID}}">{{.Title}}</a></th><td class="mono nowrap">{{template "timestamp" .UpdatedAt}}</td><td class="mono">{{.SavedCount}}</td></tr>
     {{end}}
     </tbody>
   </table>

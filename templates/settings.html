@@ -7,8 +7,22 @@
  <form method="post" class="panel settings-section" aria-labelledby="general-heading">
  <input type="hidden" name="section" value="general">
  <h2 id="general-heading">General</h2>
- <label class="settings-checkbox" for="manual_validation"><input id="manual_validation" name="manual_validation" type="checkbox" {{if .Settings.ManualValidation}}checked{{end}} aria-describedby="validation-help">Require approval before validation</label>
- <p id="validation-help" class="hint">When off, the agent runs sample validation automatically.</p>
+ <div class="timezone-control" id="timezone-control">
+  <input type="hidden" id="timezone-value" name="display_timezone" value="{{.Settings.DisplayTimezone}}">
+  <button type="button" id="timezone-toggle" class="timezone-toggle" aria-expanded="false" aria-controls="timezone-picker" disabled>Timezone: <span id="timezone-current" class="mono">{{if .Settings.DisplayTimezone}}{{.Settings.DisplayTimezone}}{{else}}UTC{{end}}</span><span class="timezone-chevron" aria-hidden="true"></span></button>
+  <div id="timezone-picker" class="timezone-picker" role="group" aria-label="Choose timezone" hidden>
+   <label class="sr-only" for="timezone-search">Search city</label>
+   <input id="timezone-search" type="search" placeholder="Search city" autocomplete="off" aria-controls="display-timezone">
+   <label class="sr-only" for="display-timezone">Timezone</label>
+   <select id="display-timezone" class="timezone-options" size="6"></select>
+   <p id="timezone-empty" class="hint" role="status" hidden>No matching cities.</p>
+  </div>
+ </div>
+ <noscript><p class="hint">Enable JavaScript to change the display timezone.</p></noscript>
+ <div class="settings-validation">
+  <label class="settings-checkbox" for="manual_validation"><input id="manual_validation" name="manual_validation" type="checkbox" {{if .Settings.ManualValidation}}checked{{end}} aria-describedby="validation-help">Require approval before validation</label>
+  <p id="validation-help" class="hint">When off, the agent runs sample validation automatically.</p>
+ </div>
  <div class="settings-actions settings-save"><button class="primary" type="submit">Save</button></div>
  </form>
  <form method="post" class="panel settings-section" aria-labelledby="agent-heading">
