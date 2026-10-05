@@ -779,17 +779,9 @@ func (s *Service) Publish(ctx context.Context, id, artifactDir string, persist f
 	if e = doc.Validate(); e != nil {
 		return "", e
 	}
-	// Record the destination/schema/table identity before publishing. Retries keep
-	// their files; updating a published ingestion requires an explicit edit session.
+	// Save to the selected destination/schema/table, replacing existing artifacts.
+	// Record the identity before publishing so a failed save remains retryable.
 	if v.DraftID != ingestionID {
-		for _, extension := range []string{".py", ".yaml", ".py.lock"} {
-			path := spec.ArtifactPath(artifactDir, ingestionID, extension)
-			if _, err := os.Lstat(path); err == nil {
-				return "", fmt.Errorf("ingestion %q already exists; open it for editing or choose a different destination, schema, or table", ingestionID)
-			} else if !errors.Is(err, os.ErrNotExist) {
-				return "", err
-			}
-		}
 		v.DraftID = ingestionID
 		if e = s.save(v); e != nil {
 			return "", e

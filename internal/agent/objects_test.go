@@ -87,8 +87,8 @@ def download(obj, target_path, secret):
 	if err != nil || preview.TotalRows != 1 || preview.Columns[0] != "object_id" {
 		t.Fatalf("published file ingestion: %#v, %v", preview, err)
 	}
-	// A second ingestion cannot take ownership of the same schema/table.
-	v, err = s.NewMCPChat("Conflicting reports")
+	// A new chat can replace the ingestion at the same schema/table.
+	v, err = s.NewMCPChat("Update reports")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,15 @@ def download(obj, target_path, secret):
 	call("test_script", map[string]any{})
 	call("configure_loading", Loading{Strategy: "skip"})
 	call("validate_ingestion", map[string]any{"limit": 1, "max_bytes": 1024, "timeout_seconds": 30})
-	if _, err := s.Publish(ctx, v.ID, filepath.Join(dir, "ingestions"), func(string, spec.Ingestion) error { t.Fatal("overwrote an existing ingestion"); return nil }); err == nil {
-		t.Fatal("duplicate ingestion schema accepted")
+	updatedID, err := s.Publish(ctx, v.ID, filepath.Join(dir, "ingestions"), func(id string, document spec.Ingestion) error {
+		_, err := spec.Write(filepath.Join(dir, "ingestions"), spec.ToProjection(document, id, "", ""))
+		return err
+	})
+	if err != nil || updatedID != id {
+		t.Fatalf("replace object ingestion: %q, %v", updatedID, err)
+	}
+	updated, _, err := spec.Read(spec.ArtifactPath(filepath.Join(dir, "ingestions"), id, ".yaml"))
+	if err != nil || updated.Materialization.Strategy != "skip" {
+		t.Fatalf("replacement lost loading settings: %#v, %v", updated, err)
 	}
 }

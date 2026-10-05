@@ -466,11 +466,16 @@ func TestPublicationRetryKeepsArtifactID(t *testing.T) {
 	}
 }
 
-func TestPublicationRejectsExistingTableFiles(t *testing.T) {
-	for _, extension := range []string{".py", ".yaml", ".py.lock"} {
-		t.Run(extension, func(t *testing.T) {
+func TestPublicationReplacesExistingIngestion(t *testing.T) {
+	for _, withLock := range []bool{false, true} {
+		t.Run(fmt.Sprint("lock=", withLock), func(t *testing.T) {
 			ctx := context.Background()
 			s, _, v := validationFixture(t)
+			if withLock {
+				if err := WriteFile(s.scriptPath(v.ID)+".lock", []byte("new lock")); err != nil {
+					t.Fatal(err)
+				}
+			}
 			_, fingerprint, err := s.validationPlan(ctx, &v)
 			if err != nil {
 				t.Fatal(err)
@@ -481,19 +486,48 @@ func TestPublicationRejectsExistingTableFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			artifactDir := t.TempDir()
-			path := spec.ArtifactPath(artifactDir, v.Draft.Destination+"/main/"+v.Draft.Table, extension)
-			if err := WriteFile(path, []byte("existing ingestion")); err != nil {
-				t.Fatal(err)
+			wantID := v.Draft.Destination + "/main/" + v.Draft.Table
+			for _, extension := range []string{".py", ".yaml", ".py.lock"} {
+				if err := WriteFile(spec.ArtifactPath(artifactDir, wantID, extension), []byte("existing ingestion")); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if _, err := s.Publish(ctx, v.ID, artifactDir, func(string, spec.Ingestion) error {
-				t.Fatal("duplicate ingestion was published")
-				return nil
-			}); err == nil || !strings.Contains(err.Error(), "already exists") {
-				t.Fatalf("expected filename collision, got %v", err)
+			persistCalls := 0
+			persist := func(id string, doc spec.Ingestion) error {
+				persistCalls++
+				data, err := spec.Marshal(doc)
+				if err != nil {
+					return err
+				}
+				return WriteFile(spec.ArtifactPath(artifactDir, id, ".yaml"), data)
 			}
-			data, err := os.ReadFile(path)
-			if err != nil || string(data) != "existing ingestion" {
-				t.Fatalf("existing file changed: %s, %v", data, err)
+			for i := 0; i < 2; i++ {
+				if id, err := s.Publish(ctx, v.ID, artifactDir, persist); err != nil || id != wantID {
+					t.Fatalf("save existing ingestion: %q, %v", id, err)
+				}
+			}
+			if persistCalls != 1 {
+				t.Fatalf("repeated save persisted %d times", persistCalls)
+			}
+			data, err := os.ReadFile(spec.ArtifactPath(artifactDir, wantID, ".py"))
+			if err != nil || string(data) != runnerpython.Wrap(v.Draft.Code) {
+				t.Fatalf("script was not replaced: %s, %v", data, err)
+			}
+			doc, _, err := spec.Read(spec.ArtifactPath(artifactDir, wantID, ".yaml"))
+			if err != nil || doc.Metadata.Name != v.Draft.Name || doc.Runtime.Script != spec.ArtifactPath(artifactDir, wantID, ".py") {
+				t.Fatalf("YAML was not replaced: %#v, %v", doc, err)
+			}
+			lock, err := os.ReadFile(spec.ArtifactPath(artifactDir, wantID, ".py.lock"))
+			if withLock {
+				if err != nil || string(lock) != "new lock" {
+					t.Fatalf("lock was not replaced: %s, %v", lock, err)
+				}
+			} else if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("stale lock was not removed: %v", err)
+			}
+			published, err := s.Load(v.ID)
+			if err != nil || published.PublishedID != wantID || len(published.SavedIngestions) != 1 || published.SavedIngestions[0].ID != wantID {
+				t.Fatalf("replacement was not recorded in chat: %#v, %v", published, err)
 			}
 		})
 	}
