@@ -78,8 +78,9 @@
     messages.forEach((message, index) => {
       if (message.role === 'system' || message.role === 'tool') return;
       if (message.role === 'user' && message.selection) {
-        fragment.append(handoffCard(message.selection.handoff, message.selection.action_id));
-      } else if (message.content) {
+        fragment.append(handoffCard(message.selection.handoff, message.selection.action_id, true));
+      }
+      if (message.content && !message.selection?.action_id) {
         if (message.role === 'assistant' && message.tool_calls?.length) {
           fragment.append(disclosure(`thinking-${index}`, 'Thinking', '', element('pre', 'activity-detail', message.content)));
         } else {
@@ -145,9 +146,9 @@
         }
       });
     });
-    if (busy && session.pending && lastInput?.action_id && lastInput.handoff_id === session.pending.id) {
+    if (busy && session.pending && lastInput?.handoff_id === session.pending.id) {
       const pending = {...session.pending, loading: lastInput.loading || session.pending.loading};
-      fragment.append(handoffCard(pending, lastInput.action_id));
+      fragment.append(handoffCard(pending, lastInput.action_id, true));
     }
     log.replaceChildren(fragment);
     log.querySelectorAll('details').forEach(node => { node.open = open.has(node.dataset.key); });
@@ -222,12 +223,12 @@
     if (strategy === 'append') container.append(element('p', 'hint', 'Append can duplicate rows on repeated runs.'));
     return container;
   }
-  function handoffCard(pending, selectedAction = '') {
+  function handoffCard(pending, selectedAction = '', completed = false) {
     const target = element('section', 'chat-handoff');
     target.append(element('p', 'handoff-prompt', pending.prompt));
     if (pending.kind === 'loading' && pending.loading) target.append(loadingCard(pending));
     if (pending.kind === 'validation' && pending.validation) target.append(validationCard(pending));
-    if (pending.kind === 'secret' && !selectedAction) {
+    if (pending.kind === 'secret' && !completed) {
       const form = element('form', 'inline-secret');
       const nameLabel = element('label', '', 'Secret name');
       const name = element('input'); name.value = pending.secret_name || ''; name.required = true; name.maxLength = 200; name.autocomplete = 'off'; nameLabel.append(name);
@@ -256,7 +257,7 @@
       actions.append(option);
     }
     if (actions.hasChildNodes()) target.append(actions);
-    if (selectedAction) {
+    if (completed) {
       target.querySelectorAll('button, input, select').forEach(control => { control.disabled = true; });
       const loadingSubmit = target.querySelector('.loading-options button');
       if (loadingSubmit) {
@@ -384,7 +385,7 @@
   $('#chat-form').addEventListener('submit', (event) => {
     event.preventDefault();
     const message = $('#message').value.trim();
-    if (message) submit({message});
+    if (message) submit({message, handoff_id: session.pending?.id});
   });
   $('#message').addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); $('#chat-form').requestSubmit(); }

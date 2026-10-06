@@ -438,7 +438,7 @@ func (s *Service) turnWithEvents(ctx context.Context, id string, input Input, em
 		}
 	}
 	userMessage := Message{Role: "user", Content: input.Message}
-	if input.ActionID != "" && v.Pending != nil {
+	if v.Pending != nil {
 		userMessage.Selection = &Selection{Handoff: *v.Pending, ActionID: input.ActionID}
 		if v.Pending.Kind == "validation" {
 			userMessage.Selection.Handoff.Loading = v.Loading
