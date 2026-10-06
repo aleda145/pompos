@@ -37,6 +37,9 @@ func (r Runner) Run(ctx context.Context, plan compiler.ExecutionPlan) error {
 	return err
 }
 func (r Runner) Execute(ctx context.Context, plan compiler.ExecutionPlan, probe bool) (string, error) {
+	if probe && plan.ProbeTimeoutSeconds < 0 {
+		return "", fmt.Errorf("probe timeout must be nonnegative; 0 means unlimited")
+	}
 	return r.execute(ctx, plan, probe, 0, false)
 }
 
@@ -158,15 +161,16 @@ func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 	payload, _ := json.Marshal(values)
 	config, _ := json.Marshal(map[string]any{"destination_type": plan.DestinationType, "destination": plan.DestinationPath, "schema": destination.SchemaName(plan.DestinationSchema), "table": plan.DestinationObject, "strategy": plan.Strategy, "primary_key": plan.PrimaryKey, "validation": validation, "validation_limit": validationLimit, "validation_max_bytes": plan.ValidationMaxBytes})
 	timeout := time.Duration(timeoutMinutes) * time.Minute
-	if validation {
+	if validation || probe {
+		seconds := plan.ValidationTimeoutSeconds
+		if probe {
+			seconds = plan.ProbeTimeoutSeconds
+		}
 		timeout = 0
 		// Durations beyond time.Duration's range must not wrap into an immediate timeout.
-		if int64(plan.ValidationTimeoutSeconds) <= (1<<63-1)/int64(time.Second) {
-			timeout = time.Duration(plan.ValidationTimeoutSeconds) * time.Second
+		if int64(seconds) <= (1<<63-1)/int64(time.Second) {
+			timeout = time.Duration(seconds) * time.Second
 		}
-	}
-	if probe {
-		timeout = 45 * time.Second
 	}
 	if timeout > 0 {
 		var cancel context.CancelFunc

@@ -10,6 +10,7 @@ import (
 type ExecutionPlan struct {
 	ValidationMaxBytes       int64    `yaml:"-"`
 	ValidationTimeoutSeconds int      `yaml:"-"`
+	ProbeTimeoutSeconds      int      `yaml:"-"`
 	EnvironmentKey           string   `yaml:"-"`
 	PythonBinary             string   `yaml:"-"`
 	Python                   string   `yaml:"python,omitempty"`

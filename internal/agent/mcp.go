@@ -125,9 +125,9 @@ func (s *Service) MCPCall(ctx context.Context, id, name string, arguments json.R
 	if name != "context" && name != "read_webpage" && name != "web_search" && name != "inspect_destination" {
 		v.Pending = nil
 	}
-	if name != "validate_ingestion" {
+	if name != "validate_ingestion" && name != "test_script" {
 		timeout := 60 * time.Second
-		if name == "test_script" || name == "inspect_destination" {
+		if name == "inspect_destination" {
 			timeout += runnerpython.EnvironmentPreparationTimeout + 10*time.Second
 		}
 		var cancel context.CancelFunc

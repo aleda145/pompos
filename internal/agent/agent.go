@@ -301,7 +301,9 @@ func toolsDefinition() []map[string]any {
 		tool("context", "List managed source secret names, configured destinations and existing ingestions across all conversations for schema grouping.", map[string]any{}),
 		tool("inspect_destination", "Read existing schemas and table names in a configured destination, including tables outside Pompos. Use with context before choosing a schema; never reads table rows or runs extraction code.", map[string]any{"destination": str}, "destination"),
 		tool("write_script", "Replace the Python draft; invalidates previous test.", map[string]any{"name": str, "source": str, "table": str, "schema": map[string]any{"type": "string", "description": "Choose explicitly: reuse a fitting dataset schema from context/inspect_destination or name a new group. Honor a user-specified schema."}, "collection": str, "destination": str, "strategy": str, "primary_key": arr, "secret_refs": arr, "python": str, "dependencies": arr, "code": str}, "name", "source", "table", "schema", "destination", "strategy", "secret_refs", "code"),
-		tool("test_script", "Prepare the ingestion environment, then run its extractor against the source, limited to 5 rows or object descriptors and 45 seconds; no destination writes or file downloads.", map[string]any{}),
+		tool("test_script", "Prepare the ingestion environment, then run its extractor against the source, limited to 5 rows or object descriptors; no destination writes or file downloads. No execution timeout unless timeout_seconds is set.", map[string]any{
+			"timeout_seconds": map[string]any{"type": "integer", "minimum": 0, "description": "Optional probe execution timeout. Omitted or 0 means no timeout. No upper ceiling."},
+		}),
 		tool("finish", "Mark the successfully validated current script and settings ready for review and saving.", map[string]any{})}
 }
 
@@ -701,6 +703,15 @@ func (s *Service) execute(ctx context.Context, v *Session, call Call) (string, e
 		applyLoading(v)
 		return "Python draft saved. Call test_script to make bounded source requests.", nil
 	case "test_script":
+		var request struct {
+			TimeoutSeconds int `json:"timeout_seconds"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &request); err != nil {
+			return "", err
+		}
+		if request.TimeoutSeconds < 0 {
+			return "", errors.New("timeout_seconds must be nonnegative; 0 means unlimited")
+		}
 		v.Ready = false
 		v.Probed = false
 		v.Validation = nil
@@ -712,7 +723,8 @@ func (s *Service) execute(ctx context.Context, v *Session, call Call) (string, e
 			return "", e
 		}
 		plan := compiler.ExecutionPlan{Script: s.scriptPath(v.ID), SecretRefs: v.Draft.SecretRefs,
-			Python: v.Draft.Python, Dependencies: v.Draft.Dependencies,
+			ProbeTimeoutSeconds: request.TimeoutSeconds,
+			Python:              v.Draft.Python, Dependencies: v.Draft.Dependencies,
 			DestinationType: dest.Type, DestinationPath: dest.Path, DestinationSchema: v.Draft.Schema, DestinationObject: v.Draft.Table}
 		if preparer, ok := s.Python.(interface {
 			Prepare(context.Context, compiler.ExecutionPlan) (compiler.ExecutionPlan, error)
