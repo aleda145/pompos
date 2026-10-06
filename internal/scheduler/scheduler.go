@@ -32,7 +32,7 @@ type Store interface {
 	ReleaseRun(context.Context, int64) error
 	RecoverRuns(context.Context) (int64, error)
 	WorkerCount(context.Context) (int, error)
-	SaveWorkerCount(context.Context, int) error
+	SaveRuntimeSettings(context.Context, int, int) error
 }
 
 // Manager uses gocron to drive a poller and calculate cron occurrences. Both

@@ -27,16 +27,17 @@ type Runtime struct {
 	WorkerLimit    int
 }
 
-// SetWorkers persists the limit before applying it. Active runs always finish.
-func (m *Manager) SetWorkers(ctx context.Context, workers int) error {
+// SetRuntimeSettings saves both settings before applying the worker limit.
+// Active runs retain their existing timeout and finish before workers retire.
+func (m *Manager) SetRuntimeSettings(ctx context.Context, workers, timeoutMinutes int) error {
 	if workers < 1 {
 		return fmt.Errorf("worker count must be a positive whole number")
 	}
 	// Serialize setting changes with claiming work, not with running work.
 	m.pollMu.Lock()
-	if err := m.store.SaveWorkerCount(ctx, workers); err != nil {
+	if err := m.store.SaveRuntimeSettings(ctx, workers, timeoutMinutes); err != nil {
 		m.pollMu.Unlock()
-		return fmt.Errorf("save worker setting: %w", err)
+		return fmt.Errorf("save runtime settings: %w", err)
 	}
 	m.resizeWorkers(workers)
 	m.pollMu.Unlock()
@@ -44,7 +45,7 @@ func (m *Manager) SetWorkers(ctx context.Context, workers int) error {
 	case m.wake <- struct{}{}:
 	default:
 	}
-	m.logger.Printf("worker limit changed workers=%d", workers)
+	m.logger.Printf("runtime settings changed workers=%d timeout_minutes=%d", workers, timeoutMinutes)
 	return nil
 }
 

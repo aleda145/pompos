@@ -25,6 +25,18 @@
  </div>
  <div class="settings-actions settings-save"><button class="primary" type="submit">Save</button></div>
  </form>
+ <form id="runtime" method="post" action="/settings#runtime" class="panel settings-section" aria-labelledby="runtime-heading">
+ <input type="hidden" name="section" value="runtime">
+ <h2 id="runtime-heading">Runtime</h2>
+ <label for="runtime-workers">Workers</label>
+ <input class="mono" id="runtime-workers" name="workers" type="number" min="1" step="1" required value="{{.Runtime.WorkersValue}}" {{if .Runtime.WorkersError}}aria-invalid="true" aria-describedby="runtime-workers-error"{{end}}>
+ {{if .Runtime.WorkersError}}<p class="error" id="runtime-workers-error" role="alert">{{.Runtime.WorkersError}}</p>{{end}}
+ <label for="runtime-timeout">Run timeout · minutes</label>
+ <input class="mono" id="runtime-timeout" name="timeout_minutes" type="number" min="1" max="{{.Runtime.TimeoutMax}}" step="1" required value="{{.Runtime.TimeoutValue}}" aria-describedby="runtime-timeout-help{{if .Runtime.TimeoutError}} runtime-timeout-error{{end}}" {{if .Runtime.TimeoutError}}aria-invalid="true"{{end}}>
+ {{if .Runtime.TimeoutError}}<p class="error" id="runtime-timeout-error" role="alert">{{.Runtime.TimeoutError}}</p>{{end}}
+ <p class="hint" id="runtime-timeout-help">Timeout applies to new production runs.</p>
+ <div class="settings-actions settings-save"><button class="primary" type="submit">Save</button></div>
+ </form>
  <form method="post" class="panel settings-section" aria-labelledby="agent-heading">
  <input type="hidden" name="section" value="agent">
  <h2 id="agent-heading">Agent</h2>

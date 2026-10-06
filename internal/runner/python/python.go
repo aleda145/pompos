@@ -20,9 +20,10 @@ import (
 )
 
 type Runner struct {
-	Environments *Environments
-	Binary       string
-	Secrets      secrets.Store
+	RunTimeoutMinutes func(context.Context) (int, error)
+	Environments      *Environments
+	Binary            string
+	Secrets           secrets.Store
 }
 
 //go:embed locking.py
@@ -120,6 +121,17 @@ func ReadResult(output, marker string, result any) error {
 }
 
 func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe bool, validationLimit int, validation bool) (string, error) {
+	timeoutMinutes := runner.DefaultRunTimeoutMinutes
+	if !probe && !validation && r.RunTimeoutMinutes != nil {
+		var err error
+		timeoutMinutes, err = r.RunTimeoutMinutes(ctx)
+		if err != nil {
+			return "", fmt.Errorf("load run timeout: %w", err)
+		}
+		if timeoutMinutes < 1 || timeoutMinutes > runner.MaxRunTimeoutMinutes {
+			return "", fmt.Errorf("invalid run timeout")
+		}
+	}
 	script, err := filepath.EvalSymlinks(plan.Script)
 	if err != nil {
 		return "", err
@@ -145,7 +157,7 @@ func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 	}
 	payload, _ := json.Marshal(values)
 	config, _ := json.Marshal(map[string]any{"destination_type": plan.DestinationType, "destination": plan.DestinationPath, "schema": destination.SchemaName(plan.DestinationSchema), "table": plan.DestinationObject, "strategy": plan.Strategy, "primary_key": plan.PrimaryKey, "validation": validation, "validation_limit": validationLimit, "validation_max_bytes": plan.ValidationMaxBytes})
-	timeout := 30 * time.Minute
+	timeout := time.Duration(timeoutMinutes) * time.Minute
 	if validation {
 		timeout = 0
 		// Durations beyond time.Duration's range must not wrap into an immediate timeout.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"pompos/internal/ingestion"
@@ -25,9 +24,6 @@ type runtimePageData struct {
 	Pending        int
 	UpdatedAt      time.Time
 	Uptime         string
-	WorkersValue   string
-	WorkersError   string
-	WorkersSaved   bool
 	History        store.RunHistory
 	PreviousPage   int
 	NextPage       int
@@ -44,7 +40,6 @@ func (v runtimePageData) IngestionName(id string) string {
 func (a *App) runtimeData(ctx context.Context, page int) (runtimePageData, error) {
 	view := runtimePageData{Title: "Runtime", Runtime: a.Scheduler.Runtime(), UpdatedAt: time.Now().UTC()}
 	view.Uptime = runtimeElapsed(view.UpdatedAt, view.Runtime.StartedAt)
-	view.WorkersValue = strconv.Itoa(view.Runtime.WorkerLimit)
 	queue, err := a.Store.RunQueue(ctx)
 	if err != nil {
 		return view, err
@@ -115,38 +110,7 @@ func (a *App) runtimePage(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, err)
 		return
 	}
-	view.WorkersSaved = r.URL.Query().Get("saved") == "1"
 	a.render(w, http.StatusOK, "runtime", view)
-}
-
-func (a *App) runtimeWorkers(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	r.Body = http.MaxBytesReader(w, r.Body, 1024)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Invalid worker setting", http.StatusBadRequest)
-		return
-	}
-	value := strings.TrimSpace(r.PostForm.Get("workers"))
-	workers, err := strconv.Atoi(value)
-	message := "Worker count must be a positive whole number."
-	status := http.StatusUnprocessableEntity
-	if err == nil && workers >= 1 {
-		if err := a.Scheduler.SetWorkers(r.Context(), workers); err == nil {
-			http.Redirect(w, r, "/runtime?saved=1", http.StatusSeeOther)
-			return
-		} else {
-			a.Logger.Printf("change worker count: %v", err)
-			message = "Could not save worker count. Try again."
-			status = http.StatusInternalServerError
-		}
-	}
-	view, err := a.runtimeData(r.Context(), 1)
-	if err != nil {
-		a.serverError(w, err)
-		return
-	}
-	view.WorkersValue, view.WorkersError = value, message
-	a.render(w, status, "runtime", view)
 }
 
 func (a *App) runtimeStatus(w http.ResponseWriter, r *http.Request) {

@@ -104,6 +104,10 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     workers INTEGER NOT NULL CHECK (workers >= 1)
 );
+CREATE TABLE IF NOT EXISTS runtime_run_timeout (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    minutes INTEGER NOT NULL CHECK (minutes >= 1 AND minutes <= 153722867)
+);
 PRAGMA user_version = 6;`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize metadata database: %w", err)

@@ -2,13 +2,6 @@
 <div class="page-heading">
   <h1>Runtime</h1>
 </div>
-<form class="runtime-controls" method="post" action="/runtime/workers">
-  <label for="runtime-workers">Workers</label>
-  <input class="mono" id="runtime-workers" name="workers" type="number" min="1" step="1" required value="{{.WorkersValue}}" {{if .WorkersError}}aria-invalid="true" aria-describedby="runtime-workers-error"{{end}}>
-  <button class="primary" type="submit">Save</button>
-  {{if .WorkersSaved}}<span role="status">Worker count saved.</span>{{end}}
-</form>
-{{if .WorkersError}}<div class="error" id="runtime-workers-error" role="alert">{{.WorkersError}}</div>{{end}}
 <div data-runtime-url="/runtime/status?page={{.History.Page}}">
   <p class="error" role="status" data-runtime-error hidden></p>
   <div data-runtime-content>{{template "runtime-status" .}}</div>
@@ -18,7 +11,7 @@
 {{end}}
 
 {{define "runtime-status"}}
-<div class="runtime-status" data-runtime-state data-worker-limit="{{.Runtime.WorkerLimit}}">
+<div class="runtime-status" data-runtime-state>
   <dl class="runtime-summary">
     <div><dt>Scheduler</dt><dd>{{template "status" .Runtime.Status}}</dd></div>
     <div><dt>Workers active / limit</dt><dd class="mono">{{.Runtime.Active}} / {{.Runtime.WorkerLimit}}</dd></div>

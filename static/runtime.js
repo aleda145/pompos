@@ -3,9 +3,6 @@
   if (!panel) return;
   const content = panel.querySelector("[data-runtime-content]");
   const error = panel.querySelector("[data-runtime-error]");
-  const workers = document.querySelector("#runtime-workers");
-  let workersEdited = false;
-  workers.addEventListener("input", () => { workersEdited = true; });
   let timer;
   let request;
 
@@ -21,9 +18,6 @@
       fragment.innerHTML = await response.text();
       const next = fragment.content.querySelector("[data-runtime-state]");
       if (!next) throw new Error("Missing runtime status");
-      if (!workersEdited && document.activeElement !== workers && !workers.hasAttribute("aria-invalid")) {
-        workers.value = next.dataset.workerLimit;
-      }
       window.pomposTimezone?.render(next);
       const focused = content.contains(document.activeElement) ? document.activeElement : null;
       const href = focused?.getAttribute("href");
@@ -43,7 +37,7 @@
         const target = href
           ? Array.from(content.querySelectorAll("a")).find((link) => link.getAttribute("href") === href)
           : Array.from(content.querySelectorAll(".table-scroll")).find((table) => table.getAttribute("aria-label") === region);
-        (target || workers).focus({ preventScroll: true });
+        (target || content.querySelector(".table-scroll"))?.focus({ preventScroll: true });
       }
       error.hidden = true;
     } catch {

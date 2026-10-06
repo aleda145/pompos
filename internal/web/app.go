@@ -38,6 +38,7 @@ type MetadataStore interface {
 	GetRun(context.Context, string, int64) (ingestion.Run, error)
 	HasActiveRuns(context.Context, string) (bool, error)
 	RunQueue(context.Context) (store.RunQueue, error)
+	RunTimeoutMinutes(context.Context) (int, error)
 	RunHistory(context.Context, int) (store.RunHistory, error)
 }
 
@@ -47,7 +48,7 @@ type ScheduleManager interface {
 	Enqueue(context.Context, string) error
 	NextRun(string) *time.Time
 	Runtime() scheduler.Runtime
-	SetWorkers(context.Context, int) error
+	SetRuntimeSettings(context.Context, int, int) error
 }
 
 type DestinationCatalog interface {
@@ -108,7 +109,6 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", a.home)
 	mux.HandleFunc("GET /runtime", a.runtimePage)
 	mux.HandleFunc("GET /runtime/status", a.runtimeStatus)
-	mux.HandleFunc("POST /runtime/workers", a.runtimeWorkers)
 	mux.HandleFunc("GET /setup", a.setupPage)
 	mux.HandleFunc("POST /setup/mode", a.setupMode)
 	mux.HandleFunc("GET /settings/mcp", func(w http.ResponseWriter, r *http.Request) {
@@ -639,6 +639,6 @@ func (noopScheduleManager) NextRun(string) *time.Time { return nil }
 func (noopScheduleManager) Runtime() scheduler.Runtime {
 	return scheduler.Runtime{Status: ingestion.StatusPending}
 }
-func (noopScheduleManager) SetWorkers(context.Context, int) error {
+func (noopScheduleManager) SetRuntimeSettings(context.Context, int, int) error {
 	return errors.New("scheduler is unavailable")
 }
