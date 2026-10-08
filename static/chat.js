@@ -11,6 +11,7 @@
   let lastInput = null;
   let activeCall = null;
   let handoffKey = '';
+  let logKey = '';
   const toolNames = {web_search: 'Search the web', read_webpage: 'Read documentation', context: 'Inspect connections', write_script: 'Write Python', test_script: 'Test source', finish: 'Check ingestion', ask_user: 'Request input', propose_loading: 'Suggest schedule & loading', propose_validation: 'Request validation', validate_ingestion: 'Validate sample load'};
 
   function element(tag, className, text) {
@@ -69,8 +70,13 @@
     return section;
   }
   function renderLog() {
+    const key = JSON.stringify([session.messages, busy, activeCall, session.pending, lastInput]);
+    if (key === logKey) return;
     const log = $('#messages');
-    const open = new Set([...log.querySelectorAll('details[open]')].map(node => node.dataset.key));
+    const panels = new Map([...log.querySelectorAll('details')].map(node => {
+      const content = node.querySelector('.tool-detail, .activity-detail');
+      return [node.dataset.key, {open: node.open, top: content?.scrollTop || 0, left: content?.scrollLeft || 0}];
+    }));
     const nearBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 160;
     const fragment = document.createDocumentFragment();
     const messages = session.messages || [];
@@ -151,7 +157,17 @@
       fragment.append(handoffCard(pending, lastInput.action_id, true));
     }
     log.replaceChildren(fragment);
-    log.querySelectorAll('details').forEach(node => { node.open = open.has(node.dataset.key); });
+    log.querySelectorAll('details').forEach(node => {
+      const panel = panels.get(node.dataset.key);
+      if (!panel) return;
+      node.open = panel.open;
+      const content = node.querySelector('.tool-detail, .activity-detail');
+      if (content) {
+        content.scrollTop = panel.top;
+        content.scrollLeft = panel.left;
+      }
+    });
+    logKey = key;
     $('#chat-empty').hidden = messages.length > 0 || busy;
     if (nearBottom) window.scrollTo({top: document.documentElement.scrollHeight, behavior: 'instant'});
   }
@@ -283,9 +299,16 @@
     $('#draft').hidden = !session.draft || !!session.published_id;
     $('#draft-target').textContent = session.draft ? `${session.draft.destination} / ${session.draft.schema || 'main'} / ${session.draft.table} · ${session.draft.strategy} · ${session.draft.schedule ? `${session.draft.schedule} UTC` : 'manual'}` : '';
     const draftCode = $('#draft-code');
-    draftCode.textContent = session.draft?.code || '';
-    delete draftCode.dataset.highlighted;
-    if (window.hljs && draftCode.textContent) hljs.highlightElement(draftCode);
+    const code = session.draft?.code || '';
+    if (draftCode.textContent !== code) {
+      const pre = draftCode.parentElement;
+      const {scrollTop, scrollLeft} = pre;
+      draftCode.textContent = code;
+      delete draftCode.dataset.highlighted;
+      if (window.hljs && code) hljs.highlightElement(draftCode);
+      pre.scrollTop = scrollTop;
+      pre.scrollLeft = scrollLeft;
+    }
     $('#validation-result').hidden = !session.validation || !!session.published_id;
     if (session.validation) {
       const result = session.validation.result;
