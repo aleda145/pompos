@@ -225,6 +225,30 @@ func (s *SQLite) UpdateSpecReference(ctx context.Context, id, path, digest strin
 	return s.update(ctx, `UPDATE ingestions SET spec_path = ?, spec_digest = ?, next_run_at = NULL WHERE id = ?`, path, digest, id)
 }
 
+// MoveIngestion keeps run history attached when its destination changes.
+func (s *SQLite) MoveIngestion(ctx context.Context, oldID, newID, path, digest string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE ingestions SET id = ?, spec_path = ?, spec_digest = ?, next_run_at = NULL WHERE id = ?`, newID, path, digest, oldID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE ingestion_runs SET ingestion_id = ? WHERE ingestion_id = ?`, newID, oldID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // EnqueueRun durably records a manual run and marks the ingestion pending.
 func (s *SQLite) EnqueueRun(ctx context.Context, ingestionID string, queuedAt time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)

@@ -672,8 +672,8 @@ func (s *Service) execute(ctx context.Context, v *Session, call Call) (string, e
 			draft.Data, draft.Collection = "", ""
 		}
 		draft.Schema = destination.SchemaName(draft.Schema)
-		if v.Edit != nil && (draft.Destination != v.Edit.Original.Destination || draft.Schema != v.Edit.Original.Schema || draft.Table != v.Edit.Original.Table || draft.Format != v.Edit.Original.Format) {
-			return "", errors.New("editing keeps the destination, schema and table fixed")
+		if v.Edit != nil && (draft.Schema != v.Edit.Original.Schema || draft.Table != v.Edit.Original.Table) {
+			return "", errors.New("editing keeps the schema and table fixed")
 		}
 		if !regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`).MatchString(draft.Schema) {
 			return "", errors.New("schema must be lower_snake_case without repeated or trailing underscores")

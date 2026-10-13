@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"pompos/internal/agent"
 	"pompos/internal/ingestion"
@@ -142,15 +143,31 @@ func (a *App) applySessionEdit(ctx context.Context, id, fingerprint string) (str
 		if active {
 			return errors.New("this ingestion has queued or running work; wait for it to finish and apply again")
 		}
+		currentID := v.Edit.IngestionID
 		ingestionID, err = a.Agent.ApplyEdit(ctx, id, fingerprint, func(id string, doc spec.Ingestion) error {
 			data, err := spec.Marshal(doc)
 			if err != nil {
 				return err
 			}
-			if err := a.Store.UpdateSpecReference(ctx, id, v.Edit.SpecPath, spec.Digest(data)); err != nil {
+			path := v.Edit.SpecPath
+			if id != v.Edit.IngestionID {
+				path = strings.TrimSuffix(doc.Runtime.Script, ".py") + ".yaml"
+			}
+			if id != currentID {
+				mover, ok := a.Store.(interface {
+					MoveIngestion(context.Context, string, string, string, string) error
+				})
+				if !ok {
+					return errors.New("store does not support changing destinations")
+				}
+				if err := mover.MoveIngestion(ctx, currentID, id, path, spec.Digest(data)); err != nil {
+					return err
+				}
+				currentID = id
+			} else if err := a.Store.UpdateSpecReference(ctx, id, path, spec.Digest(data)); err != nil {
 				return err
 			}
-			return a.Scheduler.Upsert(spec.ToProjection(doc, id, v.Edit.SpecPath, spec.Digest(data)))
+			return a.Scheduler.Upsert(spec.ToProjection(doc, id, path, spec.Digest(data)))
 		})
 		return err
 	})

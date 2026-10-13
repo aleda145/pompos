@@ -173,6 +173,11 @@ legend { font-weight: 500; padding: 0; }
 .details .hint { margin-top: 6px; }
 .connection h2 { margin-bottom: 4px; }
 .connection .url { font-size: 12px; }
+.destination-change { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin-top: 8px; }
+.destination-change > label { margin: 0; }
+.destination-change select, .destination-change > button { height: 36px; }
+.destination-change > select { flex: 1 1 180px; width: auto; }
+.destination-change-note { flex-basis: 100%; }
 .schedule-form { display: grid; grid-template-columns: auto minmax(0, 500px) minmax(0, 1fr); gap: 8px 16px; align-items: center; }
 .schedule-form label, .schedule-form .hint { margin: 0; }
 .schedule-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }

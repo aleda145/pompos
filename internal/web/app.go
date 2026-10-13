@@ -145,14 +145,16 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /ingestions/{id}/runs", a.ingestionRuns)
 	mux.HandleFunc("POST /ingestions/{id}/run", a.runIngestion)
 	mux.HandleFunc("POST /ingestions/{id}/schedule", a.updateSchedule)
+	mux.HandleFunc("POST /ingestions/{id}/destination", a.updateIngestionDestination)
 	mux.HandleFunc("POST /ingestions/{id}/edit", a.editIngestion)
 	for pattern, handler := range map[string]http.HandlerFunc{
-		"GET /ingestions/{destination}/{schema}/{table}":           a.ingestionDetail,
-		"GET /ingestions/{destination}/{schema}/{table}/preview":   a.ingestionPreview,
-		"GET /ingestions/{destination}/{schema}/{table}/runs":      a.ingestionRuns,
-		"POST /ingestions/{destination}/{schema}/{table}/run":      a.runIngestion,
-		"POST /ingestions/{destination}/{schema}/{table}/schedule": a.updateSchedule,
-		"POST /ingestions/{destination}/{schema}/{table}/edit":     a.editIngestion,
+		"GET /ingestions/{destination}/{schema}/{table}":              a.ingestionDetail,
+		"GET /ingestions/{destination}/{schema}/{table}/preview":      a.ingestionPreview,
+		"GET /ingestions/{destination}/{schema}/{table}/runs":         a.ingestionRuns,
+		"POST /ingestions/{destination}/{schema}/{table}/run":         a.runIngestion,
+		"POST /ingestions/{destination}/{schema}/{table}/schedule":    a.updateSchedule,
+		"POST /ingestions/{destination}/{schema}/{table}/destination": a.updateIngestionDestination,
+		"POST /ingestions/{destination}/{schema}/{table}/edit":        a.editIngestion,
 	} {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			r.SetPathValue("id", r.PathValue("destination")+"/"+r.PathValue("schema")+"/"+r.PathValue("table"))
@@ -227,19 +229,25 @@ type secretView struct {
 }
 
 type detailPageData struct {
-	Title         string
-	Ingestion     ingestion.Ingestion
-	SpecPath      string
-	NextRun       *time.Time
-	ScheduleValue string
-	ScheduleSaved bool
-	ScheduleError string
-	YAML          string
-	Python        string
-	PythonError   string
-	RunError      string
-	RunView       runView
-	RunsError     string
+	DestinationValue  string
+	DestinationFormat string
+	DestinationError  string
+	DestinationSaved  bool
+	Destinations      []destination.Config
+	DestinationsError string
+	Title             string
+	Ingestion         ingestion.Ingestion
+	SpecPath          string
+	NextRun           *time.Time
+	ScheduleValue     string
+	ScheduleSaved     bool
+	ScheduleError     string
+	YAML              string
+	Python            string
+	PythonError       string
+	RunError          string
+	RunView           runView
+	RunsError         string
 }
 
 func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +262,7 @@ func (a *App) ingestionDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	page := a.detailData(r, item)
 	page.ScheduleSaved = r.URL.Query().Get("schedule") == "saved"
+	page.DestinationSaved = r.URL.Query().Get("destination") == "saved"
 	a.render(w, http.StatusOK, "detail", page)
 }
 
@@ -261,6 +270,22 @@ func (a *App) detailData(r *http.Request, item ingestion.Ingestion) detailPageDa
 	page := detailPageData{
 		Title: item.Name, Ingestion: item, SpecPath: item.SpecPath,
 		NextRun: item.NextRun, ScheduleValue: item.Schedule,
+	}
+	page.DestinationValue = strings.SplitN(item.ID, "/", 2)[0]
+	page.DestinationFormat = item.Destination.Format
+	if page.DestinationFormat == "" {
+		page.DestinationFormat = "parquet"
+	}
+	destinations, destinationsErr := a.Destinations.ListDestinations(r.Context())
+	if destinationsErr != nil {
+		page.DestinationsError = "Destinations unavailable."
+		a.Logger.Printf("load destinations error=%q", destinationsErr)
+	} else {
+		for _, dest := range destinations {
+			if (dest.Type == "objects") == (item.Destination.Type == "objects") {
+				page.Destinations = append(page.Destinations, dest)
+			}
+		}
 	}
 	before, selected, historyErr := runQuery(r)
 	if historyErr == nil {
