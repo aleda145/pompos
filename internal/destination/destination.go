@@ -15,11 +15,12 @@ var (
 )
 
 type Config struct {
-	Name      string
-	Type      string
-	Path      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Name       string
+	Type       string
+	Path       string
+	SecretRefs []string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 func NewDuckDB(name, path string) Config {
@@ -30,7 +31,7 @@ func (c Config) Validate() error {
 	if !validName.MatchString(c.Name) {
 		return errors.New("destination name must start with a letter or number and contain only letters, numbers, underscores, and hyphens")
 	}
-	if c.Type != "duckdb" && c.Type != "objects" {
+	if c.Type != "duckdb" && c.Type != "objects" && !IsFile(c.Type) {
 		return fmt.Errorf("unsupported destination type %q", c.Type)
 	}
 	if strings.TrimSpace(c.Path) == "" {
@@ -56,4 +57,26 @@ func SchemaName(schema string) string {
 		return "main"
 	}
 	return schema
+}
+
+// IsFile identifies formats stored as one file per ingestion in a destination directory.
+func IsFile(kind string) bool { return kind == "files" }
+
+// OutputPath maps each logical table to one file in a destination directory.
+func (c Config) OutputPath(schema, table, format string) string {
+	if IsFile(c.Type) {
+		return filepath.Join(c.Path, SchemaName(schema), table+"."+format)
+	}
+	return c.Path
+}
+
+func ValidateFormat(kind, format string) error {
+	if IsFile(kind) {
+		if format != "csv" && format != "parquet" && format != "json" {
+			return errors.New("data files require format csv, parquet or json")
+		}
+	} else if format != "" {
+		return errors.New("format applies only to data files")
+	}
+	return nil
 }

@@ -72,6 +72,7 @@ type Source struct {
 func (s Source) DisplayLocation() string { return s.URL }
 
 type Destination struct {
+	Format string
 	Schema string
 	Type   string
 	Path   string

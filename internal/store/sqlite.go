@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -74,6 +75,11 @@ CREATE TABLE IF NOT EXISTS destinations (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS destination_secrets (
+ destination TEXT NOT NULL,
+ secret TEXT NOT NULL,
+ PRIMARY KEY (destination, secret)
+);
 CREATE TABLE IF NOT EXISTS ingestion_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ingestion_id TEXT NOT NULL,
@@ -116,6 +122,18 @@ PRAGMA user_version = 6;`
 	if version == 0 {
 		if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO destinations (name, type, path, created_at, updated_at) VALUES ('local-duckdb', 'duckdb', ?, ?, ?)`, s.destinationPath, now, now); err != nil {
 			return fmt.Errorf("initialize default destination: %w", err)
+		}
+	}
+	if version == 0 {
+		if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO destinations (name, type, path, created_at, updated_at) VALUES ('data-files', 'files', ?, ?, ?)`, filepath.Join(filepath.Dir(s.destinationPath), "files"), now, now); err != nil {
+			return fmt.Errorf("initialize Data files destination: %w", err)
+		}
+		files, err := s.GetDestination(ctx, "data-files")
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(files.Path, 0o755); err != nil {
+			return fmt.Errorf("create Data files directory: %w", err)
 		}
 	}
 	return nil
@@ -426,15 +444,35 @@ func (s *SQLite) PutDestination(ctx context.Context, config destination.Config) 
 	if err := config.Validate(); err != nil {
 		return err
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 INSERT INTO destinations (name, type, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
 ON CONFLICT(name) DO UPDATE SET type = excluded.type, path = excluded.path, updated_at = excluded.updated_at`,
 		config.Name, config.Type, config.Path, now, now)
 	if err != nil {
 		return fmt.Errorf("store destination: %w", err)
 	}
-	return nil
+	if _, err = tx.ExecContext(ctx, `DELETE FROM destination_secrets WHERE destination = ?`, config.Name); err != nil {
+		return err
+	}
+	for _, ref := range config.SecretRefs {
+		var exists int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM secrets WHERE key = ?`, ref).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			return fmt.Errorf("secret %q does not exist", ref)
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO destination_secrets(destination, secret) VALUES (?, ?)`, config.Name, ref); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *SQLite) DeleteDestination(ctx context.Context, name string) error {
@@ -449,19 +487,23 @@ func (s *SQLite) DeleteDestination(ctx context.Context, name string) error {
 	if count == 0 {
 		return destination.ErrNotFound
 	}
-	return nil
+	_, err = s.db.ExecContext(ctx, `DELETE FROM destination_secrets WHERE destination = ?`, name)
+	return err
 }
 
 func (s *SQLite) GetDestination(ctx context.Context, name string) (destination.Config, error) {
 	var config destination.Config
-	var createdAt, updatedAt string
-	err := s.db.QueryRowContext(ctx, `SELECT name, type, path, created_at, updated_at FROM destinations WHERE name = ?`, name).
-		Scan(&config.Name, &config.Type, &config.Path, &createdAt, &updatedAt)
+	var createdAt, updatedAt, refs string
+	err := s.db.QueryRowContext(ctx, `SELECT name, type, path, created_at, updated_at, (SELECT json_group_array(secret) FROM destination_secrets WHERE destination = destinations.name) FROM destinations WHERE name = ?`, name).
+		Scan(&config.Name, &config.Type, &config.Path, &createdAt, &updatedAt, &refs)
 	if errors.Is(err, sql.ErrNoRows) {
 		return destination.Config{}, destination.ErrNotFound
 	}
 	if err != nil {
 		return destination.Config{}, fmt.Errorf("get destination: %w", err)
+	}
+	if err := json.Unmarshal([]byte(refs), &config.SecretRefs); err != nil {
+		return config, err
 	}
 	config.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 	if err != nil {
@@ -475,7 +517,7 @@ func (s *SQLite) GetDestination(ctx context.Context, name string) (destination.C
 }
 
 func (s *SQLite) ListDestinations(ctx context.Context) ([]destination.Config, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name, type, path, created_at, updated_at FROM destinations ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT name, type, path, created_at, updated_at, (SELECT json_group_array(secret) FROM destination_secrets WHERE destination = destinations.name) FROM destinations ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list destinations: %w", err)
 	}
@@ -483,9 +525,12 @@ func (s *SQLite) ListDestinations(ctx context.Context) ([]destination.Config, er
 	var configs []destination.Config
 	for rows.Next() {
 		var config destination.Config
-		var createdAt, updatedAt string
-		if err := rows.Scan(&config.Name, &config.Type, &config.Path, &createdAt, &updatedAt); err != nil {
+		var createdAt, updatedAt, refs string
+		if err := rows.Scan(&config.Name, &config.Type, &config.Path, &createdAt, &updatedAt, &refs); err != nil {
 			return nil, fmt.Errorf("scan destination: %w", err)
+		}
+		if err := json.Unmarshal([]byte(refs), &config.SecretRefs); err != nil {
+			return nil, err
 		}
 		config.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 		if err != nil {

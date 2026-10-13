@@ -11,7 +11,7 @@
 
 <div class="panel details">
   <section class="half-section connection"><h2>Source</h2><p class="url mono">{{.Ingestion.Source.DisplayLocation}}</p></section>
-  <section class="half-section connection"><h2>Destination</h2><p class="url mono">{{.Ingestion.Destination.CatalogPath}} / {{.Ingestion.Destination.Schema}}.{{.Ingestion.Destination.Table}}</p>{{if eq .Ingestion.Destination.Type "objects"}}<p class="url mono">{{.Ingestion.Destination.Path}}/files/{{.Ingestion.Destination.Schema}}</p>{{end}}</section>
+  <section class="half-section connection"><h2>Destination</h2><p class="url mono">{{.Ingestion.Destination.CatalogPath}}{{if ne .Ingestion.Destination.Type "files"}} / {{.Ingestion.Destination.Schema}}.{{.Ingestion.Destination.Table}}{{end}}</p>{{if eq .Ingestion.Destination.Type "objects"}}<p class="url mono">{{.Ingestion.Destination.Path}}/files/{{.Ingestion.Destination.Schema}}</p>{{end}}</section>
   <section class="half-section">
     <h2>Loading</h2>
     <dl>

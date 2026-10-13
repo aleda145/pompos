@@ -46,6 +46,7 @@ type Source struct {
 	Collection string `yaml:"collection,omitempty"`
 }
 type Destination struct {
+	Format string `yaml:"format,omitempty"`
 	Schema string `yaml:"schema,omitempty"`
 	Type   string `yaml:"type"`
 	Path   string `yaml:"path"`
@@ -135,7 +136,7 @@ func (s Ingestion) Validate() error {
 			return errors.New("objects require a dedicated destination.schema and destination.object: objects")
 		}
 	} else if s.Data != "" && s.Data != "rows" {
-		return errors.New("DuckDB table ingestions require data: rows")
+		return errors.New("Row ingestions require data: rows")
 	} else if strings.TrimSpace(s.Source.Table) == "" || s.Source.Collection != "" {
 		return errors.New("spec.source: a source URL or identifier and one source table are required")
 	}
@@ -151,8 +152,11 @@ func (s Ingestion) Validate() error {
 	if s.Runtime.Orchestrator != "" && s.Runtime.Orchestrator != "direct" {
 		return errors.New("spec.runtime.orchestrator: must be direct")
 	}
-	if s.Destination.Type != "duckdb" && s.Destination.Type != "objects" {
-		return errors.New("spec.destination.type: must be duckdb or objects")
+	if s.Destination.Type != "duckdb" && s.Destination.Type != "objects" && !destination.IsFile(s.Destination.Type) {
+		return errors.New("spec.destination.type: must be duckdb, objects or files")
+	}
+	if err := destination.ValidateFormat(s.Destination.Type, s.Destination.Format); err != nil {
+		return err
 	}
 	if strings.TrimSpace(s.Destination.Path) == "" || strings.ContainsRune(s.Destination.Path, '\x00') {
 		return errors.New("spec.destination.path: a valid path is required")
@@ -173,6 +177,13 @@ func (s Ingestion) Validate() error {
 }
 
 func (m Materialization) ValidateFor(kind string) error {
+	if destination.IsFile(kind) {
+		if (m.Strategy != "" && m.Strategy != "replace") || len(m.PrimaryKey) > 0 {
+			return errors.New("Data files require replace without primary keys")
+		}
+		return nil
+	}
+
 	if kind == "objects" {
 		if m.Strategy != "" && m.Strategy != "update" && m.Strategy != "skip" {
 			return errors.New("objects strategy must be update or skip")
@@ -228,7 +239,7 @@ func FromIngestion(item ingestion.Ingestion) Ingestion {
 	document := Ingestion{APIVersion: APIVersion, Kind: Kind, Metadata: Metadata{Name: item.Name},
 		Data:            item.Data,
 		Source:          Source{Type: item.Source.Type, URL: item.Source.URL, Table: item.Source.Table, Collection: item.Source.Collection},
-		Destination:     Destination{Schema: item.Destination.Schema, Type: item.Destination.Type, Path: item.Destination.Path, Object: item.Destination.Table},
+		Destination:     Destination{Format: item.Destination.Format, Schema: item.Destination.Schema, Type: item.Destination.Type, Path: item.Destination.Path, Object: item.Destination.Table},
 		Materialization: Materialization{Strategy: item.Materialization.Strategy, PrimaryKey: item.Materialization.PrimaryKey},
 		Runtime:         Runtime{Engine: item.Runtime.Engine, Orchestrator: item.Runtime.Orchestrator, Script: item.Runtime.Script, SecretRefs: item.Runtime.SecretRefs, Python: item.Runtime.Python, Dependencies: item.Runtime.Dependencies},
 	}
@@ -246,7 +257,7 @@ func ToProjection(document Ingestion, id, path, digest string) ingestion.Ingesti
 	item := ingestion.Ingestion{ID: id, Name: document.Metadata.Name, Status: ingestion.StatusPending,
 		Data:            document.Data,
 		Source:          ingestion.Source{Type: document.Source.Type, URL: document.Source.URL, Table: document.Source.Table, Collection: document.Source.Collection},
-		Destination:     ingestion.Destination{Schema: destination.SchemaName(document.Destination.Schema), Type: document.Destination.Type, Path: document.Destination.Path, Table: document.Destination.Object},
+		Destination:     ingestion.Destination{Format: document.Destination.Format, Schema: destination.SchemaName(document.Destination.Schema), Type: document.Destination.Type, Path: document.Destination.Path, Table: document.Destination.Object},
 		Materialization: ingestion.Materialization{Strategy: document.Strategy(), PrimaryKey: document.Materialization.PrimaryKey},
 		Runtime:         ingestion.Runtime{Engine: document.Runtime.Engine, Orchestrator: document.Runtime.Orchestrator, Script: document.Runtime.Script, SecretRefs: document.Runtime.SecretRefs, Python: document.Runtime.Python, Dependencies: document.Runtime.Dependencies}, SpecPath: path, SpecDigest: digest,
 	}

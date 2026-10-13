@@ -5,26 +5,34 @@ import sys
 import duckdb
 from dlt.common.normalizers.naming.snake_case import NamingConvention
 
-path, schema, table, kind = sys.argv[1:]
+path, schema, table, kind, file_format = sys.argv[1:]
 if kind != "objects":
     schema = NamingConvention().normalize_identifier(schema)
     table = NamingConvention().normalize_table_identifier(table)
-with _pompos_destination_lock(path, shared=True), duckdb.connect(path, read_only=True, config={"enable_external_access": False}) as db:
-    # Only loaded base tables, never views that could execute arbitrary expressions.
-    exists = db.execute(
-        "SELECT 1 FROM information_schema.tables "
-        "WHERE table_catalog = current_database() AND table_schema = ? "
-        "AND table_name = ? AND table_type = 'BASE TABLE'", [schema, table]
-    ).fetchone()
-    if not exists:
-        raise ValueError("No loaded table")
-    database = db.execute("SELECT current_database()").fetchone()[0]
-    target = ".".join('"' + name.replace('"', '""') + '"' for name in (database, schema, table))
-    db.execute("BEGIN TRANSACTION")
-    total_rows = db.execute("SELECT count(*) FROM " + target).fetchone()[0]
-    cursor = db.execute("SELECT * FROM " + target + " LIMIT 10")
-    columns = [column[0] for column in cursor.description]
-    rows = cursor.fetchall()
+if kind == "files":
+    with _pompos_destination_lock(path, shared=True), duckdb.connect() as db:
+        reader = {"parquet": "read_parquet", "csv": "read_csv_auto", "json": "read_json_auto"}[file_format]
+        relation = db.execute("SELECT * FROM " + reader + "(?) LIMIT 10", [path])
+        columns = [column[0] for column in relation.description]
+        rows = relation.fetchall()
+        total_rows = db.execute("SELECT count(*) FROM " + reader + "(?)", [path]).fetchone()[0]
+else:
+    with _pompos_destination_lock(path, shared=True), duckdb.connect(path, read_only=True, config={"enable_external_access": False}) as db:
+        # Only loaded base tables, never views that could execute arbitrary expressions.
+        exists = db.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_catalog = current_database() AND table_schema = ? "
+            "AND table_name = ? AND table_type = 'BASE TABLE'", [schema, table]
+        ).fetchone()
+        if not exists:
+            raise ValueError("No loaded table")
+        database = db.execute("SELECT current_database()").fetchone()[0]
+        target = ".".join('"' + name.replace('"', '""') + '"' for name in (database, schema, table))
+        db.execute("BEGIN TRANSACTION")
+        total_rows = db.execute("SELECT count(*) FROM " + target).fetchone()[0]
+        cursor = db.execute("SELECT * FROM " + target + " LIMIT 10")
+        columns = [column[0] for column in cursor.description]
+        rows = cursor.fetchall()
 
 def display(value):
     if value is None:

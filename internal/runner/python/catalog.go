@@ -43,6 +43,9 @@ func (r Runner) InspectDestination(ctx context.Context, dest destination.Config)
 		return result, err
 	}
 	result.Exists = true
+	if destination.IsFile(dest.Type) {
+		return result, nil
+	}
 	plan := compiler.ExecutionPlan{}
 	if r.Environments != nil {
 		// A built-in reader has its own environment, independent of any draft.

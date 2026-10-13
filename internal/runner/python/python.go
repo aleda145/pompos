@@ -74,6 +74,9 @@ func (r Runner) Validate(ctx context.Context, plan compiler.ExecutionPlan, limit
 		return result, "", err
 	}
 	plan.DestinationPath = filepath.Join(directory, "sample.duckdb")
+	if destination.IsFile(plan.DestinationType) {
+		plan.DestinationPath = filepath.Join(directory, "sample."+plan.DestinationFormat)
+	}
 	if plan.DestinationType == "objects" {
 		plan.DestinationPath = filepath.Join(directory, "objects")
 	}
@@ -159,7 +162,7 @@ func (r Runner) execute(ctx context.Context, plan compiler.ExecutionPlan, probe 
 		values[ref] = string(value)
 	}
 	payload, _ := json.Marshal(values)
-	config, _ := json.Marshal(map[string]any{"destination_type": plan.DestinationType, "destination": plan.DestinationPath, "schema": destination.SchemaName(plan.DestinationSchema), "table": plan.DestinationObject, "strategy": plan.Strategy, "primary_key": plan.PrimaryKey, "validation": validation, "validation_limit": validationLimit, "validation_max_bytes": plan.ValidationMaxBytes})
+	config, _ := json.Marshal(map[string]any{"destination_type": plan.DestinationType, "format": plan.DestinationFormat, "destination": plan.DestinationPath, "schema": destination.SchemaName(plan.DestinationSchema), "table": plan.DestinationObject, "strategy": plan.Strategy, "primary_key": plan.PrimaryKey, "validation": validation, "validation_limit": validationLimit, "validation_max_bytes": plan.ValidationMaxBytes})
 	timeout := time.Duration(timeoutMinutes) * time.Minute
 	if validation || probe {
 		seconds := plan.ValidationTimeoutSeconds
@@ -296,8 +299,8 @@ if __name__ == "__main__":
         return _secrets[name]
     _probe = os.environ.get("POMPOS_PROBE") == "1"
     _config = json.loads(os.environ.get("POMPOS_CONFIG", "{}"))
-    if _config.get("destination_type") not in (None, "", "duckdb"):
-        raise ValueError("Row ingestion requires a DuckDB destination")
+    if _config.get("destination_type") not in (None, "", "duckdb", "files"):
+        raise ValueError("Unsupported row destination")
     _validation_limit = _config.get("validation_limit", 0)
     _limit = 5 if _probe else (_validation_limit or None)
     def _rows():
@@ -314,10 +317,44 @@ if __name__ == "__main__":
         import dlt
         _path = str(Path(_config["destination"]).resolve())
         Path(_path).parent.mkdir(parents=True, exist_ok=True)
+        _file_format = _config.get("format")
+        _file_output = _config.get("destination_type") == "files"
+        if _file_output:
+            if _file_format not in ("csv", "parquet", "json"):
+                raise ValueError("Data files require format csv, parquet or json")
+            import tempfile, atexit
+            if _config["strategy"] != "replace" or _config.get("primary_key"):
+                raise ValueError("Data files require replace without primary keys")
+            _output_path = _path
+            _staging = tempfile.TemporaryDirectory(prefix="pompos-export-")
+            atexit.register(_staging.cleanup)
+            _path = str(Path(_staging.name) / "rows.duckdb")
         with _pompos_destination_lock(_path):
             _pipeline = dlt.pipeline(pipeline_name="pompos_" + Path(__file__).stem,
-                pipelines_dir=str(Path(__file__).parent / ".dlt"),
+                pipelines_dir=str(Path(_staging.name) / ".dlt") if _file_output else str(Path(__file__).parent / ".dlt"),
                 destination=dlt.destinations.duckdb(credentials=_path), dataset_name=_config.get("schema") or "main")
+        def _export():
+            import duckdb
+            _schema = _pipeline.dataset_name
+            _table = _pipeline.default_schema.naming.normalize_table_identifier(_config["table"])
+            _target = '"' + _schema.replace('"', '""') + '"."' + _table.replace('"', '""') + '"'
+            with duckdb.connect(_path, read_only=True) as _db:
+                _columns = [c[0] for c in _db.execute("SELECT * FROM " + _target + " LIMIT 0").description if not c[0].startswith("_dlt_")]
+                if not _columns:
+                    raise ValueError("No source columns available for file export")
+                _select = "SELECT " + ", ".join('"' + c.replace('"', '""') + '"' for c in _columns) + " FROM " + _target
+                _fd, _temporary = tempfile.mkstemp(prefix=".pompos-", suffix="." + _file_format, dir=str(Path(_output_path).parent))
+                os.close(_fd)
+                try:
+                    _options = {"parquet": "FORMAT PARQUET", "csv": "FORMAT CSV, HEADER TRUE", "json": "FORMAT JSON, ARRAY TRUE"}[_file_format]
+                    _db.execute("COPY (" + _select + ") TO '" + _temporary.replace("'", "''") + "' (" + _options + ")")
+                    with open(_temporary, "rb") as _file:
+                        os.fsync(_file.fileno())
+                    with _pompos_destination_lock(_output_path):
+                        os.replace(_temporary, _output_path)
+                finally:
+                    if os.path.exists(_temporary):
+                        os.unlink(_temporary)
         def _load(rows):
             # Restore state and finish any interrupted load before extracting.
             with _pompos_destination_lock(_path):
@@ -336,6 +373,8 @@ if __name__ == "__main__":
                 print("Loading destination", flush=True)
                 _info = _pipeline.load()
                 _info.raise_on_failed_jobs()
+            if _file_output:
+                _export()
             return _info
         if _config.get("validation", bool(_validation_limit)):
             _sample = list(itertools.islice(_rows(), _validation_limit or None))
@@ -354,6 +393,10 @@ if __name__ == "__main__":
             # Load the same source sample twice; fetch is called only once.
             import copy, duckdb
             def _count():
+                if _file_output:
+                    with _pompos_destination_lock(_output_path, shared=True), duckdb.connect() as _db:
+                        _reader = {"parquet": "read_parquet", "csv": "read_csv_auto", "json": "read_json_auto"}[_file_format]
+                        return _db.execute("SELECT count(*) FROM " + _reader + "(?)", [_output_path]).fetchone()[0]
                 with _pompos_destination_lock(_path, shared=True), duckdb.connect(_path, read_only=True) as _db:
                     _table = _pipeline.default_schema.naming.normalize_table_identifier(_config["table"])
                     _schema = _pipeline.dataset_name

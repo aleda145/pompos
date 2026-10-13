@@ -3,6 +3,16 @@
   const name = document.querySelector('#destination_name');
   const type = document.querySelector('#destination_type');
   const path = document.querySelector('#destination_path');
+  const pathLabel = form.querySelector('label[for="destination_path"]');
+  const hint = document.querySelector('#destination-path-hint');
+  function updatePath() {
+    pathLabel.textContent = type.value === 'duckdb' ? 'Database file' : 'Output directory';
+    path.placeholder = type.value === 'duckdb' ? 'data/analytics.duckdb' : 'data/exports';
+    hint.hidden = type.value !== 'files';
+    hint.textContent = 'CSV, Parquet or JSON · one file per ingestion';
+  }
+  type.addEventListener('change', updatePath);
+  updatePath();
   const cancel = document.querySelector('#cancel-destination-update');
   const links = [...document.querySelectorAll('[data-destination-name]')];
   const existingNames = new Set(links.map(link => link.dataset.destinationName));
@@ -19,6 +29,7 @@
     name.value = destinationName;
     type.value = destinationType;
     path.value = destinationPath;
+    updatePath();
     updateMode();
     form.scrollIntoView({block: 'start'});
     (destinationName ? type : name).focus({preventScroll: true});

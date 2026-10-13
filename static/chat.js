@@ -179,6 +179,7 @@
   function loadingCard(pending) {
     const options = pending.loading;
     const files = ['update', 'skip'].includes(options.strategy);
+    const rowFile = session.draft?.destination_type === 'files';
     const form = element('form', 'loading-options');
     const presetLabel = element('label', '', 'Frequency');
     const preset = element('select');
@@ -192,7 +193,7 @@
     cron.addEventListener('input', () => { preset.value = presets.some(([value]) => value === cron.value) ? cron.value : 'custom'; });
     const strategyLabel = element('label', '', 'Loading strategy');
     const strategy = element('select');
-    const strategies = files ? [['update', 'Update changed files'], ['skip', 'Skip existing files']] : [['replace', 'Replace — current snapshot'], ['append', 'Append — keep previous rows'], ['merge', 'Merge — update matching keys']];
+    const strategies = rowFile ? [['replace', 'Replace entire file']] : files ? [['update', 'Update changed files'], ['skip', 'Skip existing files']] : [['replace', 'Replace — current snapshot'], ['append', 'Append — keep previous rows'], ['merge', 'Merge — update matching keys']];
     for (const [value, label] of strategies) { const option = element('option', '', label); option.value = value; strategy.append(option); }
     strategy.value = options.strategy; strategyLabel.append(strategy);
     const keysLabel = element('label', '', 'Row keys · comma-separated');
@@ -203,12 +204,12 @@
     strategy.addEventListener('change', updateStrategy); updateStrategy();
     const submitButton = element('button', 'primary', 'Use these settings'); submitButton.type = 'submit';
     form.append(presetLabel, cronLabel, strategyLabel);
-    if (!files) form.append(keysLabel);
+    if (!files && !rowFile) form.append(keysLabel);
     if (files) form.append(element('p', 'hint', 'Files missing from the source are retained. Without a source version, Update downloads again.'));
     form.append(submitButton);
     form.addEventListener('submit', event => {
       event.preventDefault();
-      submit({action_id: 'accept_loading', handoff_id: pending.id, loading: {cron: cron.value.trim(), strategy: strategy.value, primary_key: files ? [] : keys.value.split(',').map(value => value.trim()).filter(Boolean)}});
+      submit({action_id: 'accept_loading', handoff_id: pending.id, loading: {cron: cron.value.trim(), strategy: strategy.value, primary_key: (files || rowFile) ? [] : keys.value.split(',').map(value => value.trim()).filter(Boolean)}});
     });
     return form;
   }

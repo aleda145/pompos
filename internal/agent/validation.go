@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"pompos/internal/compiler"
 	"pompos/internal/destination"
@@ -76,18 +77,33 @@ func (s *Service) validationPlan(ctx context.Context, v *Session) (compiler.Exec
 	if err != nil {
 		return plan, "", err
 	}
-	if (dest.Type == "objects") != (v.Draft.Data == "files") {
+	if err := destination.ValidateFormat(dest.Type, v.Draft.Format); err != nil {
+		return plan, "", err
+	}
+	if dest.Type != v.Draft.DestinationType {
 		return plan, "", errors.New("destination type changed; rewrite and probe the script")
 	}
-	if err := v.Loading.ValidateDraft(v.Draft); err != nil {
+	if err := (spec.Materialization{Strategy: v.Loading.Strategy, PrimaryKey: v.Loading.PrimaryKey}).ValidateFor(dest.Type); err != nil {
 		return plan, "", err
+	}
+	cfg, err := s.settings()
+	if err != nil {
+		return plan, "", err
+	}
+	for _, ref := range dest.SecretRefs {
+		if cfg.reservedSecret(ref) {
+			return plan, "", errors.New("model and search provider keys cannot be used as destination credentials")
+		}
+		if !slices.Contains(v.Draft.SecretRefs, ref) {
+			v.Draft.SecretRefs = append(v.Draft.SecretRefs, ref)
+		}
 	}
 	applyLoading(v)
 	plan = compiler.ExecutionPlan{Engine: "python", Script: s.scriptPath(v.ID),
 		// Draft JSON omits empty dependencies. Canonicalize [] and nil so saving
 		// and reloading a session cannot change its validation fingerprint.
 		Python: v.Draft.Python, Dependencies: append([]string(nil), v.Draft.Dependencies...),
-		SecretRefs: v.Draft.SecretRefs, DestinationType: dest.Type, DestinationPath: dest.Path,
+		SecretRefs: v.Draft.SecretRefs, DestinationType: dest.Type, DestinationFormat: v.Draft.Format, DestinationPath: dest.OutputPath(v.Draft.Schema, v.Draft.Table, v.Draft.Format),
 		DestinationSchema: destination.SchemaName(v.Draft.Schema), DestinationObject: v.Draft.Table, Strategy: v.Loading.Strategy, PrimaryKey: v.Loading.PrimaryKey}
 	data, err := json.Marshal(struct {
 		Draft *Draft

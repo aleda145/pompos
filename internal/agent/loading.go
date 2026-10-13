@@ -36,6 +36,9 @@ func (o Loading) ValidateDraft(draft *Draft) error {
 		return err
 	}
 	kind := "duckdb"
+	if draft != nil && draft.DestinationType != "" {
+		kind = draft.DestinationType
+	}
 	if draft != nil && draft.Data == "files" {
 		kind = "objects"
 	}

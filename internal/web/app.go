@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -95,6 +96,9 @@ func New(app App) (*App, error) {
 	for _, page := range []string{"home", "detail", "secrets", "destinations", "chats", "chat", "settings", "setup", "edit_review", "runtime"} {
 		parsed, err := template.New(page).Funcs(template.FuncMap{
 			"displayTimezone": app.displayTimezone,
+			"contains":        slices.Contains[[]string, string],
+			"join":            strings.Join,
+			"joinRefs":        func(refs []string) string { data, _ := json.Marshal(refs); return string(data) },
 		}).ParseFS(templatefiles.FS, "layout.html", page+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s template: %w", page, err)
@@ -205,18 +209,21 @@ type destinationIngestion struct {
 }
 
 type secretsPageData struct {
-	Title   string
-	Error   string
-	Name    string
-	Editing bool
-	Saved   bool
-	Deleted bool
-	Secrets []secretView
+	Title                string
+	Error                string
+	Name                 string
+	Editing              bool
+	Saved                bool
+	Deleted              bool
+	Secrets              []secretView
+	Destinations         []destination.Config
+	SelectedDestinations []string
 }
 
 type secretView struct {
-	Entry      secrets.Entry
-	Ingestions []ingestion.Ingestion
+	Entry        secrets.Entry
+	Destinations []string
+	Ingestions   []ingestion.Ingestion
 }
 
 type detailPageData struct {
@@ -362,6 +369,13 @@ func (a *App) saveDestination(w http.ResponseWriter, r *http.Request) {
 		Path: strings.TrimSpace(r.FormValue("path")),
 	}
 	config := destination.NewDuckDB(data.Name, data.Path)
+	existing, err := a.Destinations.GetDestination(r.Context(), data.Name)
+	if err == nil {
+		config.SecretRefs = existing.SecretRefs
+	} else if !errors.Is(err, destination.ErrNotFound) {
+		a.serverError(w, err)
+		return
+	}
 	if data.Type != "" {
 		config.Type = data.Type
 	}
@@ -460,9 +474,36 @@ func (a *App) createSecret(w http.ResponseWriter, r *http.Request) {
 		a.renderSecrets(w, r, http.StatusUnprocessableEntity, secretsPageData{Error: "Secret value is required.", Name: name})
 		return
 	}
+	configs, err := a.Destinations.ListDestinations(r.Context())
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	selected := r.Form["destinations"]
+	for _, selection := range selected {
+		if !slices.ContainsFunc(configs, func(c destination.Config) bool { return c.Name == selection }) {
+			a.renderSecrets(w, r, http.StatusUnprocessableEntity, secretsPageData{Error: "Selected destination does not exist.", Name: name})
+			return
+		}
+	}
 	if err := a.Secrets.Put(r.Context(), name, []byte(value)); err != nil {
 		a.serverError(w, err)
 		return
+	}
+	for _, config := range configs {
+		linked := slices.Contains(config.SecretRefs, name)
+		wanted := slices.Contains(selected, config.Name)
+		if linked == wanted {
+			continue
+		}
+		config.SecretRefs = slices.DeleteFunc(config.SecretRefs, func(ref string) bool { return ref == name })
+		if wanted {
+			config.SecretRefs = append(config.SecretRefs, name)
+		}
+		if err := a.Destinations.PutDestination(r.Context(), config); err != nil {
+			a.serverError(w, err)
+			return
+		}
 	}
 	a.Logger.Printf("secret saved secret_key=%s", name)
 	http.Redirect(w, r, "/secrets?saved=1", http.StatusSeeOther)
@@ -516,6 +557,21 @@ func (a *App) renderSecrets(w http.ResponseWriter, r *http.Request, status int, 
 		return
 	}
 	data.Secrets = describeSecrets(entries, ingestions)
+	data.Destinations, err = a.Destinations.ListDestinations(r.Context())
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	for _, config := range data.Destinations {
+		if slices.Contains(config.SecretRefs, data.Name) {
+			data.SelectedDestinations = append(data.SelectedDestinations, config.Name)
+		}
+		for i := range data.Secrets {
+			if slices.Contains(config.SecretRefs, data.Secrets[i].Entry.Key) {
+				data.Secrets[i].Destinations = append(data.Secrets[i].Destinations, config.Name)
+			}
+		}
+	}
 	data.Saved = data.Saved || r.URL.Query().Get("saved") == "1"
 	data.Deleted = data.Deleted || r.URL.Query().Get("deleted") == "1"
 	a.render(w, status, "secrets", data)

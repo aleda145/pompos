@@ -14,9 +14,11 @@
   <select id="destination_type" name="type" required {{if .Editing}}autofocus{{end}}>
     <option value="duckdb" {{if eq .Type "duckdb"}}selected{{end}}>DuckDB</option>
     <option value="objects" {{if eq .Type "objects"}}selected{{end}}>Objects · files + DuckDB catalog</option>
+    <option value="files" {{if eq .Type "files"}}selected{{end}}>Data files</option>
   </select>
-  <label for="destination_path">Path · database file or objects directory</label>
-  <input id="destination_path" name="path" value="{{.Path}}" placeholder="data/analytics.duckdb" required>
+  <label for="destination_path">{{if eq .Type "duckdb"}}Database file{{else}}Output directory{{end}}</label>
+  <input id="destination_path" name="path" value="{{.Path}}" placeholder="{{if eq .Type "duckdb"}}data/analytics.duckdb{{else}}data/exports{{end}}" required>
+  <p id="destination-path-hint" class="hint" {{if ne .Type "files"}}hidden{{end}}>CSV, Parquet or JSON · one file per ingestion</p>
   <div class="destination-actions"><button class="primary" type="submit">{{if .Editing}}Update destination{{else}}Add destination{{end}}</button><a id="cancel-destination-update" href="/destinations" {{if not .Editing}}hidden{{end}}>Cancel</a></div>
 </form>
 
@@ -32,7 +34,7 @@
         <tr>
           <td>
             <details class="destination-ingestions">
-              <summary><span class="mono">{{.Name}}</span> <span class="destination-count">{{len .Ingestions}} ingestion{{if ne (len .Ingestions) 1}}s{{end}}</span></summary>
+              <summary><span class="mono">{{if eq .Name "data-files"}}Data files{{else}}{{.Name}}{{end}}</span> <span class="destination-count">{{len .Ingestions}} ingestion{{if ne (len .Ingestions) 1}}s{{end}}</span></summary>
               {{if .Ingestions}}
               <ul>
                 {{range .Ingestions}}<li><a class="mono" href="/ingestions/{{.ID}}">{{.Target}}</a></li>{{end}}
@@ -42,7 +44,7 @@
               {{end}}
             </details>
           </td>
-          <td class="mono">{{.Type}}</td>
+          <td class="mono">{{if eq .Type "files"}}Data files{{else}}{{.Type}}{{end}}</td>
           <td class="mono">{{.Path}}</td>
           <td><div class="destination-actions"><a class="button" href="/destinations?edit={{.Name}}#destination-form" data-destination-name="{{.Name}}" data-destination-type="{{.Type}}" data-destination-path="{{.Path}}" aria-label="Update {{.Name}}">Update</a><form method="post" action="/destinations/delete" {{if .Ingestions}}onsubmit="return confirm('Delete destination? Referencing ingestions’ future runs will fail.')"{{end}}>
             <input type="hidden" name="name" value="{{.Name}}">

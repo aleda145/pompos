@@ -54,7 +54,7 @@ func (s *Service) StartEdit(ctx context.Context, item ingestion.Ingestion, run *
 	if err != nil {
 		return Session{}, err
 	}
-	if dest.Type != doc.Destination.Type || dest.Path != doc.Destination.Path {
+	if dest.Type != doc.Destination.Type || dest.OutputPath(doc.Destination.Schema, doc.Destination.Object, doc.Destination.Format) != doc.Destination.Path {
 		return Session{}, errors.New("configured destination differs from the saved ingestion; restore its destination settings before editing")
 	}
 	files, err := readEditFiles(item.SpecPath, doc.Runtime.Script)
@@ -65,8 +65,8 @@ func (s *Service) StartEdit(ctx context.Context, item ingestion.Ingestion, run *
 		return Session{}, errors.New("ingestion changed while opening it; retry")
 	}
 	code := extractorCode(string(files.Script), doc)
-	draft := Draft{Name: doc.Metadata.Name, Data: doc.Data, Collection: doc.Source.Collection,
-		Source: doc.Source.URL, Destination: parts[0], Schema: parts[1], Table: parts[2],
+	draft := Draft{Format: doc.Destination.Format, Name: doc.Metadata.Name, Data: doc.Data, Collection: doc.Source.Collection,
+		Source: doc.Source.URL, Destination: parts[0], DestinationType: dest.Type, Schema: parts[1], Table: parts[2],
 		Strategy: doc.Strategy(), PrimaryKey: doc.Materialization.PrimaryKey,
 		Python: doc.Runtime.Python, Dependencies: doc.Runtime.Dependencies, SecretRefs: doc.Runtime.SecretRefs, Code: code}
 	if doc.Schedule != nil {
@@ -191,7 +191,7 @@ func (s *Service) reviewEdit(ctx context.Context, v *Session) (EditReview, spec.
 	if err != nil {
 		return review, doc, original, err
 	}
-	if d.Destination != e.Original.Destination || d.Schema != e.Original.Schema || d.Table != e.Original.Table || dest.Type != doc.Destination.Type || dest.Path != doc.Destination.Path {
+	if d.Format != e.Original.Format || d.Destination != e.Original.Destination || d.Schema != e.Original.Schema || d.Table != e.Original.Table || dest.Type != doc.Destination.Type || dest.OutputPath(doc.Destination.Schema, doc.Destination.Object, doc.Destination.Format) != doc.Destination.Path {
 		return review, doc, original, errors.New("editing keeps the destination, schema and table fixed")
 	}
 	doc.Metadata.Name = d.Name

@@ -8,6 +8,7 @@ import (
 )
 
 type ExecutionPlan struct {
+	DestinationFormat        string   `yaml:"destinationFormat,omitempty"`
 	ValidationMaxBytes       int64    `yaml:"-"`
 	ValidationTimeoutSeconds int      `yaml:"-"`
 	ProbeTimeoutSeconds      int      `yaml:"-"`
@@ -36,7 +37,7 @@ func Compile(document spec.Ingestion) (ExecutionPlan, error) {
 	return ExecutionPlan{
 		Engine: "python", Script: document.Runtime.Script, SecretRefs: document.Runtime.SecretRefs, Python: document.Runtime.Python, Dependencies: document.Runtime.Dependencies,
 		SourceURI: document.Source.URL, SourceTable: document.Source.Table, SourceCollection: document.Source.Collection,
-		DestinationSchema: destination.SchemaName(document.Destination.Schema), DestinationType: document.Destination.Type, DestinationPath: document.Destination.Path, DestinationObject: document.Destination.Object,
+		DestinationSchema: destination.SchemaName(document.Destination.Schema), DestinationType: document.Destination.Type, DestinationFormat: document.Destination.Format, DestinationPath: document.Destination.Path, DestinationObject: document.Destination.Object,
 		Strategy: document.Strategy(), PrimaryKey: document.Materialization.PrimaryKey,
 	}, nil
 }

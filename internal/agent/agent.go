@@ -77,20 +77,22 @@ type Message struct {
 	CallID    string     `json:"tool_call_id,omitempty"`
 }
 type Draft struct {
-	Data         string   `json:"data,omitempty"`
-	Collection   string   `json:"collection,omitempty"`
-	Python       string   `json:"python,omitempty"`
-	Dependencies []string `json:"dependencies,omitempty"`
-	Schema       string   `json:"schema"`
-	Schedule     string   `json:"schedule"`
-	Name         string   `json:"name"`
-	Source       string   `json:"source"`
-	Table        string   `json:"table"`
-	Destination  string   `json:"destination"`
-	Strategy     string   `json:"strategy"`
-	PrimaryKey   []string `json:"primary_key"`
-	SecretRefs   []string `json:"secret_refs"`
-	Code         string   `json:"code"`
+	Format          string   `json:"format,omitempty"`
+	Data            string   `json:"data,omitempty"`
+	Collection      string   `json:"collection,omitempty"`
+	Python          string   `json:"python,omitempty"`
+	Dependencies    []string `json:"dependencies,omitempty"`
+	Schema          string   `json:"schema"`
+	Schedule        string   `json:"schedule"`
+	Name            string   `json:"name"`
+	Source          string   `json:"source"`
+	Table           string   `json:"table"`
+	Destination     string   `json:"destination"`
+	DestinationType string   `json:"destination_type,omitempty"`
+	Strategy        string   `json:"strategy"`
+	PrimaryKey      []string `json:"primary_key"`
+	SecretRefs      []string `json:"secret_refs"`
+	Code            string   `json:"code"`
 }
 type Session struct {
 	Edit            *Edit            `json:"edit,omitempty"`
@@ -302,7 +304,7 @@ func toolsDefinition() []map[string]any {
 		tool("propose_loading", "Propose new or changed loading settings with reasoning, then pause for user confirmation. Already confirmed settings need no further approval. Cron is five-field UTC; empty means manual. Use sampled fields for merge keys.", map[string]any{"cron": str, "strategy": map[string]any{"type": "string", "enum": []string{"replace", "append", "merge", "update", "skip"}}, "primary_key": arr, "reason": str}, "cron", "strategy", "primary_key", "reason"),
 		tool("context", "List managed source secret names, configured destinations and existing ingestions across all conversations for schema grouping.", map[string]any{}),
 		tool("inspect_destination", "Read existing schemas and table names in a configured destination, including tables outside Pompos. Use with context before choosing a schema; never reads table rows or runs extraction code.", map[string]any{"destination": str}, "destination"),
-		tool("write_script", "Replace the Python draft; invalidates previous test.", map[string]any{"name": str, "source": str, "table": str, "schema": map[string]any{"type": "string", "description": "Choose explicitly: reuse a fitting dataset schema from context/inspect_destination or name a new group. Honor a user-specified schema."}, "collection": str, "destination": str, "strategy": str, "primary_key": arr, "secret_refs": arr, "python": str, "dependencies": arr, "code": str}, "name", "source", "table", "schema", "destination", "strategy", "secret_refs", "code"),
+		tool("write_script", "Replace the Python draft; invalidates previous test.", map[string]any{"name": str, "source": str, "table": str, "schema": map[string]any{"type": "string", "description": "Choose explicitly: reuse a fitting dataset schema from context/inspect_destination or name a new group. Honor a user-specified schema."}, "collection": str, "destination": str, "format": map[string]any{"type": "string", "enum": []string{"csv", "parquet", "json"}, "description": "Required for a Data files destination; choose per ingestion. Omit for other destinations."}, "strategy": str, "primary_key": arr, "secret_refs": arr, "python": str, "dependencies": arr, "code": str}, "name", "source", "table", "schema", "destination", "strategy", "secret_refs", "code"),
 		tool("test_script", "Prepare the ingestion environment, then run its extractor against the source, limited to 5 rows or object descriptors; no destination writes or file downloads. No execution timeout unless timeout_seconds is set.", map[string]any{
 			"timeout_seconds": map[string]any{"type": "integer", "minimum": 0, "description": "Optional probe execution timeout. Omitted or 0 means no timeout. No upper ceiling."},
 		}),
@@ -651,6 +653,10 @@ func (s *Service) execute(ctx context.Context, v *Session, call Call) (string, e
 		if e != nil {
 			return "", e
 		}
+		draft.DestinationType = dest.Type
+		if err := destination.ValidateFormat(dest.Type, draft.Format); err != nil {
+			return "", err
+		}
 		if dest.Type == "objects" {
 			draft.Data = "files"
 			if draft.Schema == "" || draft.Schema == "main" || draft.Schema == "information_schema" || draft.Schema == "pg_catalog" || draft.Table != "objects" {
@@ -666,7 +672,7 @@ func (s *Service) execute(ctx context.Context, v *Session, call Call) (string, e
 			draft.Data, draft.Collection = "", ""
 		}
 		draft.Schema = destination.SchemaName(draft.Schema)
-		if v.Edit != nil && (draft.Destination != v.Edit.Original.Destination || draft.Schema != v.Edit.Original.Schema || draft.Table != v.Edit.Original.Table) {
+		if v.Edit != nil && (draft.Destination != v.Edit.Original.Destination || draft.Schema != v.Edit.Original.Schema || draft.Table != v.Edit.Original.Table || draft.Format != v.Edit.Original.Format) {
 			return "", errors.New("editing keeps the destination, schema and table fixed")
 		}
 		if !regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`).MatchString(draft.Schema) {
@@ -685,6 +691,11 @@ func (s *Service) execute(ctx context.Context, v *Session, call Call) (string, e
 		if e != nil {
 			return "", e
 		}
+		for _, ref := range dest.SecretRefs {
+			if !slices.Contains(draft.SecretRefs, ref) {
+				draft.SecretRefs = append(draft.SecretRefs, ref)
+			}
+		}
 		for _, ref := range draft.SecretRefs {
 			if cfg.reservedSecret(ref) {
 				return "", errors.New("model and search provider keys cannot be used as source credentials; request a dedicated source secret")
@@ -700,7 +711,7 @@ func (s *Service) execute(ctx context.Context, v *Session, call Call) (string, e
 		if e := WriteFile(s.scriptPath(v.ID), []byte(wrapped)); e != nil {
 			return "", e
 		}
-		if v.Draft != nil && (v.Draft.Data != draft.Data || v.Draft.Collection != draft.Collection || v.Draft.Source != draft.Source || v.Draft.Table != draft.Table || v.Draft.Destination != draft.Destination || destination.SchemaName(v.Draft.Schema) != draft.Schema) {
+		if v.Draft != nil && (v.Draft.Format != draft.Format || v.Draft.Data != draft.Data || v.Draft.Collection != draft.Collection || v.Draft.Source != draft.Source || v.Draft.Table != draft.Table || v.Draft.Destination != draft.Destination || destination.SchemaName(v.Draft.Schema) != draft.Schema) {
 			v.Loading = nil
 		}
 		v.Draft = &draft
@@ -729,7 +740,7 @@ func (s *Service) execute(ctx context.Context, v *Session, call Call) (string, e
 		plan := compiler.ExecutionPlan{Script: s.scriptPath(v.ID), SecretRefs: v.Draft.SecretRefs,
 			ProbeTimeoutSeconds: request.TimeoutSeconds,
 			Python:              v.Draft.Python, Dependencies: v.Draft.Dependencies,
-			DestinationType: dest.Type, DestinationPath: dest.Path, DestinationSchema: v.Draft.Schema, DestinationObject: v.Draft.Table}
+			DestinationType: dest.Type, DestinationFormat: v.Draft.Format, DestinationPath: dest.OutputPath(v.Draft.Schema, v.Draft.Table, v.Draft.Format), DestinationSchema: v.Draft.Schema, DestinationObject: v.Draft.Table}
 		if preparer, ok := s.Python.(interface {
 			Prepare(context.Context, compiler.ExecutionPlan) (compiler.ExecutionPlan, error)
 		}); ok {
@@ -818,7 +829,7 @@ func (s *Service) Publish(ctx context.Context, id, artifactDir string, persist f
 	if e != nil {
 		return "", e
 	}
-	doc := spec.Ingestion{APIVersion: spec.APIVersion, Kind: spec.Kind, Metadata: spec.Metadata{Name: d.Name}, Source: spec.Source{Type: "python", URL: d.Source, Table: d.Table}, Destination: spec.Destination{Schema: destination.SchemaName(d.Schema), Type: dest.Type, Path: dest.Path, Object: d.Table}, Materialization: spec.Materialization{Strategy: d.Strategy, PrimaryKey: d.PrimaryKey}, Runtime: spec.Runtime{Engine: "python", Orchestrator: "direct", Script: absolute, SecretRefs: d.SecretRefs, Python: d.Python, Dependencies: d.Dependencies}}
+	doc := spec.Ingestion{APIVersion: spec.APIVersion, Kind: spec.Kind, Metadata: spec.Metadata{Name: d.Name}, Source: spec.Source{Type: "python", URL: d.Source, Table: d.Table}, Destination: spec.Destination{Format: d.Format, Schema: destination.SchemaName(d.Schema), Type: dest.Type, Path: dest.OutputPath(d.Schema, d.Table, d.Format), Object: d.Table}, Materialization: spec.Materialization{Strategy: d.Strategy, PrimaryKey: d.PrimaryKey}, Runtime: spec.Runtime{Engine: "python", Orchestrator: "direct", Script: absolute, SecretRefs: d.SecretRefs, Python: d.Python, Dependencies: d.Dependencies}}
 	if dest.Type == "objects" {
 		doc.Data = "files"
 		doc.Source.Collection, doc.Source.Table = d.Collection, ""
